@@ -5,6 +5,7 @@
     "moduleResolution": "bundler",
     "strict": true,
     "declaration": true,
+    "declarationDir": "dist/types",
     "outDir": "dist"
   },
   "include": ["src"]
