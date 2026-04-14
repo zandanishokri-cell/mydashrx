@@ -13,8 +13,12 @@ await app.register(cors, {
   credentials: true,
 });
 
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret && process.env.NODE_ENV === 'production') {
+  throw new Error('JWT_SECRET environment variable is required in production');
+}
 await app.register(jwt, {
-  secret: process.env.JWT_SECRET ?? 'dev-secret-change-in-prod',
+  secret: jwtSecret ?? 'dev-secret-change-in-prod-only',
 });
 
 await app.register(rateLimit, {

@@ -12,6 +12,7 @@ export function requireRole(...roles: Role[]) {
     const payload = req.user as { role: Role };
     if (!roles.includes(payload.role)) {
       reply.code(403).send({ error: 'Forbidden' });
+      return;
     }
   };
 }
