@@ -1,6 +1,7 @@
 {
   "name": "mydash-rx",
   "private": true,
+  "packageManager": "npm@11.11.0",
   "workspaces": ["packages/*"],
   "scripts": {
     "dev": "turbo run dev",
