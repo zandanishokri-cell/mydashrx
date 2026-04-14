@@ -9,7 +9,7 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'driver'),
   }, async (req) => {
     const { planId } = req.params as { planId: string };
-    return db.select().from(routes).where(eq(routes.planId, planId));
+    return db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
   });
 
   app.post('/', {
@@ -44,5 +44,13 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
       .from(stops)
       .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
+  });
+
+  app.delete('/:routeId', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { routeId } = req.params as { planId: string; routeId: string };
+    await db.update(routes).set({ deletedAt: new Date() }).where(eq(routes.id, routeId));
+    return reply.code(204).send();
   });
 };

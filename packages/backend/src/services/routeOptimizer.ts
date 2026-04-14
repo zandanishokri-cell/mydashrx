@@ -33,6 +33,7 @@ export async function optimizeRoute(
     );
     const data = (await res.json()) as any;
     if (data.status !== 'OK') throw new Error(`Google Maps error: ${data.status}`);
+    if (!data.routes?.[0]?.legs?.[0]) throw new Error('Google Maps returned no route');
     const leg = data.routes[0].legs[0];
     return {
       stopIds: [stops[0].id],
@@ -63,6 +64,7 @@ export async function optimizeRoute(
   );
   const data = (await res.json()) as any;
   if (data.status !== 'OK') throw new Error(`Google Maps error: ${data.status}`);
+  if (!data.routes?.[0]) throw new Error('Google Maps returned no route');
 
   const route = data.routes[0];
   const waypointOrder: number[] = route.waypoint_order ?? [];

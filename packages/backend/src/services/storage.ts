@@ -13,12 +13,17 @@ const r2 = new S3Client({
 
 const BUCKET = process.env.R2_BUCKET_NAME!;
 
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
 export async function uploadBuffer(
   buffer: Buffer,
   mimeType: string,
   folder = 'pod',
 ): Promise<{ key: string; url: string }> {
-  const ext = mimeType === 'image/jpeg' ? 'jpg' : 'png';
+  if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
+    throw new Error(`Unsupported MIME type: ${mimeType}`);
+  }
+  const ext = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png';
   const key = `${folder}/${randomUUID()}.${ext}`;
   await r2.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer, ContentType: mimeType }));
   const url = await getSignedUrl(
