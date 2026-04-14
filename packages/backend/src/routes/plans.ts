@@ -1,0 +1,102 @@
+import type { FastifyPluginAsync } from 'fastify';
+import { db } from '../db/connection.js';
+import { plans, routes, stops, depots } from '../db/schema.js';
+import { eq, and, isNull } from 'drizzle-orm';
+import { requireRole } from '../middleware/requireRole.js';
+import { optimizeRoute } from '../services/routeOptimizer.js';
+
+export const planRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/', {
+    preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin'),
+  }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    const { date } = req.query as { date?: string };
+    const conditions = [eq(plans.orgId, orgId), isNull(plans.deletedAt)];
+    if (date) conditions.push(eq(plans.date, date));
+    return db.select().from(plans).where(and(...conditions)).orderBy(plans.date);
+  });
+
+  app.get('/:planId', {
+    preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin'),
+  }, async (req, reply) => {
+    const { planId } = req.params as { orgId: string; planId: string };
+    const [plan] = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
+    if (!plan) return reply.code(404).send({ error: 'Not found' });
+    const planRoutes = await db.select().from(routes).where(eq(routes.planId, planId));
+    return { ...plan, routes: planRoutes };
+  });
+
+  app.post('/', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { depotId, date } = req.body as { depotId: string; date: string };
+    if (!depotId || !date) return reply.code(400).send({ error: 'depotId and date required' });
+    const [plan] = await db.insert(plans).values({ orgId, depotId, date }).returning();
+    return reply.code(201).send(plan);
+  });
+
+  app.patch('/:planId/distribute', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { planId } = req.params as { orgId: string; planId: string };
+    const [updated] = await db
+      .update(plans)
+      .set({ status: 'distributed' })
+      .where(eq(plans.id, planId))
+      .returning();
+    if (!updated) return reply.code(404).send({ error: 'Not found' });
+    return updated;
+  });
+
+  app.post('/:planId/optimize', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { planId } = req.params as { orgId: string; planId: string };
+
+    const [plan] = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
+    if (!plan) return reply.code(404).send({ error: 'Plan not found' });
+
+    const [depot] = await db.select().from(depots).where(eq(depots.id, plan.depotId)).limit(1);
+    if (!depot) return reply.code(404).send({ error: 'Depot not found' });
+
+    const planRoutes = await db.select().from(routes).where(eq(routes.planId, planId));
+
+    const results = await Promise.all(
+      planRoutes.map(async (route) => {
+        const routeStops = await db
+          .select()
+          .from(stops)
+          .where(and(eq(stops.routeId, route.id), isNull(stops.deletedAt)));
+        if (routeStops.length === 0) return route;
+
+        const optimized = await optimizeRoute(depot.lat, depot.lng, routeStops);
+
+        await db.update(routes).set({
+          stopOrder: optimized.stopIds,
+          estimatedDuration: optimized.totalDuration,
+          totalDistance: optimized.totalDistance,
+        }).where(eq(routes.id, route.id));
+
+        await Promise.all(
+          optimized.stopIds.map((stopId, i) =>
+            db.update(stops).set({ sequenceNumber: i }).where(eq(stops.id, stopId)),
+          ),
+        );
+
+        return { ...route, stopOrder: optimized.stopIds, estimatedDuration: optimized.totalDuration };
+      }),
+    );
+
+    await db.update(plans).set({ status: 'optimized' }).where(eq(plans.id, planId));
+    return { planId, routes: results };
+  });
+
+  app.delete('/:planId', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { planId } = req.params as { orgId: string; planId: string };
+    await db.update(plans).set({ deletedAt: new Date() }).where(eq(plans.id, planId));
+    return reply.code(204).send();
+  });
+};

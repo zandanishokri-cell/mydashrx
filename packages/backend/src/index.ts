@@ -5,6 +5,14 @@ import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import { authRoutes } from './routes/auth.js';
+import { organizationRoutes } from './routes/organizations.js';
+import { depotRoutes } from './routes/depots.js';
+import { driverRoutes } from './routes/drivers.js';
+import { planRoutes } from './routes/plans.js';
+import { routeRoutes } from './routes/routes.js';
+import { stopRoutes } from './routes/stops.js';
+import { podRoutes } from './routes/pod.js';
+import { trackingRoutes } from './routes/tracking.js';
 
 const app = Fastify({ logger: true });
 
@@ -33,6 +41,14 @@ await app.register(multipart, {
 
 // Routes
 await app.register(authRoutes, { prefix: '/api/v1/auth' });
+await app.register(organizationRoutes, { prefix: '/api/v1/orgs' });
+await app.register(depotRoutes, { prefix: '/api/v1/orgs/:orgId/depots' });
+await app.register(driverRoutes, { prefix: '/api/v1/orgs/:orgId/drivers' });
+await app.register(planRoutes, { prefix: '/api/v1/orgs/:orgId/plans' });
+await app.register(routeRoutes, { prefix: '/api/v1/plans/:planId/routes' });
+await app.register(stopRoutes, { prefix: '/api/v1/routes/:routeId/stops' });
+await app.register(podRoutes, { prefix: '/api/v1/stops/:stopId/pod' });
+await app.register(trackingRoutes, { prefix: '/api/v1/track' });
 
 // Health check
 app.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }));
