@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #0F4C81;
+    --color-teal: #00B8A9;
+    --color-amber: #F6A623;
+    --color-coral: #E84855;
+    --color-emerald: #2ECC71;
+  }
+}
+
+body {
+  font-family: var(--font-inter), sans-serif;
+}
