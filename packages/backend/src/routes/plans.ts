@@ -10,9 +10,10 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
-    const { date } = req.query as { date?: string };
+    const { date, depotId } = req.query as { date?: string; depotId?: string };
     const conditions = [eq(plans.orgId, orgId), isNull(plans.deletedAt)];
     if (date) conditions.push(eq(plans.date, date));
+    if (depotId) conditions.push(eq(plans.depotId, depotId));
     return db.select().from(plans).where(and(...conditions)).orderBy(plans.date);
   });
 

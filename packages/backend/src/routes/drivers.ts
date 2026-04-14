@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { drivers } from '../db/schema.js';
-import { eq, and, isNull } from 'drizzle-orm';
+import { drivers, stops, routes, plans } from '../db/schema.js';
+import { eq, and, isNull, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { hashPassword } from '../services/auth.js';
 
@@ -10,16 +10,23 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
-    return db
+    // Include total stop count (all time) and today's stop count
+    const today = new Date().toISOString().split('T')[0];
+    const rows = await db
       .select({
         id: drivers.id, orgId: drivers.orgId, name: drivers.name,
         email: drivers.email, phone: drivers.phone,
         drugCapable: drivers.drugCapable, vehicleType: drivers.vehicleType,
         status: drivers.status, currentLat: drivers.currentLat,
         currentLng: drivers.currentLng, lastPingAt: drivers.lastPingAt,
+        totalStops: sql<number>`count(distinct ${stops.id})::int`,
       })
       .from(drivers)
-      .where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt)));
+      .leftJoin(routes, eq(routes.driverId, drivers.id))
+      .leftJoin(stops, and(eq(stops.routeId, routes.id), isNull(stops.deletedAt)))
+      .where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt)))
+      .groupBy(drivers.id);
+    return rows;
   });
 
   app.get('/:driverId', {
@@ -73,5 +80,20 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     const [updated] = await db.update(drivers).set({ status }).where(eq(drivers.id, driverId)).returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     return { id: updated.id, status: updated.status };
+  });
+
+  app.patch('/:driverId', { preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin') }, async (req, reply) => {
+    const { driverId } = req.params as { orgId: string; driverId: string };
+    const body = req.body as { name?: string; phone?: string; vehicleType?: 'car' | 'van' | 'bicycle'; drugCapable?: boolean };
+    const [updated] = await db.update(drivers).set(body).where(eq(drivers.id, driverId)).returning();
+    if (!updated) return reply.code(404).send({ error: 'Not found' });
+    const { passwordHash: _, ...safe } = updated;
+    return safe;
+  });
+
+  app.delete('/:driverId', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+    const { driverId } = req.params as { orgId: string; driverId: string };
+    await db.update(drivers).set({ deletedAt: new Date() }).where(eq(drivers.id, driverId));
+    return reply.code(204).send();
   });
 };

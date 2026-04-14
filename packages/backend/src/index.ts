@@ -13,6 +13,8 @@ import { routeRoutes } from './routes/routes.js';
 import { stopRoutes } from './routes/stops.js';
 import { podRoutes } from './routes/pod.js';
 import { trackingRoutes } from './routes/tracking.js';
+import { searchRoutes } from './routes/search.js';
+import { analyticsRoutes } from './routes/analytics.js';
 
 const app = Fastify({ logger: true });
 
@@ -49,6 +51,8 @@ await app.register(routeRoutes, { prefix: '/api/v1/plans/:planId/routes' });
 await app.register(stopRoutes, { prefix: '/api/v1/routes/:routeId/stops' });
 await app.register(podRoutes, { prefix: '/api/v1/stops/:stopId/pod' });
 await app.register(trackingRoutes, { prefix: '/api/v1/track' });
+await app.register(searchRoutes, { prefix: '/api/v1/orgs/:orgId' });
+await app.register(analyticsRoutes, { prefix: '/api/v1/orgs/:orgId/analytics' });
 
 // Health check
 app.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }));

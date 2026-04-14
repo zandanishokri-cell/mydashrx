@@ -101,4 +101,31 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     await db.update(stops).set({ deletedAt: new Date() }).where(eq(stops.id, stopId));
     return reply.code(204).send();
   });
+
+  // Move stop to a different route
+  app.patch('/:stopId/move', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { stopId } = req.params as { routeId: string; stopId: string };
+    const { targetRouteId } = req.body as { targetRouteId: string };
+    if (!targetRouteId) return reply.code(400).send({ error: 'targetRouteId required' });
+    const [updated] = await db.update(stops).set({ routeId: targetRouteId }).where(eq(stops.id, stopId)).returning();
+    if (!updated) return reply.code(404).send({ error: 'Stop not found' });
+    return updated;
+  });
+
+  // Update any stop fields (for future use)
+  app.patch('/:stopId', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { stopId } = req.params as { routeId: string; stopId: string };
+    const body = req.body as Record<string, unknown>;
+    const allowed = ['deliveryNotes', 'packageCount', 'requiresRefrigeration', 'controlledSubstance', 'requiresSignature', 'requiresPhoto', 'codAmount'];
+    const updates: Record<string, unknown> = {};
+    for (const k of allowed) if (k in body) updates[k] = body[k];
+    if (Object.keys(updates).length === 0) return reply.code(400).send({ error: 'No valid fields' });
+    const [updated] = await db.update(stops).set(updates).where(eq(stops.id, stopId)).returning();
+    if (!updated) return reply.code(404).send({ error: 'Not found' });
+    return updated;
+  });
 };
