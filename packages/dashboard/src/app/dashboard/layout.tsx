@@ -3,12 +3,12 @@ import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { isAuthenticated, clearSession } from '@/lib/auth';
-import { LayoutDashboard, Route, Package, Users, LogOut } from 'lucide-react';
+import { LayoutDashboard, Route, Map, Users, LogOut } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', label: 'Command Center', icon: LayoutDashboard },
   { href: '/dashboard/plans', label: 'Route Plans', icon: Route },
-  { href: '/dashboard/stops', label: 'Stops', icon: Package },
+  { href: '/dashboard/map', label: 'Live Map', icon: Map },
   { href: '/dashboard/drivers', label: 'Drivers', icon: Users },
 ];
 
@@ -49,7 +49,7 @@ export default function DashboardLayout({
               key={href}
               href={href}
               className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                pathname === href
+                pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
                   ? 'bg-blue-50 text-[#0F4C81]'
                   : 'text-gray-600 hover:bg-gray-50'
               }`}

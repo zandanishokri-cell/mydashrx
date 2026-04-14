@@ -3,14 +3,14 @@ interface RouteCardProps {
   stopCount: number;
   completedCount: number;
   estimatedDuration: number | null;
-  status: 'pending' | 'active' | 'completed';
+  status: string;
 }
 
-const statusConfig = {
+const statusConfig: Record<string, { label: string; classes: string }> = {
   pending: { label: 'Pending', classes: 'bg-gray-100 text-gray-600' },
   active: { label: 'Active', classes: 'bg-teal-50 text-teal-700' },
   completed: { label: 'Complete', classes: 'bg-green-50 text-green-700' },
-} as const;
+};
 
 export function RouteCard({
   driverName,
@@ -20,7 +20,7 @@ export function RouteCard({
   status,
 }: RouteCardProps) {
   const pct = stopCount > 0 ? Math.round((completedCount / stopCount) * 100) : 0;
-  const { label, classes } = statusConfig[status];
+  const { label, classes } = statusConfig[status] ?? { label: status, classes: 'bg-gray-100 text-gray-600' };
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-4 hover:shadow-sm transition-shadow">
