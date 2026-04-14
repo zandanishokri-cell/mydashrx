@@ -1,0 +1,15 @@
+{
+  "name": "mydash-rx",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "db:push": "turbo run db:push --filter=backend",
+    "db:studio": "cd packages/backend && npx drizzle-kit studio"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0"
+  }
+}
