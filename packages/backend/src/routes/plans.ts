@@ -22,7 +22,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     const { planId } = req.params as { orgId: string; planId: string };
     const [plan] = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
     if (!plan) return reply.code(404).send({ error: 'Not found' });
-    const planRoutes = await db.select().from(routes).where(eq(routes.planId, planId));
+    const planRoutes = await db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
     return { ...plan, routes: planRoutes };
   });
 
@@ -60,7 +60,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     const [depot] = await db.select().from(depots).where(eq(depots.id, plan.depotId)).limit(1);
     if (!depot) return reply.code(404).send({ error: 'Depot not found' });
 
-    const planRoutes = await db.select().from(routes).where(eq(routes.planId, planId));
+    const planRoutes = await db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
 
     const results = await Promise.all(
       planRoutes.map(async (route) => {
