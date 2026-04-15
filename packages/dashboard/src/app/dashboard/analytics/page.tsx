@@ -1,9 +1,5 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, BarChart, Bar,
-} from 'recharts';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { DepotFilter } from '@/components/ui/DepotFilter';
@@ -33,7 +29,7 @@ const defaultRange = (): DateRange => {
   return { from, to };
 };
 
-const PIE_COLORS = ['#0F4C81', '#00B8A9', '#F6A623', '#ef4444', '#8b5cf6', '#6b7280'];
+const BAR_COLORS = ['#0F4C81', '#00B8A9', '#F6A623', '#ef4444', '#8b5cf6', '#6b7280'];
 
 function StatCard({ label, value, sub, up }: { label: string; value: string | number; sub?: string; up?: boolean }) {
   return (
@@ -46,6 +42,44 @@ function StatCard({ label, value, sub, up }: { label: string; value: string | nu
             {up ? <TrendingUp size={10} /> : <TrendingDown size={10} />} {sub}
           </span>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Horizontal bar: pct [0-100], color hex, label left, value right */
+function HBar({ label, pct, value, color = '#0F4C81' }: { label: string; pct: number; value: string | number; color?: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-xs text-gray-600 w-36 truncate shrink-0">{label}</span>
+      <div className="flex-1 bg-gray-100 rounded-full h-2">
+        <div className="h-2 rounded-full transition-all" style={{ width: `${Math.min(pct, 100)}%`, background: color }} />
+      </div>
+      <span className="text-xs text-gray-700 font-medium w-10 text-right shrink-0">{value}</span>
+    </div>
+  );
+}
+
+/** Vertical grouped bar chart for daily totals */
+function DailyBars({ data }: { data: { date: string; total: number; completed: number; failed: number }[] }) {
+  if (data.length === 0) return <div className="flex items-center justify-center h-40 text-gray-400 text-sm">No data for this period</div>;
+  const maxVal = Math.max(...data.map(d => d.total), 1);
+  return (
+    <div className="overflow-x-auto">
+      <div className="flex items-end gap-1 min-w-0 h-40" style={{ minWidth: data.length * 32 }}>
+        {data.map(d => (
+          <div key={d.date} className="flex flex-col items-center gap-0.5 flex-1 min-w-[28px]">
+            <div className="w-full flex items-end gap-px" style={{ height: 120 }}>
+              <div className="flex-1 rounded-t transition-all" style={{ height: `${(d.completed / maxVal) * 100}%`, background: '#00B8A9', minHeight: d.completed > 0 ? 2 : 0 }} title={`Completed: ${d.completed}`} />
+              <div className="flex-1 rounded-t transition-all" style={{ height: `${(d.failed / maxVal) * 100}%`, background: '#ef4444', minHeight: d.failed > 0 ? 2 : 0 }} title={`Failed: ${d.failed}`} />
+            </div>
+            <span className="text-[9px] text-gray-400 rotate-45 origin-top-left translate-x-1">{d.date.slice(5)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-4 mt-6 text-xs text-gray-500">
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-[#00B8A9]" /> Completed</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-[#ef4444]" /> Failed</span>
       </div>
     </div>
   );
@@ -103,8 +137,16 @@ export default function AnalyticsPage() {
       </div>
 
       {loading || !data ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1,2,3,4].map(i => <div key={i} className="h-24 bg-white rounded-xl border border-gray-100 animate-pulse" />)}
+        <div className="space-y-4 animate-pulse">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1,2,3,4].map(i => <div key={i} className="h-24 bg-gray-100 rounded-xl" />)}
+          </div>
+          <div className="h-64 bg-gray-100 rounded-xl" />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="h-52 bg-gray-100 rounded-xl" />
+            <div className="h-52 bg-gray-100 rounded-xl" />
+          </div>
+          <div className="h-56 bg-gray-100 rounded-xl" />
         </div>
       ) : (
         <>
@@ -129,55 +171,34 @@ export default function AnalyticsPage() {
             <StatCard label="Avg per driver" value={data.summary.avgPerDriver} />
           </div>
 
-          {/* Attempts volume chart */}
+          {/* Attempts volume — daily grouped bars */}
           <div className="bg-white rounded-xl border border-gray-100 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-4">Attempts volume</h2>
-            {data.daily.length === 0 ? (
-              <div className="flex items-center justify-center h-40 text-gray-400 text-sm">No data for this period</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={data.daily} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={d => d.slice(5)} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip labelFormatter={l => `Date: ${l}`} />
-                  <Line type="monotone" dataKey="total" stroke="#0F4C81" strokeWidth={2} dot={false} name="Total" />
-                  <Line type="monotone" dataKey="completed" stroke="#00B8A9" strokeWidth={2} dot={false} name="Completed" />
-                  <Line type="monotone" dataKey="failed" stroke="#ef4444" strokeWidth={2} dot={false} name="Failed" />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
+            <DailyBars data={data.daily} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Failure reasons */}
+            {/* Failure reasons — horizontal bars */}
             <div className="bg-white rounded-xl border border-gray-100 p-5">
               <h2 className="text-sm font-semibold text-gray-700 mb-4">Failed delivery reasons</h2>
               {data.failureReasons.length === 0 ? (
                 <div className="flex items-center justify-center h-40 text-gray-400 text-sm">No failures in this period</div>
-              ) : (
-                <div className="flex items-center gap-4">
-                  <ResponsiveContainer width="50%" height={160}>
-                    <PieChart>
-                      <Pie data={data.failureReasons} dataKey="count" nameKey="reason" cx="50%" cy="50%" outerRadius={60} innerRadius={35}>
-                        {data.failureReasons.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="flex-1 space-y-1.5">
+              ) : (() => {
+                const maxCount = Math.max(...data.failureReasons.map(r => r.count), 1);
+                return (
+                  <div className="space-y-3">
                     {data.failureReasons.map((r, i) => (
-                      <div key={r.reason} className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-2.5 h-2.5 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                          <span className="text-gray-600 capitalize">{r.reason}</span>
-                        </div>
-                        <span className="text-gray-900 font-medium">{r.count}</span>
-                      </div>
+                      <HBar
+                        key={r.reason}
+                        label={r.reason}
+                        pct={(r.count / maxCount) * 100}
+                        value={r.count}
+                        color={BAR_COLORS[i % BAR_COLORS.length]}
+                      />
                     ))}
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Depot breakdown */}
@@ -202,7 +223,7 @@ export default function AnalyticsPage() {
             </div>
           </div>
 
-          {/* Driver performance */}
+          {/* Driver performance table */}
           <div className="bg-white rounded-xl border border-gray-100 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-4">Driver performance</h2>
             {data.drivers.length === 0 ? (
@@ -243,24 +264,21 @@ export default function AnalyticsPage() {
             )}
           </div>
 
-          {/* Driver completion rate bar chart */}
+          {/* Driver completion rate — horizontal bar chart */}
           {data.drivers.length > 0 && (() => {
             const chartData = data.drivers
               .filter(d => d.total > 0)
-              .map(d => ({ driverName: d.driverName ?? 'Unknown', completionRate: Math.round((d.completed / d.total) * 100) }))
-              .sort((a, b) => b.completionRate - a.completionRate)
+              .map(d => ({ name: d.driverName ?? 'Unknown', rate: Math.round((d.completed / d.total) * 100) }))
+              .sort((a, b) => b.rate - a.rate)
               .slice(0, 10);
             return (
               <div className="bg-white rounded-xl border border-gray-100 p-6">
                 <h2 className="text-sm font-semibold text-gray-700 mb-4">Completion rate by driver (top 10)</h2>
-                <ResponsiveContainer width="100%" height={Math.max(chartData.length * 36, 120)}>
-                  <BarChart layout="vertical" data={chartData} margin={{ left: 100 }}>
-                    <XAxis type="number" domain={[0, 100]} tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} />
-                    <YAxis dataKey="driverName" type="category" width={100} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v) => [`${Number(v)}%`, 'Completion rate']} />
-                    <Bar dataKey="completionRate" fill="#0F4C81" radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div className="space-y-3">
+                  {chartData.map(d => (
+                    <HBar key={d.name} label={d.name} pct={d.rate} value={`${d.rate}%`} color="#0F4C81" />
+                  ))}
+                </div>
               </div>
             );
           })()}
