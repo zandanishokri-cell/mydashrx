@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, plans, drivers } from '../db/schema.js';
+import { stops, routes, plans, drivers, users } from '../db/schema.js';
 import { eq, and, isNull, isNotNull, gte, inArray, or, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
@@ -19,6 +19,14 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
+
+    // Look up caller's notification preferences
+    const callerPayload = req.user as { id: string };
+    const [callerUser] = await db.select({ notificationPreferences: users.notificationPreferences })
+      .from(users)
+      .where(eq(users.id, callerPayload.id));
+    const prefs = (callerUser?.notificationPreferences ?? { route_completed: true, stop_failed: true, stop_assigned: true }) as Record<string, boolean>;
+
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     // ── 1. Org's plans (needed to scope routes by org) ─────────────────────
@@ -126,7 +134,8 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const sorted = events
+    const filtered = events.filter(e => prefs[e.type] !== false);
+    const sorted = filtered
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       .slice(0, 20);
 

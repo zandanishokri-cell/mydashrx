@@ -44,6 +44,7 @@ import { pharmacistPortalRoutes } from './routes/pharmacistPortal.js';
 import { reportRoutes } from './routes/reports.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { notificationRoutes } from './routes/notifications.js';
+import { userSettingsRoutes } from './routes/userSettings.js';
 import { sendDailyReport } from './services/dailyReport.js';
 import { db, client } from './db/connection.js';
 import { organizations } from './db/schema.js';
@@ -124,6 +125,7 @@ await app.register(pharmacistPortalRoutes, { prefix: '/api/v1/orgs/:orgId/pharma
 await app.register(reportRoutes, { prefix: '/api/v1/orgs/:orgId/reports' });
 await app.register(dashboardRoutes, { prefix: '/api/v1/orgs/:orgId/dashboard' });
 await app.register(notificationRoutes, { prefix: '/api/v1/orgs/:orgId/notifications' });
+await app.register(userSettingsRoutes, { prefix: '/api/v1/orgs/:orgId' });
 
 // Public: list depots for pharmacy registration
 app.get('/api/v1/public/depots', async () => {
