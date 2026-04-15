@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { CsvImportModal } from '@/components/CsvImportModal';
-import { Plus, Search, X, RefreshCw, Download, Upload, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
+import { Plus, Search, X, RefreshCw, Download, Upload, ChevronUp, ChevronDown, ChevronsUpDown, Filter } from 'lucide-react';
 import Link from 'next/link';
 
 interface Stop {
@@ -74,6 +74,7 @@ export default function StopsPage() {
   const [loading, setLoading] = useState(true);
   const [statusTab, setStatusTab] = useState('all');
   const [depotId, setDepotId] = useState('');
+  const [depotName, setDepotName] = useState('');
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [dateRange, setDateRange] = useState<DateRange>(() => TODAY_RANGE());
@@ -187,7 +188,7 @@ export default function StopsPage() {
 
         {/* Filters row */}
         <div className="flex items-center gap-2 flex-wrap">
-          <DepotFilter value={depotId} onChange={v => { setDepotId(v); }} />
+          <DepotFilter value={depotId} onChange={(id, name) => { setDepotId(id); setDepotName(name ?? ''); }} />
 
           {/* Status tabs */}
           <div className="flex items-center bg-gray-100 rounded-lg p-0.5 gap-0.5">
@@ -248,6 +249,44 @@ export default function StopsPage() {
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
+
+        {/* Active filter chips */}
+        {(depotId || statusTab !== 'all' || search || !todayOnly) && (
+          <div className="flex items-center gap-1.5 flex-wrap pt-2">
+            <span className="text-xs text-gray-400 flex items-center gap-1"><Filter size={11} /> Filters:</span>
+            {depotId && (
+              <span className="flex items-center gap-1 text-xs bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded-full">
+                {depotName || 'Depot'}
+                <button onClick={() => { setDepotId(''); setDepotName(''); }} className="hover:text-blue-900"><X size={10} /></button>
+              </span>
+            )}
+            {statusTab !== 'all' && (
+              <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full">
+                {STATUS_TABS.find(t => t.key === statusTab)?.label ?? statusTab}
+                <button onClick={() => setStatusTab('all')} className="hover:text-gray-900"><X size={10} /></button>
+              </span>
+            )}
+            {!todayOnly && (
+              <span className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full">
+                {dateRange.from === dateRange.to ? dateRange.from : `${dateRange.from} – ${dateRange.to}`}
+                <button onClick={() => { setTodayOnly(true); setDateRange(TODAY_RANGE()); }} className="hover:text-indigo-900"><X size={10} /></button>
+              </span>
+            )}
+            {search && (
+              <span className="flex items-center gap-1 text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full">
+                &ldquo;{search}&rdquo;
+                <button onClick={() => { setSearch(''); setSearchInput(''); }} className="hover:text-amber-900"><X size={10} /></button>
+              </span>
+            )}
+            <button
+              onClick={() => { setDepotId(''); setDepotName(''); setStatusTab('all'); setTodayOnly(true); setDateRange(TODAY_RANGE()); setSearch(''); setSearchInput(''); }}
+              className="text-xs text-gray-400 hover:text-gray-600 ml-1"
+            >
+              Clear all
+            </button>
+            {!loading && <span className="text-xs text-gray-400 ml-auto">{total} stop{total !== 1 ? 's' : ''}</span>}
+          </div>
+        )}
       </div>
 
       {/* Table */}

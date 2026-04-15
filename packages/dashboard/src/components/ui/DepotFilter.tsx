@@ -7,7 +7,7 @@ interface Depot { id: string; name: string; }
 
 interface Props {
   value: string;
-  onChange: (id: string) => void;
+  onChange: (id: string, name?: string) => void;
   className?: string;
 }
 
@@ -23,7 +23,10 @@ export function DepotFilter({ value, onChange, className = '' }: Props) {
   return (
     <select
       value={value}
-      onChange={e => onChange(e.target.value)}
+      onChange={e => {
+        const depot = depots.find(d => d.id === e.target.value);
+        onChange(e.target.value, depot?.name);
+      }}
       className={`border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-100 ${className}`}
     >
       <option value="">All depots</option>
