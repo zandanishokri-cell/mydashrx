@@ -48,27 +48,12 @@ import { organizations } from './db/schema.js';
 import { isNull } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 
-// Run DB migrations + auto-seed on startup
+// Run schema migrations synchronously — fast DDL, must complete before routes work
 try {
   await migrate(db, { migrationsFolder: join(process.cwd(), 'src/db/migrations') });
   console.log('DB migrations applied');
 } catch (err) {
   console.error('Migration warning (non-fatal):', err instanceof Error ? err.message : err);
-}
-
-// Auto-seed if DB is empty
-try {
-  const [firstOrg] = await db.select({ id: organizations.id }).from(organizations).limit(1);
-  if (!firstOrg) {
-    console.log('DB empty — running seed...');
-    const { execSync } = await import('child_process');
-    execSync(`npx tsx ${join(process.cwd(), 'src/db/seed.ts')}`, {
-      env: { ...process.env },
-      stdio: 'inherit',
-    });
-  }
-} catch (err) {
-  console.error('Seed warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
 const app = Fastify({ logger: true });
@@ -167,6 +152,24 @@ try {
   app.log.error(err);
   process.exit(1);
 }
+
+// Auto-seed in background after server is live (non-blocking)
+setImmediate(async () => {
+  try {
+    const [firstOrg] = await db.select({ id: organizations.id }).from(organizations).limit(1);
+    if (!firstOrg) {
+      console.log('DB empty — seeding in background...');
+      const { spawn } = await import('child_process');
+      const seed = spawn('npx', ['tsx', join(process.cwd(), 'src/db/seed.ts')], {
+        env: { ...process.env },
+        stdio: 'inherit',
+      });
+      seed.on('close', (code) => console.log(`Seed exited with code ${code}`));
+    }
+  } catch (err) {
+    console.error('Seed error (non-fatal):', err instanceof Error ? err.message : err);
+  }
+});
 
 // Daily report scheduler — fires every hour, sends between 7-8 AM UTC
 setInterval(async () => {
