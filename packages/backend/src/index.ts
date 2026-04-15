@@ -43,9 +43,36 @@ import { recurringRoutes } from './routes/recurring.js';
 import { pharmacistPortalRoutes } from './routes/pharmacistPortal.js';
 import { reportRoutes } from './routes/reports.js';
 import { sendDailyReport } from './services/dailyReport.js';
-import { db } from './db/connection.js';
+import { db, client } from './db/connection.js';
 import { organizations } from './db/schema.js';
 import { isNull } from 'drizzle-orm';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// Run DB migrations + auto-seed on startup
+const __dirname = dirname(fileURLToPath(import.meta.url));
+try {
+  await migrate(db, { migrationsFolder: join(__dirname, 'db/migrations') });
+  console.log('DB migrations applied');
+} catch (err) {
+  console.error('Migration warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// Auto-seed if DB is empty
+try {
+  const [firstOrg] = await db.select({ id: organizations.id }).from(organizations).limit(1);
+  if (!firstOrg) {
+    console.log('DB empty — running seed...');
+    const { execSync } = await import('child_process');
+    execSync('npx tsx ' + join(__dirname, '../src/db/seed.ts'), {
+      env: { ...process.env },
+      stdio: 'inherit',
+    });
+  }
+} catch (err) {
+  console.error('Seed warning (non-fatal):', err instanceof Error ? err.message : err);
+}
 
 const app = Fastify({ logger: true });
 

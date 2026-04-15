@@ -6,7 +6,7 @@ services:
     region: ohio
     rootDir: packages/backend
     buildCommand: npm install --include=dev && npm run build
-    startCommand: npx drizzle-kit push:pg --force && npx tsx src/db/seed.ts && node dist/index.js
+    startCommand: node dist/index.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
