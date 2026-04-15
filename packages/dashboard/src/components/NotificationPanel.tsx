@@ -49,9 +49,9 @@ export default function NotificationPanel() {
 
   // Initial load + 60s polling
   useEffect(() => {
-    load();
+    const cancel = load();
     const interval = setInterval(load, 60_000);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); cancel?.(); };
   }, [load]);
 
   // Close on outside click

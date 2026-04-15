@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers, leadProspects, proofOfDeliveries } from '../db/schema.js';
 import { eq, and, isNull, ilike, or, gte, lte, sql, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { checkAndNotifyRouteComplete } from './stops.js';
 
 export const searchRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/stops — filterable stop list (used by Stops page + Search page)
@@ -210,16 +211,10 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       ...(action === 'failed' ? { failureReason: 'Bulk marked failed' } : {}),
     }).where(inArray(stops.id, toUpdate.map(s => s.id)));
 
-    // Trigger route completion check for affected routes
+    // Trigger route completion check + email for affected routes
     const routeIds = [...new Set(toUpdate.map(s => s.routeId).filter((id): id is string => !!id))];
     for (const routeId of routeIds) {
-      const routeStops = await db.select({ status: stops.status })
-        .from(stops).where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)));
-      if (routeStops.length > 0 && routeStops.every(s => TERMINAL.includes(s.status))) {
-        await db.update(routes)
-          .set({ completedAt: now, status: 'completed' })
-          .where(and(eq(routes.id, routeId), isNull(routes.completedAt)));
-      }
+      checkAndNotifyRouteComplete(orgId, routeId).catch(console.error);
     }
 
     return { updated: toUpdate.length, skipped };

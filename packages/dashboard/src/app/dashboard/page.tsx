@@ -76,9 +76,9 @@ export default function CommandCenter() {
   }, [user]);
 
   useEffect(() => {
-    loadDrivers();
+    const cancel = loadDrivers();
     driversTimer.current = setInterval(loadDrivers, 30_000);
-    return () => { if (driversTimer.current) clearInterval(driversTimer.current); };
+    return () => { if (driversTimer.current) clearInterval(driversTimer.current); cancel?.(); };
   }, [loadDrivers]);
 
   const load = useCallback(async (isRefresh = false) => {

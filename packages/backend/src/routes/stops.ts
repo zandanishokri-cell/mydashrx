@@ -9,7 +9,7 @@ import type { StopStatus } from '@mydash-rx/shared';
 
 const TERMINAL_STATUSES: StopStatus[] = ['completed', 'failed', 'rescheduled'];
 
-async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
+export async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
   const [route] = await db.select({ completedAt: routes.completedAt, driverId: routes.driverId })
     .from(routes).where(eq(routes.id, routeId)).limit(1);
   if (!route || route.completedAt) return; // already completed
