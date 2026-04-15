@@ -79,6 +79,11 @@ function StopDetailContent({ stopId }: { stopId: string }) {
   const [rescheduling, setRescheduling] = useState(false);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
   const [showPod, setShowPod] = useState(false);
+  const [showReassign, setShowReassign] = useState(false);
+  const [planRoutes, setPlanRoutes] = useState<{ id: string; driverId: string; driverName: string }[]>([]);
+  const [reassignTargetId, setReassignTargetId] = useState('');
+  const [reassigning, setReassigning] = useState(false);
+  const [reassignError, setReassignError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -116,6 +121,36 @@ function StopDetailContent({ stopId }: { stopId: string }) {
     } catch {
       setRescheduleError('Failed to reschedule. Please try again.');
     } finally { setRescheduling(false); }
+  };
+
+  const openReassign = async () => {
+    if (!stop?.planId || !user) return;
+    try {
+      const [planRoutesData, driversData] = await Promise.all([
+        api.get<{ id: string; driverId: string }[]>(`/plans/${stop.planId}/routes`),
+        api.get<{ id: string; name: string }[]>(`/orgs/${user.orgId}/drivers`),
+      ]);
+      const driverMap = Object.fromEntries(driversData.map(d => [d.id, d.name]));
+      const others = planRoutesData
+        .filter(r => r.id !== stop.routeId)
+        .map(r => ({ ...r, driverName: driverMap[r.driverId] ?? 'Unknown Driver' }));
+      setPlanRoutes(others);
+      setReassignTargetId(others[0]?.id ?? '');
+      setShowReassign(true);
+    } catch { /* silent — button just won't work */ }
+  };
+
+  const confirmReassign = async () => {
+    if (!stop || !reassignTargetId || !user) return;
+    setReassigning(true);
+    setReassignError(null);
+    try {
+      await api.patch(`/routes/${stop.routeId}/stops/${stop.id}/move`, { targetRouteId: reassignTargetId });
+      await load();
+      setShowReassign(false);
+    } catch {
+      setReassignError('Failed to reassign. Please try again.');
+    } finally { setReassigning(false); }
   };
 
   if (loading) return (
@@ -340,8 +375,20 @@ function StopDetailContent({ stopId }: { stopId: string }) {
 
         {/* Map preview */}
         {mapUrl && (
-          <section className="rounded-2xl overflow-hidden border border-gray-100">
-            <img src={mapUrl} alt="Map" className="w-full h-40 object-cover" />
+          <section className="rounded-2xl overflow-hidden border border-gray-100 relative">
+            <a
+              href={stop.lat && stop.lng
+                ? `https://maps.google.com/?q=${stop.lat},${stop.lng}`
+                : `https://maps.google.com/?q=${encodeURIComponent(stop.address)}`}
+              target="_blank"
+              rel="noreferrer"
+              className="block"
+            >
+              <img src={mapUrl} alt="Map" className="w-full h-40 object-cover" />
+              <div className="absolute bottom-2 right-2 bg-white/90 backdrop-blur-sm text-xs font-medium text-[#0F4C81] px-2.5 py-1 rounded-lg shadow-sm flex items-center gap-1">
+                <MapPin size={11} /> Open in Maps
+              </div>
+            </a>
           </section>
         )}
 
@@ -392,6 +439,15 @@ function StopDetailContent({ stopId }: { stopId: string }) {
               )}
             </div>
           )}
+          {stop.routeId && stop.planId && !['completed', 'failed'].includes(stop.status) &&
+           user && user.role !== 'driver' && user.role !== 'pharmacist' && (
+            <button
+              onClick={openReassign}
+              className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-sm hover:bg-gray-50 transition-colors"
+            >
+              <Truck size={15} /> Reassign Driver
+            </button>
+          )}
           {stop.trackingToken && (
             <a
               href={`/track/${stop.trackingToken}`}
@@ -411,6 +467,48 @@ function StopDetailContent({ stopId }: { stopId: string }) {
             </Link>
           )}
         </section>
+
+        {/* Reassign Driver Modal */}
+        {showReassign && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-4" onClick={() => setShowReassign(false)}>
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl" onClick={e => e.stopPropagation()}>
+              <h3 className="text-base font-semibold text-gray-900 mb-1">Reassign Driver</h3>
+              <p className="text-sm text-gray-500 mb-4">Move this stop to a different driver's route</p>
+              {planRoutes.length === 0 ? (
+                <p className="text-sm text-gray-400 mb-4">No other routes available on this plan.</p>
+              ) : (
+                <div className="mb-4">
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Select driver</label>
+                  <select
+                    value={reassignTargetId}
+                    onChange={e => setReassignTargetId(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/20"
+                  >
+                    {planRoutes.map(r => (
+                      <option key={r.id} value={r.id}>{r.driverName}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {reassignError && <p className="text-xs text-red-600 mb-3">{reassignError}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowReassign(false)}
+                  className="flex-1 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-sm hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmReassign}
+                  disabled={reassigning || planRoutes.length === 0}
+                  className="flex-1 px-4 py-2 bg-[#0F4C81] text-white rounded-xl text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
+                >
+                  {reassigning ? 'Moving…' : 'Reassign'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
