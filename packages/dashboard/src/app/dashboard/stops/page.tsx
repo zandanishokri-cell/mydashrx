@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { CsvImportModal } from '@/components/CsvImportModal';
-import { Plus, Search, X, RefreshCw, Download, Upload } from 'lucide-react';
+import { Plus, Search, X, RefreshCw, Download, Upload, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import Link from 'next/link';
 
 interface Stop {
@@ -79,7 +79,26 @@ export default function StopsPage() {
   const [page, setPage] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const [sortKey, setSortKey] = useState<'urgency' | 'status' | 'date' | 'driver' | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSort = (key: typeof sortKey) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+
+  const URGENCY_ORDER: Record<string, number> = { overdue: 0, 'due-soon': 1, normal: 2 };
+  const STATUS_ORDER: Record<string, number> = { pending: 0, in_progress: 1, arrived: 2, completed: 3, failed: 4 };
+
+  const sortedStops = sortKey ? [...stops].sort((a, b) => {
+    let cmp = 0;
+    if (sortKey === 'urgency') cmp = (URGENCY_ORDER[getUrgency(a)] ?? 99) - (URGENCY_ORDER[getUrgency(b)] ?? 99);
+    else if (sortKey === 'status') cmp = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
+    else if (sortKey === 'date') cmp = (a.planDate ?? '').localeCompare(b.planDate ?? '');
+    else if (sortKey === 'driver') cmp = (a.driverName ?? '').localeCompare(b.driverName ?? '');
+    return sortDir === 'asc' ? cmp : -cmp;
+  }) : stops;
 
   const load = useCallback(async (resetPage = false) => {
     if (!user) return;
@@ -237,17 +256,38 @@ export default function StopsPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100 sticky top-0">
                 <tr>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</th>
+                  {/* Address / Urgency sort */}
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    <button onClick={() => handleSort('urgency')} className="flex items-center gap-1 hover:text-gray-700">
+                      Address
+                      {sortKey === 'urgency' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronsUpDown size={11} className="opacity-40" />}
+                    </button>
+                  </th>
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Recipient</th>
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Depot</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Driver</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Date</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">
+                    <button onClick={() => handleSort('driver')} className="flex items-center gap-1 hover:text-gray-700">
+                      Driver
+                      {sortKey === 'driver' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronsUpDown size={11} className="opacity-40" />}
+                    </button>
+                  </th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">
+                    <button onClick={() => handleSort('date')} className="flex items-center gap-1 hover:text-gray-700">
+                      Date
+                      {sortKey === 'date' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronsUpDown size={11} className="opacity-40" />}
+                    </button>
+                  </th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    <button onClick={() => handleSort('status')} className="flex items-center gap-1 hover:text-gray-700">
+                      Status
+                      {sortKey === 'status' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronsUpDown size={11} className="opacity-40" />}
+                    </button>
+                  </th>
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden sm:table-cell">Rx</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 bg-white">
-                {stops.map(stop => {
+                {sortedStops.map(stop => {
                   const urgency = getUrgency(stop);
                   const badgeCls = URGENCY_BADGE[urgency];
                   return (

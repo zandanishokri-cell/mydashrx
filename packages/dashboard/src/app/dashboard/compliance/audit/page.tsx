@@ -40,6 +40,8 @@ export default function AuditPage() {
   const [actionFilter, setActionFilter] = useState('');
   const [resourceFilter, setResourceFilter] = useState('');
   const [page, setPage] = useState(1);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -59,8 +61,10 @@ export default function AuditPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const exportCsv = () => {
-    if (!user) return;
+  const exportCsv = async () => {
+    if (!user || exporting) return;
+    setExporting(true);
+    setExportError(null);
     const params = new URLSearchParams({ export: 'csv' });
     if (from) params.set('from', from);
     if (to) params.set('to', to);
@@ -69,15 +73,19 @@ export default function AuditPage() {
     if (resourceFilter) params.set('resource', resourceFilter);
     const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
     const url = `${BASE}/api/v1/orgs/${user.orgId}/compliance/audit-logs?${params}`;
-    // Use anchor with auth header via fetch + blob
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then(r => r.blob())
-      .then(blob => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `audit-log-${new Date().toISOString().split('T')[0]}.csv`;
-        a.click();
-      });
+    try {
+      const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `audit-log-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const applyFilters = () => { setPage(1); load(); };
@@ -99,12 +107,16 @@ export default function AuditPage() {
             <p className="text-xs text-gray-500">System access and change events</p>
           </div>
         </div>
-        <button
-          onClick={exportCsv}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
-        >
-          <Download size={14} /> Export CSV
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            onClick={exportCsv}
+            disabled={exporting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors disabled:opacity-50"
+          >
+            <Download size={14} /> {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+          {exportError && <p className="text-xs text-red-500">{exportError}</p>}
+        </div>
       </div>
 
       {/* Filters */}
