@@ -62,6 +62,53 @@ function HBar({ label, pct, value, color = '#0F4C81' }: { label: string; pct: nu
   );
 }
 
+/** SVG sparkline showing completion rate trend per day */
+function TrendSparkline({ data }: { data: { date: string; total: number; completed: number; failed: number }[] }) {
+  const pts = data.filter(d => d.total > 0).slice(-14);
+  if (pts.length < 2) return null;
+  const rates = pts.map(d => (d.completed / d.total) * 100);
+  const avgRate = rates.reduce((s, v) => s + v, 0) / rates.length;
+  const trend = rates[rates.length - 1] - rates[0];
+  const W = 400, H = 56;
+  const xStep = W / (pts.length - 1);
+  const coords = rates.map((r, i): [number, number] => [i * xStep, H - (r / 100) * H]);
+  const linePath = coords.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]},${p[1]}`).join(' ');
+  const areaPath = `${linePath} L${coords[coords.length - 1][0]},${H} L0,${H} Z`;
+  const lineColor = avgRate >= 90 ? '#10b981' : avgRate >= 70 ? '#f59e0b' : '#ef4444';
+  const areaColor = avgRate >= 90 ? '#d1fae5' : avgRate >= 70 ? '#fef3c7' : '#fee2e2';
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-gray-700">Completion Rate Trend</h2>
+        <span className={`text-xs font-medium flex items-center gap-1 ${trend >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+          {trend >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+          {trend >= 0 ? '+' : ''}{Math.round(trend)}pp over period
+        </span>
+      </div>
+      <svg viewBox={`-4 -4 ${W + 8} ${H + 24}`} className="w-full h-20" preserveAspectRatio="none">
+        <line x1="0" y1="0" x2={W} y2="0" stroke="#f3f4f6" strokeWidth="1" />
+        <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="#f3f4f6" strokeWidth="1" strokeDasharray="4 4" />
+        <line x1="0" y1={H} x2={W} y2={H} stroke="#f3f4f6" strokeWidth="1" />
+        <path d={areaPath} fill={areaColor} fillOpacity="0.6" />
+        <path d={linePath} stroke={lineColor} strokeWidth="2.5" fill="none" strokeLinejoin="round" strokeLinecap="round" />
+        {coords.map(([cx, cy], i) => (
+          <g key={i}>
+            <circle cx={cx} cy={cy} r="3.5" fill={rates[i] >= 90 ? '#10b981' : rates[i] >= 70 ? '#f59e0b' : '#ef4444'} stroke="white" strokeWidth="1.5" />
+            <text x={cx} y={H + 16} textAnchor="middle" fontSize="9" fill="#9ca3af" fontFamily="monospace">{pts[i].date.slice(5)}</text>
+          </g>
+        ))}
+      </svg>
+      <div className="flex items-center gap-4 mt-1 text-xs text-gray-400">
+        <span>Avg <strong className="text-gray-600">{Math.round(avgRate)}%</strong></span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block bg-emerald-400" /> ≥90%</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block bg-amber-400" /> 70–89%</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block bg-red-400" /> &lt;70%</span>
+      </div>
+    </div>
+  );
+}
+
 /** Vertical grouped bar chart for daily totals */
 function DailyBars({ data }: { data: { date: string; total: number; completed: number; failed: number }[] }) {
   if (data.length === 0) return <div className="flex items-center justify-center h-40 text-gray-400 text-sm">No data for this period</div>;
@@ -199,6 +246,9 @@ export default function AnalyticsPage() {
               </div>
             </div>
           </div>
+
+          {/* Completion rate trend sparkline */}
+          <TrendSparkline data={data.daily} />
 
           {/* Attempts volume — daily grouped bars */}
           <div className="bg-white rounded-xl border border-gray-100 p-5">
