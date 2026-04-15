@@ -94,8 +94,8 @@ export default function DriverDetailPage() {
 
       // Recent stops via analytics — fetch from stops endpoint if available
       try {
-        const stops = await api.get<Stop[]>(`/orgs/${user.orgId}/stops?driverId=${driverId}&limit=10`);
-        setRecentStops(stops ?? []);
+        const resp = await api.get<{ stops: Stop[] }>(`/orgs/${user.orgId}/stops?driverId=${driverId}&limit=10`);
+        setRecentStops(resp?.stops ?? []);
       } catch { setRecentStops([]); }
     } catch (e) {
       console.error(e);
