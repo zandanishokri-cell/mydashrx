@@ -133,6 +133,23 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
           </button>
         )}
 
+        {/* Navigate to Next Stop */}
+        {(() => {
+          const nextStop = stops.find(s => s.status !== 'completed' && s.status !== 'failed');
+          if (!nextStop) return null;
+          const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(nextStop.address)}&dirflg=d`;
+          return (
+            <a
+              href={mapsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="w-full bg-[#0F4C81] text-white py-4 rounded-2xl font-bold text-base flex items-center justify-center gap-2 mb-4 hover:bg-[#0d3d69] active:bg-[#0b3258] transition-colors shadow-lg shadow-[#0F4C81]/25 min-h-[56px]"
+            >
+              <MapPin size={20} /> Navigate to Next Stop
+            </a>
+          );
+        })()}
+
         {loading ? (
           <div className="space-y-2.5">
             {[1, 2, 3].map((i) => <div key={i} className="h-24 bg-white rounded-2xl animate-pulse" />)}
