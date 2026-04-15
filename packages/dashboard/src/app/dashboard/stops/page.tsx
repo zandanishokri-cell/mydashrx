@@ -89,7 +89,7 @@ export default function StopsPage() {
   };
 
   const URGENCY_ORDER: Record<string, number> = { overdue: 0, 'due-soon': 1, normal: 2 };
-  const STATUS_ORDER: Record<string, number> = { pending: 0, in_progress: 1, arrived: 2, completed: 3, failed: 4 };
+  const STATUS_ORDER: Record<string, number> = { pending: 0, en_route: 1, arrived: 2, completed: 3, failed: 4 };
 
   const sortedStops = sortKey ? [...stops].sort((a, b) => {
     let cmp = 0;
