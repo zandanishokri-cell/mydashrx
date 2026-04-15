@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, drivers } from '../db/schema.js';
-import { eq, and, isNull, isNotNull, gte, lte, sql, inArray } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, gte, lte, sql, inArray, desc } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
@@ -176,7 +176,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       isNull(plans.deletedAt),
       eq(plans.date, today),
       q.depotId ? eq(plans.depotId, q.depotId) : undefined,
-    ));
+    )).orderBy(desc(plans.date));
 
     if (planRows.length === 0) return { plans: [] };
 

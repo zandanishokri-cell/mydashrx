@@ -288,7 +288,7 @@ export default function CommandCenter() {
             {/* Desktop: plan cards */}
             <div className="space-y-3">
               {plans.map(plan => {
-                const planStops = stops.filter(s => plan.routes.some(r => r.id === s.routeId));
+                const planStops = plan.routes.flatMap(r => r.stops);
                 const planCompleted = planStops.filter(s => s.status === 'completed').length;
                 const pct = planStops.length > 0 ? Math.round((planCompleted / planStops.length) * 100) : 0;
                 return (

@@ -206,6 +206,7 @@ export default function StopsPage() {
     setReassignOpen(true);
     setRoutesLoading(true);
     setSelectedRouteId('');
+    setRouteOptions([]);
     setReassignError('');
     try {
       const res = await api.get<{ routes: RouteOption[] }>(`/orgs/${user.orgId}/routes`);
@@ -218,7 +219,7 @@ export default function StopsPage() {
   };
 
   const bulkReassign = async () => {
-    if (!user || !selectedRouteId || reassignLoading) return;
+    if (!user || !selectedRouteId || reassignLoading || selectedIds.size === 0) return;
     setReassignLoading(true);
     setReassignError('');
     try {
@@ -521,7 +522,7 @@ export default function StopsPage() {
       {reassignOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-          onClick={() => { setReassignOpen(false); setReassignLoading(false); }}
+          onClick={() => { setReassignOpen(false); setReassignLoading(false); setSelectedRouteId(''); }}
         >
           <div
             className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col"
@@ -533,7 +534,7 @@ export default function StopsPage() {
                 <h2 className="text-sm font-semibold text-gray-900">Reassign {selectedIds.size} stop{selectedIds.size !== 1 ? 's' : ''}</h2>
                 <p className="text-xs text-gray-400 mt-0.5">Select a route to move the selected stops to</p>
               </div>
-              <button onClick={() => { setReassignOpen(false); setReassignLoading(false); }} className="text-gray-400 hover:text-gray-600 p-1">
+              <button onClick={() => { setReassignOpen(false); setReassignLoading(false); setSelectedRouteId(''); }} className="text-gray-400 hover:text-gray-600 p-1">
                 <X size={16} />
               </button>
             </div>
@@ -589,7 +590,7 @@ export default function StopsPage() {
               )}
               <div className="flex items-center gap-2 ml-auto">
                 <button
-                  onClick={() => { setReassignOpen(false); setReassignLoading(false); }}
+                  onClick={() => { setReassignOpen(false); setReassignLoading(false); setSelectedRouteId(''); }}
                   className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Cancel
