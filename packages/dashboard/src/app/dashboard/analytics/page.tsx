@@ -173,7 +173,7 @@ export default function AnalyticsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>Analytics</h1>
         <div className="flex items-center gap-2">
-          <DepotFilter value={depotId} onChange={setDepotId} />
+          <DepotFilter value={depotId} onChange={(id) => setDepotId(id)} />
           <DateRangePicker
             value={dateRange}
             onChange={setDateRange}

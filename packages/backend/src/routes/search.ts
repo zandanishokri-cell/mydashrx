@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers, leadProspects, proofOfDeliveries } from '../db/schema.js';
-import { eq, and, isNull, ilike, or, gte, lte, sql } from 'drizzle-orm';
+import { eq, and, isNull, ilike, or, gte, lte, sql, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 export const searchRoutes: FastifyPluginAsync = async (app) => {
@@ -175,6 +175,54 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     ].filter(e => e.timestamp);
 
     return { ...row, pod: pod ?? null, timeline };
+  });
+
+  // POST /orgs/:orgId/stops/bulk-action — bulk status update for dispatcher
+  app.post('/stops/bulk-action', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { stopIds, action } = req.body as { stopIds: string[]; action: string };
+
+    if (!Array.isArray(stopIds) || stopIds.length === 0)
+      return reply.code(400).send({ error: 'stopIds required' });
+    if (!['complete', 'failed'].includes(action))
+      return reply.code(400).send({ error: 'action must be complete or failed' });
+
+    const TERMINAL = ['completed', 'failed', 'rescheduled'];
+
+    const eligible = await db
+      .select({ id: stops.id, routeId: stops.routeId, status: stops.status })
+      .from(stops)
+      .where(and(eq(stops.orgId, orgId), isNull(stops.deletedAt), inArray(stops.id, stopIds)));
+
+    const toUpdate = eligible.filter(s => !TERMINAL.includes(s.status));
+    const skipped = eligible.length - toUpdate.length;
+
+    if (toUpdate.length === 0) return { updated: 0, skipped };
+
+    const newStatus = action === 'complete' ? 'completed' : 'failed';
+    const now = new Date();
+
+    await db.update(stops).set({
+      status: newStatus as any,
+      completedAt: now,
+      ...(action === 'failed' ? { failureReason: 'Bulk marked failed' } : {}),
+    }).where(inArray(stops.id, toUpdate.map(s => s.id)));
+
+    // Trigger route completion check for affected routes
+    const routeIds = [...new Set(toUpdate.map(s => s.routeId).filter((id): id is string => !!id))];
+    for (const routeId of routeIds) {
+      const routeStops = await db.select({ status: stops.status })
+        .from(stops).where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)));
+      if (routeStops.length > 0 && routeStops.every(s => TERMINAL.includes(s.status))) {
+        await db.update(routes)
+          .set({ completedAt: now, status: 'completed' })
+          .where(and(eq(routes.id, routeId), isNull(routes.completedAt)));
+      }
+    }
+
+    return { updated: toUpdate.length, skipped };
   });
 
   // GET /orgs/:orgId/search — global search across stops, drivers, leads

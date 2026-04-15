@@ -84,6 +84,9 @@ export default function StopsPage() {
   const [exporting, setExporting] = useState(false);
   const [sortKey, setSortKey] = useState<'urgency' | 'status' | 'date' | 'driver' | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkError, setBulkError] = useState('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleSort = (key: typeof sortKey) => {
@@ -162,6 +165,40 @@ export default function StopsPage() {
       a.click();
     } catch { /* silent */ }
     finally { setExporting(false); }
+  };
+
+  const bulkAction = async (action: 'complete' | 'failed') => {
+    if (!user || bulkLoading || selectedIds.size === 0) return;
+    setBulkLoading(true);
+    setBulkError('');
+    try {
+      const res = await api.post<{ updated: number; skipped: number }>(
+        `/orgs/${user.orgId}/stops/bulk-action`,
+        { stopIds: [...selectedIds], action },
+      );
+      setSelectedIds(new Set());
+      await load(true);
+      if (res.skipped > 0) setBulkError(`${res.updated} updated, ${res.skipped} skipped (already terminal)`);
+    } catch {
+      setBulkError('Bulk action failed');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const allSelected = sortedStops.length > 0 && sortedStops.every(s => selectedIds.has(s.id));
+  const someSelected = sortedStops.some(s => selectedIds.has(s.id));
+
+  const toggleAll = (checked: boolean) => {
+    const next = new Set(selectedIds);
+    sortedStops.forEach(s => checked ? next.add(s.id) : next.delete(s.id));
+    setSelectedIds(next);
+  };
+
+  const toggleOne = (id: string, checked: boolean) => {
+    const next = new Set(selectedIds);
+    checked ? next.add(id) : next.delete(id);
+    setSelectedIds(next);
   };
 
   const totalPages = Math.ceil(total / 50);
@@ -317,6 +354,15 @@ export default function StopsPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100 sticky top-0">
                 <tr>
+                  <th className="pl-4 pr-2 py-2.5">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                      onChange={e => toggleAll(e.target.checked)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </th>
                   {/* Address / Urgency sort */}
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                     <button onClick={() => handleSort('urgency')} className="flex items-center gap-1 hover:text-gray-700">
@@ -355,8 +401,16 @@ export default function StopsPage() {
                   <tr
                     key={stop.id}
                     onClick={() => router.push(`/dashboard/stops/${stop.id}`)}
-                    className={`cursor-pointer transition-colors ${URGENCY_ROW[urgency]}`}
+                    className={`cursor-pointer transition-colors ${URGENCY_ROW[urgency]} ${selectedIds.has(stop.id) ? 'bg-blue-50/70' : ''}`}
                   >
+                    <td className="pl-4 pr-2 py-3" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(stop.id)}
+                        onChange={e => toggleOne(stop.id, e.target.checked)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         {/* Route assignment dot */}
@@ -411,6 +465,37 @@ export default function StopsPage() {
           onClose={() => setImportOpen(false)}
           onSuccess={() => { setImportOpen(false); load(true); }}
         />
+      )}
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-900 text-white px-5 py-3 rounded-xl shadow-2xl border border-gray-700">
+          <span className="text-sm font-semibold">{selectedIds.size} selected</span>
+          <div className="w-px h-4 bg-gray-700" />
+          <button
+            onClick={() => bulkAction('complete')}
+            disabled={bulkLoading}
+            className="text-sm text-emerald-400 hover:text-emerald-300 font-medium disabled:opacity-50 transition-colors"
+          >
+            ✓ Mark Delivered
+          </button>
+          <button
+            onClick={() => bulkAction('failed')}
+            disabled={bulkLoading}
+            className="text-sm text-red-400 hover:text-red-300 font-medium disabled:opacity-50 transition-colors"
+          >
+            ✗ Mark Failed
+          </button>
+          {bulkError && <span className="text-xs text-amber-300 max-w-[200px] truncate">{bulkError}</span>}
+          {bulkLoading && <span className="text-xs text-gray-400 animate-pulse">Updating…</span>}
+          <div className="w-px h-4 bg-gray-700" />
+          <button
+            onClick={() => { setSelectedIds(new Set()); setBulkError(''); }}
+            className="text-xs text-gray-400 hover:text-gray-200 transition-colors"
+          >
+            Clear
+          </button>
+        </div>
       )}
     </div>
   );

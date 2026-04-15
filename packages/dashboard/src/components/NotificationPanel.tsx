@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell, CheckCircle, XCircle, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -36,19 +36,23 @@ export default function NotificationPanel() {
   const router = useRouter();
   const user = getUser();
 
-  const load = () => {
-    if (!user?.orgId) return;
-    api.get<{ events: NotifEvent[]; total: number }>(`/orgs/${user.orgId}/notifications`)
-      .then(res => setEvents(res.events))
+  const orgId = user?.orgId;
+
+  const load = useCallback(() => {
+    if (!orgId) return;
+    let cancelled = false;
+    api.get<{ events: NotifEvent[]; total: number }>(`/orgs/${orgId}/notifications`)
+      .then(res => { if (!cancelled) setEvents(res.events); })
       .catch(() => { /* non-blocking */ });
-  };
+    return () => { cancelled = true; };
+  }, [orgId]);
 
   // Initial load + 60s polling
   useEffect(() => {
     load();
     const interval = setInterval(load, 60_000);
     return () => clearInterval(interval);
-  }, [user?.orgId]);
+  }, [load]);
 
   // Close on outside click
   useEffect(() => {
