@@ -521,7 +521,7 @@ export default function StopsPage() {
       {reassignOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-          onClick={() => setReassignOpen(false)}
+          onClick={() => { setReassignOpen(false); setReassignLoading(false); }}
         >
           <div
             className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col"
@@ -533,7 +533,7 @@ export default function StopsPage() {
                 <h2 className="text-sm font-semibold text-gray-900">Reassign {selectedIds.size} stop{selectedIds.size !== 1 ? 's' : ''}</h2>
                 <p className="text-xs text-gray-400 mt-0.5">Select a route to move the selected stops to</p>
               </div>
-              <button onClick={() => setReassignOpen(false)} className="text-gray-400 hover:text-gray-600 p-1">
+              <button onClick={() => { setReassignOpen(false); setReassignLoading(false); }} className="text-gray-400 hover:text-gray-600 p-1">
                 <X size={16} />
               </button>
             </div>
@@ -589,7 +589,7 @@ export default function StopsPage() {
               )}
               <div className="flex items-center gap-2 ml-auto">
                 <button
-                  onClick={() => setReassignOpen(false)}
+                  onClick={() => { setReassignOpen(false); setReassignLoading(false); }}
                   className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Cancel
