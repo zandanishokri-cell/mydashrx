@@ -1,17 +1,17 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { SkeletonCard } from '@/components/ui/Skeleton';
-import { Package, Truck, CheckCircle, Calendar, RefreshCw, Plus, Map, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { Package, Truck, CheckCircle, Calendar, RefreshCw, Plus, Map, Activity } from 'lucide-react';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; }
-interface Driver { id: string; name: string; status: string; }
 interface Stop { id: string; status: string; routeId: string; }
+interface DashboardSummary { stopsToday: number; completedToday: number; inProgressToday: number; activeDrivers: number; }
 
 interface PlanWithRoutes extends Plan { routes: Route[]; }
 
@@ -22,22 +22,36 @@ function getGreeting() {
   return 'Good evening';
 }
 
-function TrendIcon({ value, prev }: { value: number; prev: number }) {
-  if (value > prev) return <TrendingUp size={12} className="text-emerald-500" />;
-  if (value < prev) return <TrendingDown size={12} className="text-red-400" />;
-  return <Minus size={12} className="text-gray-300" />;
-}
-
 export default function CommandCenter() {
   const [plans, setPlans] = useState<PlanWithRoutes[]>([]);
-  const [drivers, setDrivers] = useState<Driver[]>([]);
   const [stops, setStops] = useState<Stop[]>([]);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [summaryLoading, setSummaryLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [depotId, setDepotId] = useState('');
   const [user] = useState(getUser);
   const today = new Date().toISOString().split('T')[0];
+  const summaryTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadSummary = useCallback(async () => {
+    if (!user) return;
+    try {
+      const data = await api.get<DashboardSummary>(`/orgs/${user.orgId}/dashboard/summary`);
+      setSummary(data);
+    } catch {
+      // non-fatal — summary cards will show fallback
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    loadSummary();
+    summaryTimer.current = setInterval(loadSummary, 60_000);
+    return () => { if (summaryTimer.current) clearInterval(summaryTimer.current); };
+  }, [loadSummary]);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!user) return;
@@ -48,11 +62,9 @@ export default function CommandCenter() {
       const params = new URLSearchParams({ date: today });
       if (depotId) params.set('depotId', depotId);
 
-      const [todayPlans, allDrivers] = await Promise.all([
+      const [todayPlans] = await Promise.all([
         api.get<Plan[]>(`/orgs/${user.orgId}/plans?${params}`),
-        api.get<Driver[]>(`/orgs/${user.orgId}/drivers`),
       ]);
-      setDrivers(allDrivers);
 
       const plansWithRoutes = await Promise.all(
         todayPlans.map(async (plan) => {
@@ -80,17 +92,50 @@ export default function CommandCenter() {
 
   useEffect(() => { load(); }, [load]);
 
+  const handleRefresh = () => { load(true); loadSummary(); };
+
   const allRoutes = plans.flatMap(p => p.routes);
   const completedStops = stops.filter(s => s.status === 'completed').length;
   const failedStops = stops.filter(s => s.status === 'failed').length;
-  const activeDrivers = drivers.filter(d => d.status === 'on_route').length;
   const completionPct = stops.length > 0 ? Math.round((completedStops / stops.length) * 100) : 0;
 
   const kpis = [
-    { label: 'Total Stops', value: stops.length, prev: 0, icon: Package, color: 'text-[#0F4C81]', bg: 'bg-blue-50' },
-    { label: 'Active Drivers', value: activeDrivers, prev: 0, icon: Truck, color: 'text-[#00B8A9]', bg: 'bg-teal-50' },
-    { label: 'Completed', value: completedStops, prev: 0, icon: CheckCircle, color: 'text-[#2ECC71]', bg: 'bg-emerald-50' },
-    { label: "Today's Plans", value: plans.length, prev: 0, icon: Calendar, color: 'text-[#F6A623]', bg: 'bg-amber-50' },
+    {
+      label: 'Stops Today',
+      value: summary?.stopsToday ?? 0,
+      icon: Package,
+      valueColor: 'text-gray-900',
+      bg: 'bg-white',
+      iconBg: 'bg-gray-100',
+      iconColor: 'text-gray-600',
+    },
+    {
+      label: 'Completed',
+      value: summary?.completedToday ?? 0,
+      icon: CheckCircle,
+      valueColor: 'text-emerald-700',
+      bg: 'bg-emerald-50',
+      iconBg: 'bg-emerald-100',
+      iconColor: 'text-emerald-600',
+    },
+    {
+      label: 'In Progress',
+      value: summary?.inProgressToday ?? 0,
+      icon: Activity,
+      valueColor: 'text-blue-700',
+      bg: 'bg-blue-50',
+      iconBg: 'bg-blue-100',
+      iconColor: 'text-blue-600',
+    },
+    {
+      label: 'Active Drivers',
+      value: summary?.activeDrivers ?? 0,
+      icon: Truck,
+      valueColor: 'text-violet-700',
+      bg: 'bg-violet-50',
+      iconBg: 'bg-violet-100',
+      iconColor: 'text-violet-600',
+    },
   ];
 
   const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -114,7 +159,7 @@ export default function CommandCenter() {
             <Map size={14} /> Live Map
           </Link>
           <button
-            onClick={() => load(true)}
+            onClick={handleRefresh}
             disabled={loading || refreshing}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 border border-gray-200"
           >
@@ -126,23 +171,16 @@ export default function CommandCenter() {
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-        {loading ? (
+        {summaryLoading ? (
           Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
-          kpis.map(({ label, value, prev, icon: Icon, color, bg }) => (
-            <div key={label} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between mb-3">
-                <div className={`w-8 h-8 ${bg} rounded-lg flex items-center justify-center`}>
-                  <Icon size={15} className={color} />
-                </div>
-                <div className="flex items-center gap-1 text-xs text-gray-400">
-                  <TrendIcon value={value} prev={prev} />
-                </div>
+          kpis.map(({ label, value, icon: Icon, valueColor, bg, iconBg, iconColor }) => (
+            <div key={label} className={`${bg} rounded-2xl border border-gray-100 shadow-sm p-4 text-center hover:shadow-md transition-shadow`}>
+              <div className={`w-9 h-9 ${iconBg} rounded-xl flex items-center justify-center mx-auto mb-3`}>
+                <Icon size={16} className={iconColor} />
               </div>
-              <div className={`text-2xl font-bold ${color} mb-0.5`} style={{ fontFamily: 'var(--font-sora)' }}>
-                {value}
-              </div>
-              <div className="text-xs text-gray-500">{label}</div>
+              <p className={`text-3xl font-bold ${valueColor}`} style={{ fontFamily: 'var(--font-sora)' }}>{value}</p>
+              <p className="text-xs text-gray-500 mt-1 font-medium">{label}</p>
             </div>
           ))
         )}
