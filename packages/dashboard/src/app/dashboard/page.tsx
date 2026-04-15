@@ -9,7 +9,7 @@ import { SkeletonCard } from '@/components/ui/Skeleton';
 import { Package, Truck, CheckCircle, Calendar, RefreshCw, Plus, Map, Activity } from 'lucide-react';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
-interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; }
+interface Route { id: string; driverId: string | null; status: string; stopOrder: string[]; estimatedDuration: number | null; stops: Stop[]; }
 interface Stop { id: string; status: string; routeId: string; }
 interface DashboardSummary { stopsToday: number; completedToday: number; inProgressToday: number; activeDrivers: number; }
 interface DriverStatus {
@@ -89,27 +89,9 @@ export default function CommandCenter() {
     try {
       const params = new URLSearchParams({ date: today });
       if (depotId) params.set('depotId', depotId);
-
-      const [todayPlans] = await Promise.all([
-        api.get<Plan[]>(`/orgs/${user.orgId}/plans?${params}`),
-      ]);
-
-      const plansWithRoutes = await Promise.all(
-        todayPlans.map(async (plan) => {
-          const routes = await api.get<Route[]>(`/plans/${plan.id}/routes`);
-          return { ...plan, routes };
-        }),
-      );
-      setPlans(plansWithRoutes);
-
-      const allStops: Stop[] = [];
-      for (const plan of plansWithRoutes) {
-        for (const route of plan.routes) {
-          const routeStops = await api.get<Stop[]>(`/routes/${route.id}/stops`);
-          allStops.push(...routeStops);
-        }
-      }
-      setStops(allStops);
+      const data = await api.get<{ plans: PlanWithRoutes[] }>(`/orgs/${user.orgId}/dashboard/today?${params}`);
+      setPlans(data.plans);
+      setStops(data.plans.flatMap(p => p.routes.flatMap(r => r.stops)));
     } catch {
       setError('Failed to load dashboard data');
     } finally {
