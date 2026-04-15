@@ -56,6 +56,7 @@ export default function StopsPage() {
   const [dateRange, setDateRange] = useState<DateRange>(() => TODAY_RANGE());
   const [page, setPage] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async (resetPage = false) => {
@@ -73,7 +74,8 @@ export default function StopsPage() {
       const data = await api.get<{ stops: Stop[]; total: number }>(`/orgs/${user.orgId}/stops?${params}`);
       setStops(data.stops);
       setTotal(data.total);
-    } catch { setStops([]); }
+      setLoadError(false);
+    } catch { setStops([]); setLoadError(true); }
     finally { setLoading(false); }
   }, [user, search, depotId, statusTab, dateRange, page]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -192,6 +194,11 @@ export default function StopsPage() {
             {Array.from({ length: 8 }).map((_, i) => (
               <div key={i} className="h-14 bg-white border-b border-gray-50 animate-pulse" />
             ))}
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center justify-center h-64 text-red-400">
+            <p className="text-sm">Failed to load stops</p>
+            <button onClick={() => load(true)} className="text-xs text-[#0F4C81] mt-2 hover:underline">Retry</button>
           </div>
         ) : stops.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-gray-400">

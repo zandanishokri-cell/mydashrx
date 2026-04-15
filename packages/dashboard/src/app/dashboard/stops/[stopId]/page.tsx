@@ -94,7 +94,7 @@ export default function StopDetailPage() {
   useEffect(() => { load(); }, [load]);
 
   const saveNotes = async () => {
-    if (!stop || !user) return;
+    if (!stop || !user || !stop.routeId) return;
     setSavingNotes(true);
     try {
       await api.patch(`/routes/${stop.routeId}/stops/${stop.id}`, { deliveryNotes: notesValue });
@@ -105,7 +105,7 @@ export default function StopDetailPage() {
   };
 
   const reschedule = async () => {
-    if (!stop || !user) return;
+    if (!stop || !user || !stop.routeId) return;
     setRescheduling(true);
     try {
       await api.patch(`/routes/${stop.routeId}/stops/${stop.id}/status`, { status: 'pending' });
@@ -292,7 +292,9 @@ export default function StopDetailPage() {
               <span className="text-xs font-medium text-gray-500">Delivery Notes</span>
               <button
                 onClick={() => setEditingNotes(e => !e)}
-                className="text-xs text-[#0F4C81] hover:underline"
+                disabled={!stop.routeId}
+                title={!stop.routeId ? 'Assign to a route first' : undefined}
+                className="text-xs text-[#0F4C81] hover:underline disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 {editingNotes ? 'Cancel' : 'Edit'}
               </button>
