@@ -43,6 +43,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [selectedStop, setSelectedStop] = useState<Stop | null>(null);
   const [moveStop, setMoveStop] = useState<{ stop: Stop; targetRouteId: string } | null>(null);
   const [movingStop, setMovingStop] = useState<Stop | null>(null);
+  const [confirmRemoveRouteId, setConfirmRemoveRouteId] = useState<string | null>(null);
 
   const loadPlan = useCallback(async () => {
     if (!user) return;
@@ -111,8 +112,10 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     }
   };
 
-  const removeRoute = async (routeId: string) => {
-    if (!confirm('Remove this route and all its stops?')) return;
+  const removeRoute = async () => {
+    if (!confirmRemoveRouteId) return;
+    const routeId = confirmRemoveRouteId;
+    setConfirmRemoveRouteId(null);
     try {
       await api.del(`/plans/${planId}/routes/${routeId}`);
       await loadPlan();
@@ -187,6 +190,16 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
         </div>
       </div>
 
+      {confirmRemoveRouteId && (
+        <div className="mb-4 px-4 py-2.5 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-800 flex items-center justify-between">
+          <span>Remove this route and all its stops? This cannot be undone.</span>
+          <div className="flex items-center gap-2 ml-4 shrink-0">
+            <button onClick={() => setConfirmRemoveRouteId(null)} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+            <button onClick={removeRoute} className="text-xs bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600">Remove</button>
+          </div>
+        </div>
+      )}
+
       {error && <div className="bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm mb-4">{error}</div>}
 
       {routes.length === 0 ? (
@@ -223,7 +236,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                     <button onClick={() => setShowAddStop(route.id)} className="flex items-center gap-1 text-xs text-[#0F4C81] hover:underline">
                       <Plus size={12} /> Add Stop
                     </button>
-                    <button onClick={() => removeRoute(route.id)} className="text-gray-300 hover:text-red-500 transition-colors">
+                    <button onClick={() => setConfirmRemoveRouteId(route.id)} className="text-gray-300 hover:text-red-500 transition-colors">
                       <Trash2 size={14} />
                     </button>
                   </div>

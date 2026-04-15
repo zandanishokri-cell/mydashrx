@@ -56,6 +56,7 @@ export default function BaaPage() {
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteBaaId, setConfirmDeleteBaaId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -108,8 +109,10 @@ export default function BaaPage() {
     finally { setSaving(false); }
   };
 
-  const remove = async (id: string) => {
-    if (!user || !confirm('Delete this BAA entry?')) return;
+  const remove = async () => {
+    if (!user || !confirmDeleteBaaId) return;
+    const id = confirmDeleteBaaId;
+    setConfirmDeleteBaaId(null);
     setDeletingId(id);
     try {
       await api.del(`/orgs/${user.orgId}/compliance/baa/${id}`);
@@ -163,6 +166,19 @@ export default function BaaPage() {
           </button>
         </div>
       </div>
+
+      {confirmDeleteBaaId && (() => {
+        const name = entries.find(e => e.id === confirmDeleteBaaId)?.vendorName ?? 'this entry';
+        return (
+          <div className="px-4 py-2.5 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-800 flex items-center justify-between">
+            <span>Delete <strong>{name}</strong> BAA entry? This cannot be undone.</span>
+            <div className="flex items-center gap-2 ml-4 shrink-0">
+              <button onClick={() => setConfirmDeleteBaaId(null)} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+              <button onClick={remove} className="text-xs bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600">Delete</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Add/Edit form */}
       {showForm && (
@@ -325,7 +341,7 @@ export default function BaaPage() {
                           <Pencil size={13} />
                         </button>
                         <button
-                          onClick={() => remove(e.id)}
+                          onClick={() => setConfirmDeleteBaaId(e.id)}
                           disabled={deletingId === e.id}
                           className="p-1.5 text-gray-400 hover:text-red-500 rounded hover:bg-red-50 transition-colors disabled:opacity-50"
                         >
