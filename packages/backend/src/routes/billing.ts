@@ -149,9 +149,45 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
 
 // Webhook route (no auth, prefix: /api/v1/billing)
 export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
-  // TODO: Add Stripe webhook signature verification using STRIPE_WEBHOOK_SECRET
-  // Requires raw body parsing — use addContentTypeParser for 'application/json' with rawBody: true
+  // Stripe sends raw body — add raw body content type parser so we can verify signature
+  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
+    try {
+      (req as any).rawBody = (body as Buffer).toString('utf8');
+      done(null, JSON.parse((body as Buffer).toString('utf8')));
+    } catch (e) {
+      done(e as Error, undefined);
+    }
+  });
+
   app.post('/webhook', async (req, reply) => {
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (webhookSecret) {
+      const sig = (req.headers['stripe-signature'] as string) ?? '';
+      const rawBody = (req as any).rawBody as string ?? '';
+      if (!sig || !rawBody) {
+        return reply.code(400).send({ error: 'Missing signature or body' });
+      }
+      // Synchronous verification using crypto (avoid dynamic import in hot path)
+      const { createHmac } = require('node:crypto') as typeof import('node:crypto');
+      const parts = sig.split(',');
+      const tPart = parts.find((p: string) => p.startsWith('t='));
+      const v1Part = parts.find((p: string) => p.startsWith('v1='));
+      if (!tPart || !v1Part) return reply.code(400).send({ error: 'Invalid signature format' });
+      const timestamp = tPart.slice(2);
+      const expectedSig = v1Part.slice(3);
+      const signed = `${timestamp}.${rawBody}`;
+      const computed = createHmac('sha256', webhookSecret).update(signed).digest('hex');
+      // Constant-time compare to prevent timing attacks
+      if (computed.length !== expectedSig.length) return reply.code(400).send({ error: 'Signature mismatch' });
+      let diff = 0;
+      for (let i = 0; i < computed.length; i++) diff |= computed.charCodeAt(i) ^ expectedSig.charCodeAt(i);
+      if (diff !== 0) return reply.code(400).send({ error: 'Signature mismatch' });
+      // Reject events older than 5 minutes (replay attack protection)
+      if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) {
+        return reply.code(400).send({ error: 'Event timestamp too old' });
+      }
+    }
+
     const event = req.body as { type: string; data: { object: Record<string, unknown> } };
 
     if (event.type === 'checkout.session.completed') {
