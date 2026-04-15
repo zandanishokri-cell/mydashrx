@@ -40,7 +40,7 @@ export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
       .where(and(baseWhere, eq(stops.status, 'pending')))
       .orderBy(desc(stops.createdAt));
 
-    const pendingDispensing = allPending.filter(s => !s.routeId || s.routeStatus === 'pending');
+    const pendingDispensing = allPending.filter(s => !s.routeId);
     const awaitingPickup = allPending.filter(s => s.routeId && s.routeStatus === 'pending');
     const controlledSubstance = allPending.filter(s => s.controlledSubstance);
 

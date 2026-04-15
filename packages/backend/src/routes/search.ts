@@ -17,7 +17,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     };
 
     const pageNum = Math.max(1, parseInt(page));
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const limitNum = Math.min(10000, Math.max(1, parseInt(limit)));
     const offset = (pageNum - 1) * limitNum;
 
     const conditions = [eq(stops.orgId, orgId), isNull(stops.deletedAt)];
@@ -40,8 +40,9 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    if (from) conditions.push(gte(stops.createdAt, new Date(from)));
-    if (to) conditions.push(lte(stops.createdAt, new Date(to + 'T23:59:59')));
+    // Filter by plan date (delivery date), not stop creation date
+    if (from) conditions.push(gte(plans.date, from));
+    if (to) conditions.push(lte(plans.date, to));
 
     // Join to get depot/driver/plan context
     const rows = await db

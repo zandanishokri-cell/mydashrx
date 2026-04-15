@@ -50,6 +50,7 @@ const STATUS_TABS = [
   { key: 'in_progress', label: 'In progress' },
   { key: 'completed', label: 'Completed' },
   { key: 'failed', label: 'Failed' },
+  { key: 'rescheduled', label: 'Rescheduled' },
 ];
 
 // Date range presets
