@@ -4,7 +4,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
-import { TrendingUp, TrendingDown, Download, Award, Lightbulb } from 'lucide-react';
+import { TrendingUp, TrendingDown, Download, Award, Lightbulb, Clock, CheckCircle2 } from 'lucide-react';
 
 interface DriverStat { driverId: string; driverName: string; total: number; completed: number; failed: number; completionRate?: number; }
 
@@ -12,6 +12,8 @@ interface AnalyticsData {
   summary: {
     total: number; completed: number; failed: number;
     successRate: number; failureRate: number; avgPerDriver: number; activeDriverCount: number;
+    avgDeliveryTime: number | null;
+    onTimeRate: number | null;
   };
   daily: { date: string; total: number; completed: number; failed: number }[];
   failureReasons: { reason: string; count: number }[];
@@ -138,8 +140,8 @@ export default function AnalyticsPage() {
 
       {loading || !data ? (
         <div className="space-y-4 animate-pulse">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[1,2,3,4].map(i => <div key={i} className="h-24 bg-gray-100 rounded-xl" />)}
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+            {[1,2,3,4,5,6].map(i => <div key={i} className="h-24 bg-gray-100 rounded-xl" />)}
           </div>
           <div className="h-64 bg-gray-100 rounded-xl" />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -151,7 +153,7 @@ export default function AnalyticsPage() {
       ) : (
         <>
           {/* KPI Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
             <div className="bg-white rounded-xl border border-gray-100 p-4">
               <p className="text-xs text-gray-500 mb-1">Total stops</p>
               <div className="flex items-end gap-2">
@@ -169,6 +171,33 @@ export default function AnalyticsPage() {
             <StatCard label="Success rate" value={`${data.summary.successRate}%`} up={data.summary.successRate >= 95} sub={data.summary.successRate >= 95 ? 'Good' : 'Needs attention'} />
             <StatCard label="Failed attempts" value={data.summary.failed} up={false} />
             <StatCard label="Avg per driver" value={data.summary.avgPerDriver} />
+            {/* Avg Delivery Time */}
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              <p className="text-xs text-gray-500 mb-1">Avg Delivery Time</p>
+              <div className="flex items-end gap-2">
+                <Clock size={16} className="text-gray-400 mb-0.5 shrink-0" />
+                <span className="text-2xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>
+                  {data.summary.avgDeliveryTime != null ? `${data.summary.avgDeliveryTime} min` : (data.avgDeliveryTime != null ? `${data.avgDeliveryTime} min` : '—')}
+                </span>
+              </div>
+            </div>
+            {/* On-Time Rate */}
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              <p className="text-xs text-gray-500 mb-1">On-Time Rate</p>
+              <div className="flex items-end gap-2">
+                <CheckCircle2 size={16} className="text-gray-400 mb-0.5 shrink-0" />
+                {(() => {
+                  const rate = data.summary.onTimeRate ?? data.onTimeRate;
+                  const pct = rate != null ? Math.round(rate * 100) : null;
+                  const color = pct == null ? 'text-gray-900' : pct >= 90 ? 'text-green-600' : pct >= 70 ? 'text-amber-600' : 'text-red-600';
+                  return (
+                    <span className={`text-2xl font-bold ${color}`} style={{ fontFamily: 'var(--font-sora)' }}>
+                      {pct != null ? `${pct}%` : '—'}
+                    </span>
+                  );
+                })()}
+              </div>
+            </div>
           </div>
 
           {/* Attempts volume — daily grouped bars */}
