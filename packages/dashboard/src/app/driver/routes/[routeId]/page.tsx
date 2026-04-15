@@ -48,8 +48,15 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
   const [starting, setStarting] = useState(false);
 
   const load = () => {
-    api.get<Stop[]>(`/driver/me/routes/${routeId}/stops`)
-      .then((data) => { setStops(data); setLoading(false); })
+    Promise.all([
+      api.get<Stop[]>(`/driver/me/routes/${routeId}/stops`),
+      api.get<{ status: string }>(`/driver/me/routes/${routeId}`),
+    ])
+      .then(([stopsData, routeData]) => {
+        setStops(stopsData);
+        setRouteStatus(routeData.status);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   };
 
@@ -123,7 +130,7 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
           </div>
         )}
 
-        {routeStatus !== 'active' && stops.length > 0 && !allDone && (
+        {routeStatus !== 'active' && routeStatus !== 'completed' && stops.length > 0 && !allDone && (
           <button
             onClick={startRoute}
             disabled={starting}

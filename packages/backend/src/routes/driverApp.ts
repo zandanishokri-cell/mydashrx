@@ -43,6 +43,35 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     return myRoutes;
   });
 
+  // GET /driver/me/routes/:routeId — route detail with status
+  app.get('/me/routes/:routeId', {
+    preHandler: requireRole('driver'),
+  }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
+    const { routeId } = req.params as { routeId: string };
+
+    const [route] = await db
+      .select({
+        id: routes.id,
+        driverId: routes.driverId,
+        status: routes.status,
+        startedAt: routes.startedAt,
+        completedAt: routes.completedAt,
+        stopOrder: routes.stopOrder,
+        estimatedDuration: routes.estimatedDuration,
+        totalDistance: routes.totalDistance,
+      })
+      .from(routes)
+      .where(eq(routes.id, routeId))
+      .limit(1);
+
+    if (!route) return reply.code(404).send({ error: 'Route not found' });
+    if (route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
+
+    return route;
+  });
+
   // GET /driver/me/routes/:routeId/stops
   app.get('/me/routes/:routeId/stops', {
     preHandler: requireRole('driver'),
