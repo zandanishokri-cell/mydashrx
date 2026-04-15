@@ -1,11 +1,50 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes } from '../db/schema.js';
+import { stops, routes, drivers } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
-import { sendStopNotification, sendDriverArrivalEmail } from '../services/notifications.js';
+import { sendStopNotification, sendDriverArrivalEmail, sendRouteCompleteSummaryEmail } from '../services/notifications.js';
 import { fireTrigger } from '../services/automation.js';
 import type { StopStatus } from '@mydash-rx/shared';
+
+const TERMINAL_STATUSES: StopStatus[] = ['completed', 'failed', 'rescheduled'];
+
+async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
+  const [route] = await db.select({ completedAt: routes.completedAt, driverId: routes.driverId })
+    .from(routes).where(eq(routes.id, routeId)).limit(1);
+  if (!route || route.completedAt) return; // already completed
+
+  const routeStops = await db.select({ status: stops.status, address: stops.address })
+    .from(stops).where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)));
+  if (routeStops.length === 0) return;
+
+  const allTerminal = routeStops.every(s => (TERMINAL_STATUSES as string[]).includes(s.status));
+  if (!allTerminal) return;
+
+  // Mark route complete (idempotency guard — only one concurrent caller will see completedAt = null)
+  const [updated] = await db.update(routes)
+    .set({ completedAt: new Date(), status: 'completed' })
+    .where(and(eq(routes.id, routeId), isNull(routes.completedAt)))
+    .returning({ completedAt: routes.completedAt });
+  if (!updated) return; // another call already set it
+
+  const driverName = route.driverId
+    ? (await db.select({ name: drivers.name }).from(drivers).where(eq(drivers.id, route.driverId)).limit(1))[0]?.name ?? 'Driver'
+    : 'Driver';
+
+  const completedCount = routeStops.filter(s => s.status === 'completed').length;
+  const failedAddresses = routeStops.filter(s => s.status === 'failed').map(s => s.address);
+
+  await sendRouteCompleteSummaryEmail({
+    orgId,
+    driverName,
+    completedAt: new Date(),
+    totalStops: routeStops.length,
+    completedCount,
+    failedCount: failedAddresses.length,
+    failedAddresses,
+  });
+}
 
 export const stopRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
@@ -111,6 +150,9 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     sendStopNotification(updated, status).catch(console.error);
     if (status === 'arrived') {
       sendDriverArrivalEmail(updated).catch(console.error);
+    }
+    if (status === 'completed' || status === 'failed') {
+      checkAndNotifyRouteComplete(updated.orgId, updated.routeId).catch(console.error);
     }
 
     // Fire automation triggers — fire-and-forget
