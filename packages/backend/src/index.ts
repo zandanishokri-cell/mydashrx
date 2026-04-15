@@ -1,4 +1,15 @@
 import 'dotenv/config';
+
+// Surface startup errors clearly before anything else runs
+process.on('uncaughtException', (err) => {
+  console.error('STARTUP CRASH - uncaughtException:', err.message, err.stack);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('STARTUP CRASH - unhandledRejection:', reason);
+  process.exit(1);
+});
+
 import Fastify from 'fastify';
 import { captureError } from './services/errorMonitor.js';
 import cors from '@fastify/cors';
