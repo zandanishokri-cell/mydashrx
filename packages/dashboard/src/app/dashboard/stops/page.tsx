@@ -7,8 +7,17 @@ import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { CsvImportModal } from '@/components/CsvImportModal';
-import { Plus, Search, X, RefreshCw, Download, Upload, ChevronUp, ChevronDown, ChevronsUpDown, Filter } from 'lucide-react';
+import { Plus, Search, X, RefreshCw, Download, Upload, ChevronUp, ChevronDown, ChevronsUpDown, Filter, ArrowRightLeft, Truck } from 'lucide-react';
 import Link from 'next/link';
+
+interface RouteOption {
+  id: string;
+  status: string;
+  planDate: string | null;
+  driverName: string | null;
+  depotName: string | null;
+  stopCount: number;
+}
 
 interface Stop {
   id: string; recipientName: string; recipientPhone: string; address: string;
@@ -87,6 +96,12 @@ export default function StopsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkError, setBulkError] = useState('');
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [routeOptions, setRouteOptions] = useState<RouteOption[]>([]);
+  const [routesLoading, setRoutesLoading] = useState(false);
+  const [selectedRouteId, setSelectedRouteId] = useState('');
+  const [reassignLoading, setReassignLoading] = useState(false);
+  const [reassignError, setReassignError] = useState('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleSort = (key: typeof sortKey) => {
@@ -183,6 +198,42 @@ export default function StopsPage() {
       setBulkError('Bulk action failed');
     } finally {
       setBulkLoading(false);
+    }
+  };
+
+  const openReassignModal = async () => {
+    if (!user) return;
+    setReassignOpen(true);
+    setRoutesLoading(true);
+    setSelectedRouteId('');
+    setReassignError('');
+    try {
+      const res = await api.get<{ routes: RouteOption[] }>(`/orgs/${user.orgId}/routes`);
+      setRouteOptions(res.routes);
+    } catch {
+      setReassignError('Failed to load routes');
+    } finally {
+      setRoutesLoading(false);
+    }
+  };
+
+  const bulkReassign = async () => {
+    if (!user || !selectedRouteId || reassignLoading) return;
+    setReassignLoading(true);
+    setReassignError('');
+    try {
+      const res = await api.post<{ updated: number; skipped: number }>(
+        `/orgs/${user.orgId}/stops/bulk-reassign`,
+        { stopIds: [...selectedIds], targetRouteId: selectedRouteId },
+      );
+      setSelectedIds(new Set());
+      setReassignOpen(false);
+      await load(true);
+      if (res.skipped > 0) setBulkError(`${res.updated} reassigned, ${res.skipped} skipped (terminal)`);
+    } catch {
+      setReassignError('Reassign failed — please try again');
+    } finally {
+      setReassignLoading(false);
     }
   };
 
@@ -467,6 +518,95 @@ export default function StopsPage() {
         />
       )}
 
+      {reassignOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => setReassignOpen(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">Reassign {selectedIds.size} stop{selectedIds.size !== 1 ? 's' : ''}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Select a route to move the selected stops to</p>
+              </div>
+              <button onClick={() => setReassignOpen(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Route list */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+              {routesLoading ? (
+                <div className="space-y-2">
+                  {[1,2,3].map(i => <div key={i} className="h-14 bg-gray-50 rounded-lg animate-pulse" />)}
+                </div>
+              ) : routeOptions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 text-gray-400">
+                  <Truck size={24} className="mb-2 opacity-30" />
+                  <p className="text-sm">No active routes available</p>
+                </div>
+              ) : routeOptions.map(r => (
+                <button
+                  key={r.id}
+                  onClick={() => setSelectedRouteId(r.id)}
+                  className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                    selectedRouteId === r.id
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">
+                        {r.planDate ?? 'No date'} — {r.driverName ?? 'Unassigned'}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5 truncate">
+                        {r.depotName ?? 'No depot'} · {r.stopCount} stop{r.stopCount !== 1 ? 's' : ''} assigned
+                      </p>
+                    </div>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${
+                      r.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
+                    }`}>
+                      {r.status}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between gap-3">
+              {reassignError ? (
+                <span className="text-xs text-red-500">{reassignError}</span>
+              ) : (
+                <span className="text-xs text-gray-400">
+                  {selectedRouteId ? 'Route selected' : 'No route selected'}
+                </span>
+              )}
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  onClick={() => setReassignOpen(false)}
+                  className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={bulkReassign}
+                  disabled={!selectedRouteId || reassignLoading}
+                  className="px-4 py-2 text-sm bg-[#0F4C81] text-white rounded-lg hover:bg-[#0a3860] disabled:opacity-40 transition-colors"
+                >
+                  {reassignLoading ? 'Reassigning…' : 'Reassign stops'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-900 text-white px-5 py-3 rounded-xl shadow-2xl border border-gray-700">
@@ -485,6 +625,14 @@ export default function StopsPage() {
             className="text-sm text-red-400 hover:text-red-300 font-medium disabled:opacity-50 transition-colors"
           >
             ✗ Mark Failed
+          </button>
+          <div className="w-px h-4 bg-gray-700" />
+          <button
+            onClick={openReassignModal}
+            disabled={bulkLoading}
+            className="flex items-center gap-1.5 text-sm text-blue-300 hover:text-blue-200 font-medium disabled:opacity-50 transition-colors"
+          >
+            <ArrowRightLeft size={13} /> Reassign
           </button>
           {bulkError && <span className="text-xs text-amber-300 max-w-[200px] truncate">{bulkError}</span>}
           {bulkLoading && <span className="text-xs text-gray-400 animate-pulse">Updating…</span>}

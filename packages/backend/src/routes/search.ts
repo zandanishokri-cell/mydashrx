@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers, leadProspects, proofOfDeliveries } from '../db/schema.js';
-import { eq, and, isNull, ilike, or, gte, lte, sql, inArray } from 'drizzle-orm';
+import { eq, and, isNull, ilike, or, gte, lte, sql, inArray, ne } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { checkAndNotifyRouteComplete } from './stops.js';
 
@@ -216,6 +216,84 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     for (const routeId of routeIds) {
       checkAndNotifyRouteComplete(orgId, routeId).catch(console.error);
     }
+
+    return { updated: toUpdate.length, skipped };
+  });
+
+  // GET /orgs/:orgId/routes — list non-completed routes for reassign picker
+  app.get('/routes', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+
+    const rows = await db
+      .select({
+        id: routes.id,
+        status: routes.status,
+        planDate: plans.date,
+        driverId: routes.driverId,
+        driverName: drivers.name,
+        depotName: depots.name,
+      })
+      .from(routes)
+      .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .leftJoin(drivers, eq(routes.driverId, drivers.id))
+      .leftJoin(depots, eq(plans.depotId, depots.id))
+      .where(and(isNull(routes.deletedAt), ne(routes.status, 'completed')))
+      .orderBy(sql`${plans.date} DESC`);
+
+    const routeIds = rows.map(r => r.id);
+    const stopCounts: Record<string, number> = {};
+    if (routeIds.length > 0) {
+      const counts = await db
+        .select({ routeId: stops.routeId, count: sql<number>`count(*)::int` })
+        .from(stops)
+        .where(and(inArray(stops.routeId, routeIds), isNull(stops.deletedAt)))
+        .groupBy(stops.routeId);
+      for (const c of counts) if (c.routeId) stopCounts[c.routeId] = c.count;
+    }
+
+    return { routes: rows.map(r => ({ ...r, stopCount: stopCounts[r.id] ?? 0 })) };
+  });
+
+  // POST /orgs/:orgId/stops/bulk-reassign — move selected stops to a different route
+  app.post('/stops/bulk-reassign', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { stopIds, targetRouteId } = req.body as { stopIds: string[]; targetRouteId: string };
+
+    if (!Array.isArray(stopIds) || stopIds.length === 0)
+      return reply.code(400).send({ error: 'stopIds required' });
+    if (!targetRouteId)
+      return reply.code(400).send({ error: 'targetRouteId required' });
+
+    // Verify target route belongs to org and is not completed
+    const [targetRoute] = await db
+      .select({ id: routes.id, status: routes.status })
+      .from(routes)
+      .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .where(and(eq(routes.id, targetRouteId), isNull(routes.deletedAt)))
+      .limit(1);
+
+    if (!targetRoute) return reply.code(404).send({ error: 'Target route not found' });
+    if (targetRoute.status === 'completed') return reply.code(400).send({ error: 'Cannot reassign to completed route' });
+
+    const TERMINAL = ['completed', 'failed', 'rescheduled'];
+
+    const eligible = await db
+      .select({ id: stops.id, status: stops.status })
+      .from(stops)
+      .where(and(eq(stops.orgId, orgId), isNull(stops.deletedAt), inArray(stops.id, stopIds)));
+
+    const toUpdate = eligible.filter(s => !TERMINAL.includes(s.status));
+    const skipped = eligible.length - toUpdate.length;
+
+    if (toUpdate.length === 0) return { updated: 0, skipped };
+
+    await db.update(stops)
+      .set({ routeId: targetRouteId })
+      .where(inArray(stops.id, toUpdate.map(s => s.id)));
 
     return { updated: toUpdate.length, skipped };
   });
