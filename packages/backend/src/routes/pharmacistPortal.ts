@@ -44,6 +44,30 @@ export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
     const awaitingPickup = allPending.filter(s => s.routeId && s.routeStatus === 'pending');
     const controlledSubstance = allPending.filter(s => s.controlledSubstance);
 
+    // Driver arrivals — stops where driver has marked arrived today
+    const driverArrivals = await db
+      .select({
+        id: stops.id,
+        recipientName: stops.recipientName,
+        address: stops.address,
+        rxNumbers: stops.rxNumbers,
+        controlledSubstance: stops.controlledSubstance,
+        requiresRefrigeration: stops.requiresRefrigeration,
+        requiresSignature: stops.requiresSignature,
+        deliveryNotes: stops.deliveryNotes,
+        windowStart: stops.windowStart,
+        windowEnd: stops.windowEnd,
+        createdAt: stops.createdAt,
+        arrivedAt: stops.arrivedAt,
+        routeId: stops.routeId,
+        routeStatus: routes.status,
+        pharmacistApproved: sql<boolean>`(${stops.deliveryNotes} LIKE '%[PHARMACIST_APPROVED]%')`,
+      })
+      .from(stops)
+      .leftJoin(routes, eq(stops.routeId, routes.id))
+      .where(and(baseWhere, eq(stops.status, 'arrived'), gte(stops.arrivedAt, todayStart)))
+      .orderBy(desc(stops.arrivedAt));
+
     // Today stats
     const [dispensedRow] = await db
       .select({ cnt: sql<number>`count(*)::int` })
@@ -64,6 +88,7 @@ export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
       pendingDispensing,
       awaitingPickup,
       controlledSubstance,
+      driverArrivals,
       todayStats: {
         dispensed: dispensedRow?.cnt ?? 0,
         pending: pendingRow?.cnt ?? 0,
@@ -96,6 +121,36 @@ export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
       .returning();
 
     return updated;
+  });
+
+  // POST /orgs/:orgId/pharmacist/bulk-approve
+  app.post('/bulk-approve', {
+    preHandler: requireRole('pharmacist', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { stopIds } = req.body as { stopIds: string[] };
+    const user = req.user as { sub: string; name?: string };
+
+    if (!Array.isArray(stopIds) || stopIds.length === 0)
+      return reply.code(400).send({ error: 'stopIds required' });
+
+    const approvalTag = `[PHARMACIST_APPROVED by ${user.sub} at ${new Date().toISOString()}]`;
+    let approved = 0;
+
+    for (const stopId of stopIds) {
+      const [stop] = await db.select({ id: stops.id, deliveryNotes: stops.deliveryNotes })
+        .from(stops)
+        .where(and(eq(stops.id, stopId), eq(stops.orgId, orgId), isNull(stops.deletedAt)))
+        .limit(1);
+      if (!stop) continue;
+      const updatedNotes = stop.deliveryNotes
+        ? `${stop.deliveryNotes}\n${approvalTag}`
+        : approvalTag;
+      await db.update(stops).set({ deliveryNotes: updatedNotes }).where(eq(stops.id, stopId));
+      approved++;
+    }
+
+    return { approved, total: stopIds.length };
   });
 
   // GET /orgs/:orgId/pharmacist/analytics

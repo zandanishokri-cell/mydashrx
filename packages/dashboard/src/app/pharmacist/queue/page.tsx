@@ -4,7 +4,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import {
   AlertTriangle, CheckCircle2, Clock, Package, RefreshCw, Flag,
-  ChevronDown, ChevronUp, X,
+  ChevronDown, ChevronUp, X, MapPin,
 } from 'lucide-react';
 
 interface QueueStop {
@@ -18,6 +18,7 @@ interface QueueStop {
   deliveryNotes?: string;
   windowStart?: string;
   windowEnd?: string;
+  arrivedAt?: string;
   createdAt: string;
   routeId?: string;
   routeStatus?: string;
@@ -28,7 +29,15 @@ interface QueueData {
   pendingDispensing: QueueStop[];
   awaitingPickup: QueueStop[];
   controlledSubstance: QueueStop[];
+  driverArrivals: QueueStop[];
   todayStats: { dispensed: number; pending: number; controlled: number };
+}
+
+function timeSince(iso: string): string {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  return `${Math.floor(diff / 3600)}h ago`;
 }
 
 const initials = (name: string) =>
@@ -47,10 +56,14 @@ function StopCard({
   stop,
   onApprove,
   onFlag,
+  selected,
+  onToggleSelect,
 }: {
   stop: QueueStop;
   onApprove: (id: string) => void;
   onFlag: (id: string, routeId: string | undefined, note: string) => void;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }) {
   const [flagOpen, setFlagOpen] = useState(false);
   const [flagNote, setFlagNote] = useState('');
@@ -72,18 +85,27 @@ function StopCard({
   };
 
   const urgency = getWindowUrgency(stop.windowEnd);
-  const cardBorder = stop.controlledSubstance
-    ? 'border-amber-200'
-    : urgency === 'overdue'
-    ? 'border-red-300 bg-red-50/40'
+  // Urgency takes visual priority over controlled substance indicator
+  const cardBorder = urgency === 'overdue'
+    ? `${stop.controlledSubstance ? 'border-red-400' : 'border-red-300'} bg-red-50/40`
     : urgency === 'due-soon'
-    ? 'border-amber-200 bg-amber-50/20'
+    ? `${stop.controlledSubstance ? 'border-amber-300' : 'border-amber-200'} bg-amber-50/20`
+    : stop.controlledSubstance
+    ? 'border-amber-200 bg-amber-50/10'
     : 'border-gray-100';
 
   return (
     <div className={`bg-white rounded-xl border p-4 space-y-3 ${cardBorder}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={selected ?? false}
+              onChange={() => onToggleSelect(stop.id)}
+              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-emerald-600 cursor-pointer shrink-0"
+            />
+          )}
           <div className="w-9 h-9 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold text-emerald-700 shrink-0">
             {initials(stop.recipientName)}
           </div>
@@ -173,21 +195,28 @@ function StopCard({
 }
 
 function Section({
-  title, count, children, warn,
+  title, count, children, warn, accent,
 }: {
-  title: string; count: number; children: React.ReactNode; warn?: boolean;
+  title: string; count: number; children: React.ReactNode; warn?: boolean; accent?: 'green';
 }) {
   const [open, setOpen] = useState(true);
+  const border = warn ? 'border-amber-200 bg-amber-50/40'
+    : accent === 'green' ? 'border-emerald-200 bg-emerald-50/30'
+    : 'border-gray-100 bg-white';
+  const badge = warn ? 'bg-amber-100 text-amber-700'
+    : accent === 'green' ? 'bg-emerald-100 text-emerald-700'
+    : 'bg-gray-100 text-gray-600';
   return (
-    <div className={`rounded-2xl border ${warn ? 'border-amber-200 bg-amber-50/40' : 'border-gray-100 bg-white'} overflow-hidden`}>
+    <div className={`rounded-2xl border ${border} overflow-hidden`}>
       <button
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-center justify-between px-4 py-3.5 text-left"
       >
         <div className="flex items-center gap-2.5">
           {warn && <AlertTriangle size={15} className="text-amber-500" />}
+          {accent === 'green' && <MapPin size={15} className="text-emerald-500" />}
           <span className="font-semibold text-gray-800 text-sm">{title}</span>
-          <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${warn ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>
+          <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${badge}`}>
             {count}
           </span>
         </div>
@@ -208,6 +237,7 @@ export default function PharmacistQueuePage() {
   const user = getUser();
   const [data, setData] = useState<QueueData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -230,6 +260,22 @@ export default function PharmacistQueuePage() {
     try {
       await api.post(`/orgs/${user.orgId}/pharmacist/${stopId}/pharmacist-approve`, {});
     } catch { /* optimistic — already updated UI */ }
+  };
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const bulkApprove = async () => {
+    if (!user || selectedIds.size === 0) return;
+    try {
+      await api.post(`/orgs/${user.orgId}/pharmacist/bulk-approve`, { stopIds: [...selectedIds] });
+      setSelectedIds(new Set());
+      load();
+    } catch { /* silent */ }
   };
 
   const flag = async (stopId: string, routeId: string | undefined, note: string) => {
@@ -280,23 +326,69 @@ export default function PharmacistQueuePage() {
         </div>
       ) : (
         <div className="space-y-4">
+          <Section title="Driver Arrived" count={data?.driverArrivals.length ?? 0} accent="green">
+            {data?.driverArrivals.map(s => (
+              <div key={s.id} className="bg-white rounded-xl border border-emerald-100 p-3.5 flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold text-emerald-700 shrink-0 mt-0.5">
+                  {initials(s.recipientName)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-gray-900 text-sm truncate">{s.address}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {s.rxNumbers?.length > 0 ? `Rx: ${s.rxNumbers.join(', ')}` : 'No Rx #'}
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    <MapPin size={10} />
+                    Arrived
+                  </span>
+                  {s.arrivedAt && (
+                    <p className="text-xs text-gray-400 mt-1">{timeSince(s.arrivedAt)}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </Section>
+
           <Section title="Needs Dispensing" count={data?.pendingDispensing.length ?? 0}>
             {data?.pendingDispensing.map(s => (
-              <StopCard key={s.id} stop={s} onApprove={approve} onFlag={flag} />
+              <StopCard key={s.id} stop={s} onApprove={approve} onFlag={flag}
+                selected={selectedIds.has(s.id)} onToggleSelect={toggleSelect} />
             ))}
           </Section>
 
           <Section title="Awaiting Pickup" count={data?.awaitingPickup.length ?? 0}>
             {data?.awaitingPickup.map(s => (
-              <StopCard key={s.id} stop={s} onApprove={approve} onFlag={flag} />
+              <StopCard key={s.id} stop={s} onApprove={approve} onFlag={flag}
+                selected={selectedIds.has(s.id)} onToggleSelect={toggleSelect} />
             ))}
           </Section>
 
           <Section title="Controlled Substances" count={data?.controlledSubstance.length ?? 0} warn>
             {data?.controlledSubstance.map(s => (
-              <StopCard key={s.id} stop={s} onApprove={approve} onFlag={flag} />
+              <StopCard key={s.id} stop={s} onApprove={approve} onFlag={flag}
+                selected={selectedIds.has(s.id)} onToggleSelect={toggleSelect} />
             ))}
           </Section>
+        </div>
+      )}
+
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-gray-900 text-white px-5 py-3 rounded-2xl shadow-xl z-50">
+          <span className="text-sm font-medium">{selectedIds.size} selected</span>
+          <button
+            onClick={bulkApprove}
+            className="flex items-center gap-1.5 text-sm bg-emerald-500 hover:bg-emerald-400 px-4 py-1.5 rounded-lg font-semibold transition-colors"
+          >
+            <CheckCircle2 size={14} /> Approve All
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="p-1 hover:text-gray-300 transition-colors"
+          >
+            <X size={14} />
+          </button>
         </div>
       )}
     </div>
