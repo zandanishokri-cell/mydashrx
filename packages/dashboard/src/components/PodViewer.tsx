@@ -1,5 +1,5 @@
 'use client';
-import { CheckCircle2, AlertTriangle, Clock, User, Image as ImageIcon } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Clock, User, Image as ImageIcon, ScanLine } from 'lucide-react';
 
 interface PodViewerProps {
   pod: {
@@ -14,12 +14,15 @@ interface PodViewerProps {
     capturedAt?: string;
     driverNote?: string;
     deliveryNotes?: string;
+    barcodesScanned?: string[];
+    packageConfirmed?: boolean;
   };
 }
 
 export function PodViewer({ pod }: PodViewerProps) {
   const photoSrc = pod.photoUrl ?? pod.photos?.[pod.photos.length - 1]?.url;
   const deliveredAt = pod.deliveredAt ?? pod.capturedAt;
+  const barcodes = pod.barcodesScanned ?? [];
 
   return (
     <div className="space-y-4">
@@ -106,6 +109,28 @@ export function PodViewer({ pod }: PodViewerProps) {
         <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 rounded-xl px-3 py-2.5">
           <CheckCircle2 size={13} />
           DOB verified · MAPS confirmation received
+        </div>
+      )}
+
+      {/* Scanned barcodes */}
+      {barcodes.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-gray-500 mb-1.5 flex items-center gap-1.5">
+            <ScanLine size={12} /> Scanned Packages ({barcodes.length})
+          </p>
+          <div className="space-y-1">
+            {barcodes.map((code, i) => (
+              <div key={i} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-700 border border-gray-100">
+                <ScanLine size={10} className="text-gray-400 shrink-0" />
+                {code}
+              </div>
+            ))}
+          </div>
+          {pod.packageConfirmed && (
+            <div className="flex items-center gap-1.5 text-xs text-emerald-700 mt-2">
+              <CheckCircle2 size={11} /> All packages confirmed
+            </div>
+          )}
         </div>
       )}
     </div>

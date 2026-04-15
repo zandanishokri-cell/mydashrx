@@ -50,6 +50,8 @@ interface StopDetail {
   driverPhone?: string;
   depotName?: string;
   pod?: Record<string, unknown> | null;
+  barcodesScanned?: string[];
+  packageConfirmed?: boolean;
   timeline?: TimelineEvent[];
 }
 
@@ -360,7 +362,7 @@ export default function StopDetailPage() {
             {!stop.pod ? (
               <p className="text-sm text-gray-400">No POD on file</p>
             ) : showPod ? (
-              <PodViewer pod={stop.pod as any} />
+              <PodViewer pod={{ ...(stop.pod as any), barcodesScanned: stop.barcodesScanned, packageConfirmed: stop.packageConfirmed }} />
             ) : (
               <button
                 onClick={() => setShowPod(true)}

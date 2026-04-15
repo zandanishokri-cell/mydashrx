@@ -144,6 +144,8 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
         driverId: routes.driverId,
         driverName: drivers.name,
         driverPhone: drivers.phone,
+        barcodesScanned: stops.barcodesScanned,
+        packageConfirmed: stops.packageConfirmed,
       })
       .from(stops)
       .leftJoin(routes, eq(stops.routeId, routes.id))
