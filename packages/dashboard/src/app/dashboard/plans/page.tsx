@@ -121,154 +121,160 @@ export default function PlansPage() {
         </div>
       </div>
 
-      {/* Week calendar */}
-      <div className="bg-white rounded-xl border border-gray-100 p-4 mb-5">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-medium text-gray-700">{weekLabel()}</span>
-          <div className="flex items-center gap-1">
-            <button onClick={() => setWeekOffset(w => w - 1)} className="p-1 hover:bg-gray-100 rounded text-gray-500">
-              <ChevronLeft size={16} />
-            </button>
-            {weekOffset !== 0 && (
-              <button onClick={() => setWeekOffset(0)} className="px-2 py-0.5 text-xs text-[#0F4C81] hover:underline">Today</button>
-            )}
-            <button onClick={() => setWeekOffset(w => w + 1)} className="p-1 hover:bg-gray-100 rounded text-gray-500">
-              <ChevronRight size={16} />
-            </button>
-          </div>
+      {/* Top-level onboarding empty state — zero plans ever created */}
+      {!loading && plans.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-20 text-center">
+          <Route size={64} className="text-gray-200 mb-4" />
+          <p className="text-gray-800 font-semibold text-base mb-2">No delivery plans yet</p>
+          <p className="text-gray-400 text-sm max-w-xs">
+            Create your first delivery plan to start organizing routes and dispatching drivers.
+          </p>
         </div>
-        <div className="grid grid-cols-7 gap-1">
-          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, i) => (
-            <div key={day} className="text-center">
-              <div className="text-xs text-gray-400 mb-1">{day}</div>
-              <button
-                onClick={() => setSelectedDate(weekDays[i])}
-                className={`w-full py-2 rounded-lg text-sm font-medium transition-colors relative ${
-                  selectedDate === weekDays[i]
-                    ? 'bg-[#0F4C81] text-white'
-                    : weekDays[i] === today
-                    ? 'bg-blue-50 text-[#0F4C81]'
-                    : 'hover:bg-gray-50 text-gray-700'
-                }`}
-              >
-                {new Date(weekDays[i] + 'T00:00:00').getDate()}
-                {dateCounts[weekDays[i]] > 0 && (
-                  <span className={`absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full text-[9px] flex items-center justify-center font-bold ${
-                    selectedDate === weekDays[i] ? 'bg-white text-[#0F4C81]' : 'bg-[#0F4C81] text-white'
-                  }`}>
-                    {dateCounts[weekDays[i]]}
-                  </span>
+      )}
+
+      {/* Week calendar + day view — only shown when plans exist or loading */}
+      {(loading || plans.length > 0) && (
+        <>
+          {/* Week calendar */}
+          <div className="bg-white rounded-xl border border-gray-100 p-4 mb-5">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-medium text-gray-700">{weekLabel()}</span>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setWeekOffset(w => w - 1)} className="p-1 hover:bg-gray-100 rounded text-gray-500">
+                  <ChevronLeft size={16} />
+                </button>
+                {weekOffset !== 0 && (
+                  <button onClick={() => setWeekOffset(0)} className="px-2 py-0.5 text-xs text-[#0F4C81] hover:underline">Today</button>
                 )}
-              </button>
+                <button onClick={() => setWeekOffset(w => w + 1)} className="p-1 hover:bg-gray-100 rounded text-gray-500">
+                  <ChevronRight size={16} />
+                </button>
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Plans for selected date */}
-      <div className="mb-2">
-        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-          {selectedDate === today ? "Today" : new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-          {forDate.length > 0 && <span className="normal-case font-normal text-gray-400 ml-2">· {forDate.length} plan{forDate.length !== 1 ? 's' : ''}</span>}
-        </h2>
-
-        {loading ? (
-          <div className="space-y-2">
-            {[1, 2].map(i => <div key={i} className="h-16 bg-white rounded-xl border border-gray-100 animate-pulse" />)}
+            <div className="grid grid-cols-7 gap-1">
+              {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, i) => (
+                <div key={day} className="text-center">
+                  <div className="text-xs text-gray-400 mb-1">{day}</div>
+                  <button
+                    onClick={() => setSelectedDate(weekDays[i])}
+                    className={`w-full py-2 rounded-lg text-sm font-medium transition-colors relative ${
+                      selectedDate === weekDays[i]
+                        ? 'bg-[#0F4C81] text-white'
+                        : weekDays[i] === today
+                        ? 'bg-blue-50 text-[#0F4C81]'
+                        : 'hover:bg-gray-50 text-gray-700'
+                    }`}
+                  >
+                    {new Date(weekDays[i] + 'T00:00:00').getDate()}
+                    {dateCounts[weekDays[i]] > 0 && (
+                      <span className={`absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full text-[9px] flex items-center justify-center font-bold ${
+                        selectedDate === weekDays[i] ? 'bg-white text-[#0F4C81]' : 'bg-[#0F4C81] text-white'
+                      }`}>
+                        {dateCounts[weekDays[i]]}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
-        ) : forDate.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-            {plans.length === 0 ? (
-              <>
-                <Route size={48} className="text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-800 font-semibold text-sm mb-1">No delivery plans</p>
-                <p className="text-gray-400 text-sm">Create your first plan to start organizing routes.</p>
-              </>
-            ) : (
-              <>
+
+          {/* Plans for selected date */}
+          <div className="mb-2">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+              {selectedDate === today ? "Today" : new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+              {forDate.length > 0 && <span className="normal-case font-normal text-gray-400 ml-2">· {forDate.length} plan{forDate.length !== 1 ? 's' : ''}</span>}
+            </h2>
+
+            {loading ? (
+              <div className="space-y-2">
+                {[1, 2].map(i => <div key={i} className="h-16 bg-white rounded-xl border border-gray-100 animate-pulse" />)}
+              </div>
+            ) : forDate.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
                 <Calendar size={48} className="text-gray-300 mx-auto mb-3" />
                 <p className="text-gray-500 text-sm">No routes for this day.</p>
-              </>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {forDate.map(plan => (
+                  <div key={plan.id} className="relative bg-white rounded-xl border border-gray-100 hover:shadow-sm transition-shadow">
+                    <Link
+                      href={`/dashboard/plans/${plan.id}`}
+                      className="block px-4 py-3"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-900">{plan.date}</span>
+                          <Badge status={plan.status} />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {plan.status !== 'distributed' && plan.status !== 'completed' && plan.stopCount > 0 && (
+                            <button
+                              onClick={e => optimizePlan(plan.id, e)}
+                              disabled={optimizingId === plan.id}
+                              className="flex items-center gap-1 text-xs font-medium text-[#0F4C81] bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors disabled:opacity-50"
+                            >
+                              <Zap size={11} /> {optimizingId === plan.id ? 'Optimizing…' : 'Optimize'}
+                            </button>
+                          )}
+                          <span className="text-xs text-gray-400">{plan.stopCount} stops · {plan.routes.length} driver{plan.routes.length !== 1 ? 's' : ''}</span>
+                        </div>
+                      </div>
+                      {plan.routes.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {plan.routes.map(r => {
+                            const driver = drivers.find(d => d.id === r.driverId);
+                            return (
+                              <span key={r.id} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                                {driver?.name ?? 'Driver'} · {r.stopOrder?.length ?? 0} stops
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </Link>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
-        ) : (
-          <div className="space-y-2">
-            {forDate.map(plan => (
-              <div key={plan.id} className="relative bg-white rounded-xl border border-gray-100 hover:shadow-sm transition-shadow">
-                <Link
-                  href={`/dashboard/plans/${plan.id}`}
-                  className="block px-4 py-3"
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-900">{plan.date}</span>
-                      <Badge status={plan.status} />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {plan.status !== 'distributed' && plan.status !== 'completed' && plan.stopCount > 0 && (
-                        <button
-                          onClick={e => optimizePlan(plan.id, e)}
-                          disabled={optimizingId === plan.id}
-                          className="flex items-center gap-1 text-xs font-medium text-[#0F4C81] bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors disabled:opacity-50"
-                        >
-                          <Zap size={11} /> {optimizingId === plan.id ? 'Optimizing…' : 'Optimize'}
-                        </button>
-                      )}
-                      <span className="text-xs text-gray-400">{plan.stopCount} stops · {plan.routes.length} driver{plan.routes.length !== 1 ? 's' : ''}</span>
-                    </div>
-                  </div>
-                  {plan.routes.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-1">
-                      {plan.routes.map(r => {
-                        const driver = drivers.find(d => d.id === r.driverId);
-                        return (
-                          <span key={r.id} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-                            {driver?.name ?? 'Driver'} · {r.stopOrder?.length ?? 0} stops
-                          </span>
-                        );
-                      })}
-                    </div>
-                  )}
-                </Link>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
-      {/* All routes summary grouped by depot */}
-      {!loading && filtered.length > 0 && (
-        <div className="mt-6">
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">All routes</h2>
-          <div className="space-y-2">
-            {filtered.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20).map(plan => (
-              <div key={plan.id} className="bg-white rounded-xl border border-gray-100 hover:shadow-sm transition-shadow">
-                <Link
-                  href={`/dashboard/plans/${plan.id}`}
-                  className="flex items-center justify-between px-4 py-3"
-                >
-                  <div>
-                    <span className="text-sm font-medium text-gray-900">{plan.date}</span>
-                    <span className="text-xs text-gray-400 ml-2">{plan.stopCount} stops</span>
+          {/* All routes summary */}
+          {!loading && filtered.length > 0 && (
+            <div className="mt-6">
+              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">All routes</h2>
+              <div className="space-y-2">
+                {filtered.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20).map(plan => (
+                  <div key={plan.id} className="bg-white rounded-xl border border-gray-100 hover:shadow-sm transition-shadow">
+                    <Link
+                      href={`/dashboard/plans/${plan.id}`}
+                      className="flex items-center justify-between px-4 py-3"
+                    >
+                      <div>
+                        <span className="text-sm font-medium text-gray-900">{plan.date}</span>
+                        <span className="text-xs text-gray-400 ml-2">{plan.stopCount} stops</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {plan.status !== 'distributed' && plan.status !== 'completed' && plan.stopCount > 0 && (
+                          <button
+                            onClick={e => optimizePlan(plan.id, e)}
+                            disabled={optimizingId === plan.id}
+                            className="flex items-center gap-1 text-xs font-medium text-[#0F4C81] bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors disabled:opacity-50"
+                          >
+                            <Zap size={11} /> {optimizingId === plan.id ? 'Optimizing…' : 'Optimize'}
+                          </button>
+                        )}
+                        <span className="text-xs text-gray-400">{plan.routes.length} driver{plan.routes.length !== 1 ? 's' : ''}</span>
+                        <Badge status={plan.status} />
+                      </div>
+                    </Link>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {plan.status !== 'distributed' && plan.status !== 'completed' && plan.stopCount > 0 && (
-                      <button
-                        onClick={e => optimizePlan(plan.id, e)}
-                        disabled={optimizingId === plan.id}
-                        className="flex items-center gap-1 text-xs font-medium text-[#0F4C81] bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors disabled:opacity-50"
-                      >
-                        <Zap size={11} /> {optimizingId === plan.id ? 'Optimizing…' : 'Optimize'}
-                      </button>
-                    )}
-                    <span className="text-xs text-gray-400">{plan.routes.length} driver{plan.routes.length !== 1 ? 's' : ''}</span>
-                    <Badge status={plan.status} />
-                  </div>
-                </Link>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
