@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { isAuthenticated, clearSession, getUser } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { LayoutDashboard, Route, Map, Users, LogOut, Search, BarChart2, Target, Shield, Scale, Menu, X, Zap, CreditCard, Settings2, ChevronDown, Crown, RefreshCw, TrendingUp } from 'lucide-react';
+import NotificationPanel from '@/components/NotificationPanel';
 
 const baseNavItems = [
   { href: '/dashboard', label: 'Command Center', icon: LayoutDashboard, exact: true },
@@ -116,9 +117,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Desktop sidebar */}
       <aside className="hidden md:flex w-56 bg-white border-r border-gray-100 flex-col shrink-0">
         <div className="px-5 py-5 bg-gradient-to-b from-blue-50/60 to-transparent border-b border-gray-100 mb-2">
-          <span className="font-bold text-[#0F4C81] text-base block" style={{ fontFamily: 'var(--font-sora)' }}>
-            {orgName}
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-[#0F4C81] text-base" style={{ fontFamily: 'var(--font-sora)' }}>
+              {orgName}
+            </span>
+            <NotificationPanel />
+          </div>
           {/* Profile dropdown trigger */}
           <div className="relative mt-3" ref={profileRef}>
             <button
@@ -168,13 +172,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <span className="font-bold text-[#0F4C81] text-base" style={{ fontFamily: 'var(--font-sora)' }}>
           {orgName}
         </span>
-        <button
-          onClick={() => setDrawerOpen(v => !v)}
-          className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
-          aria-label="Toggle menu"
-        >
-          {drawerOpen ? <X size={20} /> : <Menu size={20} />}
-        </button>
+        <div className="flex items-center gap-1">
+          <NotificationPanel />
+          <button
+            onClick={() => setDrawerOpen(v => !v)}
+            className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
+            aria-label="Toggle menu"
+          >
+            {drawerOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+        </div>
       </div>
 
       {/* Mobile drawer backdrop */}
