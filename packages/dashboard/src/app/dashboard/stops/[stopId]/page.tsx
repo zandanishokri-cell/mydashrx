@@ -1,10 +1,16 @@
 'use client';
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { PodViewer } from '@/components/PodViewer';
+
+const LeafletMap = dynamic(() => import('@/components/ui/LeafletMap'), {
+  ssr: false,
+  loading: () => <div className="w-full h-40 bg-gray-100 animate-pulse" />,
+});
 import {
   ArrowLeft, Phone, MapPin, Package, Thermometer, AlertTriangle,
   PenLine, Clock, CheckCircle2, XCircle, Truck, User, FileCheck,
@@ -168,9 +174,9 @@ function StopDetailContent({ stopId }: { stopId: string }) {
     </div>
   );
 
-  const mapUrl = stop.lat && stop.lng
-    ? `https://maps.googleapis.com/maps/api/staticmap?center=${stop.lat},${stop.lng}&zoom=14&size=600x200&markers=${stop.lat},${stop.lng}&key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? ''}`
-    : null;
+  const mapsHref = stop.lat && stop.lng
+    ? `https://maps.google.com/?q=${stop.lat},${stop.lng}`
+    : `https://maps.google.com/?q=${encodeURIComponent(stop.address)}`;
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -373,24 +379,25 @@ function StopDetailContent({ stopId }: { stopId: string }) {
           </section>
         )}
 
-        {/* Map preview */}
-        {mapUrl && (
-          <section className="rounded-2xl overflow-hidden border border-gray-100 relative">
-            <a
-              href={stop.lat && stop.lng
-                ? `https://maps.google.com/?q=${stop.lat},${stop.lng}`
-                : `https://maps.google.com/?q=${encodeURIComponent(stop.address)}`}
-              target="_blank"
-              rel="noreferrer"
-              className="block"
-            >
-              <img src={mapUrl} alt="Map" className="w-full h-40 object-cover" />
-              <div className="absolute bottom-2 right-2 bg-white/90 backdrop-blur-sm text-xs font-medium text-[#0F4C81] px-2.5 py-1 rounded-lg shadow-sm flex items-center gap-1">
-                <MapPin size={11} /> Open in Maps
-              </div>
-            </a>
-          </section>
-        )}
+        {/* Interactive map */}
+        <section className="rounded-2xl overflow-hidden border border-gray-100 relative" style={{ height: 160 }}>
+          {stop.lat && stop.lng ? (
+            <LeafletMap lat={stop.lat} lng={stop.lng} address={stop.address} />
+          ) : (
+            <div className="w-full h-full bg-gray-50 flex items-center justify-center">
+              <MapPin size={16} className="text-gray-300 mr-2" />
+              <span className="text-xs text-gray-400">No coordinates — address only</span>
+            </div>
+          )}
+          <a
+            href={mapsHref}
+            target="_blank"
+            rel="noreferrer"
+            className="absolute bottom-2 right-2 z-[400] bg-white/90 backdrop-blur-sm text-xs font-medium text-[#0F4C81] px-2.5 py-1 rounded-lg shadow-sm flex items-center gap-1 hover:bg-white transition-colors"
+          >
+            <MapPin size={11} /> Open in Maps
+          </a>
+        </section>
 
         {/* POD */}
         {(stop.status === 'completed' || stop.pod) && (
