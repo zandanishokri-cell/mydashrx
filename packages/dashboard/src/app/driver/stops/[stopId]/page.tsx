@@ -32,6 +32,7 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
   const [failureNote, setFailureNote] = useState('');
   const [showFailure, setShowFailure] = useState(false);
   const [showPodModal, setShowPodModal] = useState(false);
+  const [ageVerified, setAgeVerified] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -128,6 +129,19 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
       </div>
 
       <div className="px-4 py-4 space-y-4">
+        {/* Age verification banner — only when required and not yet done */}
+        {stop.requiresAgeVerification && !isDone && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+            <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-amber-800">Age Verification Required</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                This is a controlled substance delivery. You must verify the recipient is 18+ before completing.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Package info */}
         <div className="bg-white rounded-2xl p-4 shadow-sm">
           <div className="grid grid-cols-2 gap-3 text-sm">
@@ -226,9 +240,21 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
                 </button>
               ) : null}
 
+              {stop.requiresAgeVerification && (
+                <label className="flex items-center gap-3 bg-amber-50 border border-amber-100 rounded-xl px-3 py-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={ageVerified}
+                    onChange={e => setAgeVerified(e.target.checked)}
+                    className="w-5 h-5 rounded accent-amber-600 shrink-0"
+                  />
+                  <span className="text-sm text-amber-800 font-medium">I verified the recipient is 18+</span>
+                </label>
+              )}
+
               <button
                 onClick={() => setShowPodModal(true)}
-                disabled={saving}
+                disabled={saving || (stop.requiresAgeVerification && !ageVerified)}
                 className="w-full bg-green-500 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-50 hover:bg-green-600 transition-colors min-h-[56px]"
               >
                 <CheckCircle2 size={16} /> Mark Delivered

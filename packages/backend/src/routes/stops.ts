@@ -71,6 +71,24 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(stop);
   });
 
+  // Reorder stops within a route — PATCH /reorder
+  app.patch('/reorder', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { routeId } = req.params as { routeId: string };
+    const { stopIds } = req.body as { stopIds: string[] };
+    if (!Array.isArray(stopIds) || stopIds.length === 0) {
+      return reply.code(400).send({ error: 'stopIds must be a non-empty array' });
+    }
+    await Promise.all(
+      stopIds.map((id, idx) =>
+        db.update(stops).set({ sequenceNumber: idx }).where(and(eq(stops.id, id), eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+      )
+    );
+    await db.update(routes).set({ stopOrder: stopIds }).where(eq(routes.id, routeId));
+    return { ok: true };
+  });
+
   app.patch('/:stopId/status', {
     preHandler: requireRole('driver', 'dispatcher', 'super_admin'),
   }, async (req, reply) => {

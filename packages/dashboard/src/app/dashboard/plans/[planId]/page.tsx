@@ -8,7 +8,11 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { AddStopModal } from '@/components/AddStopModal';
 import { StopDetailModal } from '@/components/StopDetailModal';
-import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight } from 'lucide-react';
+import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical } from 'lucide-react';
+import { DndContext, closestCenter } from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; totalDistance: number | null; }
@@ -111,6 +115,15 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
       setError('Failed to add driver to plan');
     }
   };
+
+  const reorderStops = useCallback(async (routeId: string, stopIds: string[]) => {
+    try {
+      await api.patch(`/routes/${routeId}/stops/reorder`, { stopIds });
+    } catch {
+      setError('Failed to reorder stops — order restored');
+      loadPlan();
+    }
+  }, [loadPlan]);
 
   const removeRoute = async () => {
     if (!confirmRemoveRouteId) return;
@@ -250,36 +263,35 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                     </button>
                   </div>
                 ) : (
-                  <div className="divide-y divide-gray-50">
-                    {stops.map((stop, idx) => (
-                      <div key={stop.id} className="flex items-center gap-4 px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors group">
-                        <span className="w-6 h-6 rounded-full bg-gray-100 text-gray-500 text-xs flex items-center justify-center font-medium shrink-0">
-                          {stop.sequenceNumber != null ? stop.sequenceNumber + 1 : idx + 1}
-                        </span>
-                        <div className="flex-1 min-w-0" onClick={() => setSelectedStop(stop)}>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-gray-900 truncate">{stop.recipientName}</span>
-                            {stop.requiresRefrigeration && <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">❄ Cold</span>}
-                            {stop.controlledSubstance && <span className="text-xs bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded">⚠ Ctrl</span>}
-                          </div>
-                          <p className="text-xs text-gray-400 truncate">{stop.address}</p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {stop.rxNumbers?.length > 0 && <span className="text-xs text-gray-400">Rx ×{stop.rxNumbers.length}</span>}
-                          <Badge status={stop.status} />
-                          {routes.length > 1 && (
-                            <button
-                              onClick={() => setMovingStop(stop)}
-                              className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-[#0F4C81] transition-all"
-                              title="Move to another route"
-                            >
-                              <MoveRight size={13} />
-                            </button>
-                          )}
-                        </div>
+                  <DndContext
+                    collisionDetection={closestCenter}
+                    onDragEnd={(event: DragEndEvent) => {
+                      const { active, over } = event;
+                      if (!over || active.id === over.id) return;
+                      const routeStops = stopsByRoute[route.id] ?? [];
+                      const oldIdx = routeStops.findIndex(s => s.id === String(active.id));
+                      const newIdx = routeStops.findIndex(s => s.id === String(over.id));
+                      if (oldIdx < 0 || newIdx < 0) return;
+                      const reordered = arrayMove(routeStops, oldIdx, newIdx);
+                      setStopsByRoute(prev => ({ ...prev, [route.id]: reordered }));
+                      reorderStops(route.id, reordered.map(s => s.id));
+                    }}
+                  >
+                    <SortableContext items={stops.map(s => s.id)} strategy={verticalListSortingStrategy}>
+                      <div className="divide-y divide-gray-50">
+                        {stops.map((stop, idx) => (
+                          <SortableStopItem
+                            key={stop.id}
+                            stop={stop}
+                            idx={idx}
+                            routeCount={routes.length}
+                            onSelect={() => setSelectedStop(stop)}
+                            onMove={() => setMovingStop(stop)}
+                          />
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </SortableContext>
+                  </DndContext>
                 )}
               </div>
             );
@@ -364,6 +376,56 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
           onUpdated={() => { setSelectedStop(null); loadPlan(); }}
         />
       )}
+    </div>
+  );
+}
+
+function SortableStopItem({ stop, idx, routeCount, onSelect, onMove }: {
+  stop: Stop;
+  idx: number;
+  routeCount: number;
+  onSelect: () => void;
+  onMove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stop.id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors group"
+    >
+      <button
+        {...attributes}
+        {...listeners}
+        className="touch-none text-gray-300 hover:text-gray-400 cursor-grab active:cursor-grabbing shrink-0"
+        tabIndex={-1}
+      >
+        <GripVertical size={14} />
+      </button>
+      <span className="w-6 h-6 rounded-full bg-gray-100 text-gray-500 text-xs flex items-center justify-center font-medium shrink-0">
+        {stop.sequenceNumber != null ? stop.sequenceNumber + 1 : idx + 1}
+      </span>
+      <div className="flex-1 min-w-0 cursor-pointer" onClick={onSelect}>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-gray-900 truncate">{stop.recipientName}</span>
+          {stop.requiresRefrigeration && <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">❄ Cold</span>}
+          {stop.controlledSubstance && <span className="text-xs bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded">⚠ Ctrl</span>}
+        </div>
+        <p className="text-xs text-gray-400 truncate">{stop.address}</p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {stop.rxNumbers?.length > 0 && <span className="text-xs text-gray-400">Rx ×{stop.rxNumbers.length}</span>}
+        <Badge status={stop.status} />
+        {routeCount > 1 && (
+          <button
+            onClick={onMove}
+            className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-[#0F4C81] transition-all"
+            title="Move to another route"
+          >
+            <MoveRight size={13} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
