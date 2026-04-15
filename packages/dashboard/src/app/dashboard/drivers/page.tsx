@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { FormField, SelectField } from '@/components/ui/FormField';
-import { Truck, Plus, Search, Pencil, Trash2, Download } from 'lucide-react';
+import { Truck, Plus, Search, Pencil, Trash2, Download, Users } from 'lucide-react';
 
 interface Driver {
   id: string; orgId: string; name: string; email: string; phone: string;
@@ -172,10 +172,19 @@ export default function DriversPage() {
           {[1, 2, 3].map(i => <div key={i} className="h-16 bg-white rounded-xl border border-gray-100 animate-pulse" />)}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 p-8 text-center">
-          <Truck size={32} className="text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500 text-sm mb-3">{search ? 'No drivers match your search.' : 'No drivers added yet.'}</p>
-          {!search && <Button size="sm" onClick={() => setShowAdd(true)}><Plus size={14} /> Add Driver</Button>}
+        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+          {search ? (
+            <>
+              <Truck size={48} className="text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500 text-sm">No drivers match your search.</p>
+            </>
+          ) : (
+            <>
+              <Users size={48} className="text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-800 font-semibold text-sm mb-1">No drivers yet</p>
+              <p className="text-gray-400 text-sm">Add your first driver to start assigning deliveries.</p>
+            </>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">

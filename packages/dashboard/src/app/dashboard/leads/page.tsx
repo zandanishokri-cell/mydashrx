@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { Search, Plus, Phone, Mail, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Plus, Phone, Mail, ExternalLink, ChevronLeft, ChevronRight, UserSearch } from 'lucide-react';
 
 interface Lead {
   id: string; name: string; city: string; state: string; address: string;
@@ -152,10 +152,9 @@ export default function LeadsPage() {
         </div>
       ) : !data?.leads.length ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-          <p className="text-gray-400 text-sm">No leads found.{' '}
-            <Link href="/dashboard/leads/search" className="text-[#0F4C81] hover:underline">Search for pharmacies</Link>
-            {' '}to get started.
-          </p>
+          <UserSearch size={48} className="text-gray-300 mx-auto mb-3" />
+          <p className="text-gray-800 font-semibold text-sm mb-1">No leads yet</p>
+          <p className="text-gray-400 text-sm">Leads will appear here as patients are added.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

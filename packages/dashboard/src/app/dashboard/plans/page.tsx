@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
-import { Plus, Calendar, ChevronLeft, ChevronRight, Zap } from 'lucide-react';
+import { Plus, Calendar, ChevronLeft, ChevronRight, Zap, Route } from 'lucide-react';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; }
@@ -177,12 +177,19 @@ export default function PlansPage() {
             {[1, 2].map(i => <div key={i} className="h-16 bg-white rounded-xl border border-gray-100 animate-pulse" />)}
           </div>
         ) : forDate.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-100 p-8 text-center">
-            <Calendar size={28} className="text-gray-300 mx-auto mb-2" />
-            <p className="text-gray-400 text-sm">No routes for this day.</p>
-            <Link href="/dashboard/plans/new" className="text-[#0F4C81] text-xs hover:underline mt-1 block">
-              Create a plan →
-            </Link>
+          <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+            {plans.length === 0 ? (
+              <>
+                <Route size={48} className="text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-800 font-semibold text-sm mb-1">No delivery plans</p>
+                <p className="text-gray-400 text-sm">Create your first plan to start organizing routes.</p>
+              </>
+            ) : (
+              <>
+                <Calendar size={48} className="text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-500 text-sm">No routes for this day.</p>
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
