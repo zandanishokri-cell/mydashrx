@@ -79,6 +79,7 @@ export default function StopsPage() {
   const [page, setPage] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [sortKey, setSortKey] = useState<'urgency' | 'status' | 'date' | 'driver' | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -129,17 +130,36 @@ export default function StopsPage() {
     debounceRef.current = setTimeout(() => setSearch(v), 400);
   };
 
-  const exportCsv = () => {
-    const headers = ['Recipient', 'Address', 'Status', 'Depot', 'Driver', 'Date', 'Rx#'];
-    const rows = stops.map(s => [
-      s.recipientName, s.address, s.status, s.depotName ?? '', s.driverName ?? '',
-      s.planDate ?? '', (s.rxNumbers ?? []).join(';'),
-    ]);
-    const csv = [headers, ...rows].map(r => r.map(c => `"${c}"`).join(',')).join('\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    a.download = `stops-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
+  const exportCsv = async () => {
+    if (!user || exporting) return;
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ page: '1', limit: '10000' });
+      if (search) params.set('q', search);
+      if (depotId) params.set('depotId', depotId);
+      if (statusTab !== 'all') params.set('status', statusTab);
+      if (dateRange.from) params.set('from', dateRange.from);
+      if (dateRange.to) params.set('to', dateRange.to);
+      const data = await api.get<{ stops: Stop[] }>(`/orgs/${user.orgId}/stops?${params}`);
+      const allStops = data.stops ?? [];
+      const headers = ['Recipient', 'Phone', 'Address', 'Status', 'Depot', 'Driver', 'Date', 'Window Start', 'Window End', 'Rx#', 'Controlled', 'Refrigeration', 'Completed At'];
+      const rows = allStops.map(s => [
+        s.recipientName, s.recipientPhone ?? '', s.address, s.status,
+        s.depotName ?? '', s.driverName ?? '', s.planDate ?? '',
+        s.windowStart ? new Date(s.windowStart).toLocaleString() : '',
+        s.windowEnd ? new Date(s.windowEnd).toLocaleString() : '',
+        (s.rxNumbers ?? []).join(';'),
+        s.controlledSubstance ? 'Yes' : 'No',
+        s.requiresRefrigeration ? 'Yes' : 'No',
+        s.completedAt ? new Date(s.completedAt).toLocaleString() : '',
+      ]);
+      const csv = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+      a.download = `stops-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+    } catch { /* silent */ }
+    finally { setExporting(false); }
   };
 
   const totalPages = Math.ceil(total / 50);
@@ -151,8 +171,9 @@ export default function StopsPage() {
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>Stops</h1>
           <div className="flex items-center gap-2">
-            <button onClick={exportCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-              <Download size={14} /> Export
+            <button onClick={exportCsv} disabled={exporting} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">
+              <Download size={14} className={exporting ? 'animate-pulse' : ''} />
+              {exporting ? 'Exporting…' : 'Export CSV'}
             </button>
             <button onClick={() => setImportOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
               <Upload size={14} /> Import CSV
