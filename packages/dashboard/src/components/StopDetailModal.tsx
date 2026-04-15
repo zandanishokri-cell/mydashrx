@@ -54,6 +54,7 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
   const [failureNote, setFailureNote] = useState(stop.failureNote ?? '');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
   const [pod, setPod] = useState<Record<string, unknown> | null>(null);
   const [showPod, setShowPod] = useState(false);
@@ -89,7 +90,6 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
   };
 
   const deleteStop = async () => {
-    if (!confirm(`Delete stop for ${stop.recipientName}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       await api.del(`/routes/${stop.routeId}/stops/${stop.id}`);
@@ -252,8 +252,20 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
 
         {error && <p className="text-red-500 text-sm">{error}</p>}
 
+        {confirmDelete && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 flex items-center justify-between">
+            <span className="text-sm text-amber-800">Delete stop for <strong>{stop.recipientName}</strong>?</span>
+            <div className="flex gap-2 ml-3 shrink-0">
+              <button onClick={() => setConfirmDelete(false)} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">Cancel</button>
+              <button onClick={deleteStop} disabled={deleting} className="text-xs bg-red-500 text-white px-3 py-1 rounded-md hover:bg-red-600 disabled:opacity-50">
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between pt-1">
-          <Button variant="ghost" size="sm" onClick={deleteStop} loading={deleting} className="text-red-500 hover:bg-red-50">
+          <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)} className="text-red-500 hover:bg-red-50">
             <Trash2 size={13} /> Delete Stop
           </Button>
           <div className="flex gap-2">
