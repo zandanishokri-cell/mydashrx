@@ -90,6 +90,7 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
   };
 
   const deleteStop = async () => {
+    if (deleting) return;
     setDeleting(true);
     try {
       await api.del(`/routes/${stop.routeId}/stops/${stop.id}`);
