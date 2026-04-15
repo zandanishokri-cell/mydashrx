@@ -59,7 +59,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
       const stopsMap: Record<string, Stop[]> = {};
       await Promise.all(
         routesData.map(async (route) => {
-          const s = await api.get<Stop[]>(`/plans/${planId}/routes/${route.id}/stops`);
+          const s = await api.get<Stop[]>(`/routes/${route.id}/stops`);
           stopsMap[route.id] = s;
         }),
       );

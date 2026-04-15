@@ -41,7 +41,7 @@ function StopCard({
 }: {
   stop: QueueStop;
   onApprove: (id: string) => void;
-  onFlag: (id: string, note: string) => void;
+  onFlag: (id: string, routeId: string | undefined, note: string) => void;
 }) {
   const [flagOpen, setFlagOpen] = useState(false);
   const [flagNote, setFlagNote] = useState('');
@@ -57,7 +57,7 @@ function StopCard({
 
   const submitFlag = () => {
     if (!flagNote.trim()) return;
-    onFlag(stop.id, flagNote);
+    onFlag(stop.id, stop.routeId, flagNote);
     setFlagNote('');
     setFlagOpen(false);
   };
@@ -206,10 +206,10 @@ export default function PharmacistQueuePage() {
     } catch { /* optimistic — already updated UI */ }
   };
 
-  const flag = async (stopId: string, note: string) => {
-    if (!user) return;
+  const flag = async (stopId: string, routeId: string | undefined, note: string) => {
+    if (!user || !routeId) return;
     try {
-      await api.patch(`/routes/x/stops/${stopId}`, { deliveryNotes: `[FLAG: ${note}]` });
+      await api.patch(`/routes/${routeId}/stops/${stopId}`, { deliveryNotes: `[FLAG: ${note}]` });
     } catch { /* silent */ }
   };
 
