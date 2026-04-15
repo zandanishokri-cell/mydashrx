@@ -304,7 +304,7 @@ export default function CommandCenter() {
                           <span className="text-xs text-gray-400">·</span>
                         )}
                         {plan.routes.length > 0 && (
-                          <span className="text-xs text-gray-500">{allRoutes.filter(r => plan.routes.some(pr => pr.id === r.id)).length} routes</span>
+                          <span className="text-xs text-gray-500">{plan.routes.length} routes</span>
                         )}
                       </div>
                       <Badge status={plan.status} />

@@ -176,7 +176,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       isNull(plans.deletedAt),
       eq(plans.date, today),
       q.depotId ? eq(plans.depotId, q.depotId) : undefined,
-    )).orderBy(desc(plans.date));
+    )).orderBy(desc(plans.createdAt));
 
     if (planRows.length === 0) return { plans: [] };
 

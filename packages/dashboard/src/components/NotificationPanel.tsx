@@ -65,6 +65,7 @@ export default function NotificationPanel() {
   }, [load]);
 
   useEffect(() => { loadPrefs(); }, [loadPrefs]);
+  useEffect(() => { if (showSettings) loadPrefs(); }, [showSettings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close on outside click
   useEffect(() => {
