@@ -34,6 +34,7 @@ export default function DriversPage() {
   const [editDriver, setEditDriver] = useState<Driver | null>(null);
   const [search, setSearch] = useState('');
   const [deleteError, setDeleteError] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [user] = useState(getUser);
 
   const load = useCallback(() => {
@@ -72,10 +73,15 @@ export default function DriversPage() {
     ));
   }, [search, drivers]);
 
-  const deleteDriver = async (id: string, e: React.MouseEvent) => {
+  const requestDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Remove this driver?')) return;
-    if (!user) return;
+    setConfirmDeleteId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmDeleteId || !user) return;
+    const id = confirmDeleteId;
+    setConfirmDeleteId(null);
     try {
       await api.del(`/orgs/${user.orgId}/drivers/${id}`);
       setDeleteError('');
@@ -130,6 +136,19 @@ export default function DriversPage() {
           </Button>
         </div>
       </div>
+
+      {confirmDeleteId && (() => {
+        const name = drivers.find(d => d.id === confirmDeleteId)?.name ?? 'this driver';
+        return (
+          <div className="mb-4 px-4 py-2.5 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-800 flex items-center justify-between">
+            <span>Remove <strong>{name}</strong>? This cannot be undone.</span>
+            <div className="flex items-center gap-2 ml-4 shrink-0">
+              <button onClick={() => setConfirmDeleteId(null)} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+              <button onClick={confirmDelete} className="text-xs bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600">Remove</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {deleteError && (
         <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
@@ -210,7 +229,7 @@ export default function DriversPage() {
                       <button onClick={e => openEdit(driver, e)} className="p-1.5 text-gray-400 hover:text-[#0F4C81] rounded-lg hover:bg-blue-50 transition-colors">
                         <Pencil size={13} />
                       </button>
-                      <button onClick={e => deleteDriver(driver.id, e)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors">
+                      <button onClick={e => requestDelete(driver.id, e)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors">
                         <Trash2 size={13} />
                       </button>
                     </div>

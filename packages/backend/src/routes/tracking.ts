@@ -50,11 +50,20 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
     const stopOrder: string[] = (route?.stopOrder as string[]) ?? [];
     const stopsAhead = Math.max(0, stopOrder.indexOf(stop.id));
 
+    // Dynamic ETA: stopsAhead * 8 min from lastPingAt (or now). Null when 0 stops ahead ("arriving soon") or terminal.
+    const estimatedArrivalAt = (() => {
+      if (stop.status === 'completed' || stop.status === 'failed') return null;
+      if (stopsAhead === 0) return null;
+      const base = driverInfo?.lastPingAt ? new Date(driverInfo.lastPingAt) : new Date();
+      return new Date(base.getTime() + stopsAhead * ETA_PER_STOP_MS).toISOString();
+    })();
+
     return {
       stopId: stop.id,
       status: stop.status,
       recipientName: stop.recipientName.split(' ')[0],
       stopsAhead,
+      estimatedArrivalAt,
       windowStart: stop.windowStart,
       windowEnd: stop.windowEnd,
       completedAt: stop.completedAt,

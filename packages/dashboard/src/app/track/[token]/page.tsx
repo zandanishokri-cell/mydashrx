@@ -5,6 +5,7 @@ interface TrackingData {
   stopId: string;
   status: string;
   stopsAhead: number;
+  estimatedArrivalAt?: string | null;
   windowStart?: string | null;
   windowEnd?: string | null;
   completedAt?: string | null;
@@ -71,15 +72,15 @@ export default async function TrackingPage({ params }: { params: { token: string
   const data = await getTrackingData(params.token);
   if (!data) notFound();
 
-  const { status, stopsAhead, driverLocation, windowStart, windowEnd, completedAt } = data;
+  const { status, stopsAhead, estimatedArrivalAt, driverLocation, windowStart, windowEnd, completedAt } = data;
   const activeStep = timelineIndex(status);
   const isDelivered = status === 'completed';
   const isFailed = status === 'failed';
   const isEnRoute = status === 'en_route' || status === 'arrived';
   const mapUrl = driverLocation ? staticMapUrl(driverLocation.lat, driverLocation.lng) : null;
 
-  // Estimated arrival: prefer windowEnd (closer to actual delivery), fall back to windowStart
-  const etaIso = windowEnd ?? windowStart;
+  // Dynamic ETA from stops-ahead calc; fall back to scheduled window if not available
+  const etaIso = estimatedArrivalAt ?? windowEnd ?? windowStart;
 
   return (
     <div className="min-h-screen bg-[#F7F8FC] flex flex-col items-center py-10 px-4">

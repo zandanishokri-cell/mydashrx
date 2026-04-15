@@ -15,6 +15,26 @@ interface NextStop {
   status: string;
 }
 
+interface RouteStopResponse {
+  stopId: string;
+  lat: number | null;
+  lng: number | null;
+  recipientName: string;
+  address: string;
+  status: string;
+  sequenceNumber: number | null;
+}
+
+interface StopMarker {
+  id: string;
+  lat: number;
+  lng: number;
+  recipientName: string;
+  address: string;
+  status: string;
+  sequenceNumber: number | null;
+}
+
 interface ActiveRoute {
   routeId: string;
   driverId: string;
@@ -58,6 +78,7 @@ export default function MapPage() {
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [secondsAgo, setSecondsAgo] = useState(0);
   const [highlightedDriverId, setHighlightedDriverId] = useState<string | null>(null);
+  const [routeStops, setRouteStops] = useState<StopMarker[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -84,6 +105,20 @@ export default function MapPage() {
       if (tickRef.current) clearInterval(tickRef.current);
     };
   }, [load]);
+
+  // Fetch stop pins for highlighted driver's route
+  useEffect(() => {
+    if (!highlightedDriverId || !user || !liveData) { setRouteStops([]); return; }
+    const route = liveData.activeRoutes.find((r) => r.driverId === highlightedDriverId);
+    if (!route) { setRouteStops([]); return; }
+    api.get<{ stops: RouteStopResponse[] }>(`/orgs/${user.orgId}/tracking/route/${route.routeId}`)
+      .then((data) => setRouteStops(
+        data.stops
+          .filter((s) => s.lat != null && s.lng != null)
+          .map((s) => ({ id: s.stopId, lat: s.lat!, lng: s.lng!, recipientName: s.recipientName, address: s.address, status: s.status, sequenceNumber: s.sequenceNumber }))
+      ))
+      .catch(() => setRouteStops([]));
+  }, [highlightedDriverId, liveData, user]);
 
   const driverMarkers = (liveData?.activeRoutes ?? [])
     .filter((r) => r.currentLat && r.currentLng)
@@ -129,7 +164,7 @@ export default function MapPage() {
           ) : (
             <LiveMap
               drivers={driverMarkers}
-              stops={[]}
+              stops={routeStops}
               highlightedDriverId={highlightedDriverId}
               onMarkerClick={(id) => setHighlightedDriverId((prev) => (prev === id ? null : id))}
             />
