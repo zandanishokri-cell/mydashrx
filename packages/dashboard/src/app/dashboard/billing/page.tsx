@@ -103,6 +103,7 @@ export default function BillingPage() {
   const [plans, setPlans] = useState<PlanOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
+  const [actionError, setActionError] = useState('');
   const user = getUser();
   const orgId = user?.orgId;
 
@@ -131,10 +132,10 @@ export default function BillingPage() {
       );
       if (res.url) window.location.href = res.url;
       else if (res.error === 'Stripe not configured') {
-        alert('Stripe is not configured yet. Please add your STRIPE_SECRET_KEY to get started.');
+        setActionError('Stripe is not configured. Add STRIPE_SECRET_KEY to enable billing.');
       }
     } catch (e: any) {
-      alert(e?.message ?? 'Failed to start checkout');
+      setActionError(e?.message ?? 'Failed to start checkout');
     } finally {
       setUpgrading(null);
     }
@@ -146,7 +147,7 @@ export default function BillingPage() {
       const res = await api.post<{ url?: string; error?: string }>(`/orgs/${orgId}/billing/portal`, {});
       if (res.url) window.location.href = res.url;
     } catch (e: any) {
-      alert(e?.message ?? 'Failed to open billing portal');
+      setActionError(e?.message ?? 'Failed to open billing portal');
     }
   };
 
@@ -184,6 +185,13 @@ export default function BillingPage() {
           </button>
         )}
       </div>
+
+      {actionError && (
+        <div className="px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
+          {actionError}
+          <button onClick={() => setActionError('')} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
 
       {/* Current plan + usage */}
       {billing && (

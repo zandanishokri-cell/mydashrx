@@ -243,6 +243,7 @@ export default function AutomationPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [seedError, setSeedError] = useState('');
   const [toggling, setToggling] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -267,8 +268,9 @@ export default function AutomationPage() {
     try {
       await api.post(`/orgs/${orgId}/automation/seed-defaults`, {});
       await load();
+      setSeedError('');
     } catch (e: any) {
-      alert(e.message ?? 'Failed to seed defaults');
+      setSeedError(e.message ?? 'Failed to seed defaults');
     } finally {
       setSeeding(false);
     }
@@ -338,6 +340,13 @@ export default function AutomationPage() {
           </div>
         ))}
       </div>
+
+      {seedError && (
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
+          {seedError}
+          <button onClick={() => setSeedError('')} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
 
       {/* Rules list */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm mb-6">

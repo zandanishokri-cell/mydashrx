@@ -33,6 +33,7 @@ export default function DriversPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [editDriver, setEditDriver] = useState<Driver | null>(null);
   const [search, setSearch] = useState('');
+  const [deleteError, setDeleteError] = useState('');
   const [user] = useState(getUser);
 
   const load = useCallback(() => {
@@ -77,8 +78,9 @@ export default function DriversPage() {
     if (!user) return;
     try {
       await api.del(`/orgs/${user.orgId}/drivers/${id}`);
+      setDeleteError('');
       load();
-    } catch { alert('Failed to remove driver'); }
+    } catch { setDeleteError('Failed to remove driver. Try again.'); }
   };
 
   const openEdit = (driver: Driver, e: React.MouseEvent) => {
@@ -128,6 +130,13 @@ export default function DriversPage() {
           </Button>
         </div>
       </div>
+
+      {deleteError && (
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
+          {deleteError}
+          <button onClick={() => setDeleteError('')} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
 
       <div className="relative mb-4">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
