@@ -63,7 +63,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
         totalDistance: routes.totalDistance,
       })
       .from(routes)
-      .where(eq(routes.id, routeId))
+      .where(and(eq(routes.id, routeId), isNull(routes.deletedAt)))
       .limit(1);
 
     if (!route) return reply.code(404).send({ error: 'Route not found' });
@@ -86,6 +86,41 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     return db.select().from(stops)
       .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
+  });
+
+  // POST /driver/me/stops/:stopId/barcode — scan and record a package barcode
+  app.post('/me/stops/:stopId/barcode', {
+    preHandler: requireRole('driver'),
+  }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
+    const { stopId } = req.params as { stopId: string };
+    const { barcode } = req.body as { barcode?: string };
+
+    if (!barcode?.trim()) return reply.code(400).send({ error: 'barcode required' });
+
+    const [stop] = await db.select({
+      id: stops.id,
+      routeId: stops.routeId,
+      barcodesScanned: stops.barcodesScanned,
+    }).from(stops).where(eq(stops.id, stopId)).limit(1);
+
+    if (!stop) return reply.code(404).send({ error: 'Not found' });
+
+    const [route] = await db.select({ driverId: routes.driverId })
+      .from(routes)
+      .where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt)))
+      .limit(1);
+
+    if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
+
+    const updated = [...((stop.barcodesScanned as string[]) ?? []), barcode.trim()];
+    const [result] = await db.update(stops)
+      .set({ barcodesScanned: updated, packageConfirmed: true })
+      .where(eq(stops.id, stopId))
+      .returning();
+
+    return result;
   });
 
   // PATCH /driver/me/stops/:stopId/status

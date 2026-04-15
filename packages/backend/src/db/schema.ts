@@ -175,6 +175,8 @@ export const stops = pgTable(
     lat: real('lat').notNull(),
     lng: real('lng').notNull(),
     rxNumbers: jsonb('rx_numbers').notNull().default('[]'),
+    barcodesScanned: jsonb('barcodes_scanned').notNull().default('[]'),
+    packageConfirmed: boolean('package_confirmed').notNull().default(false),
     packageCount: integer('package_count').notNull().default(1),
     requiresRefrigeration: boolean('requires_refrigeration').notNull().default(false),
     controlledSubstance: boolean('controlled_substance').notNull().default(false),
@@ -217,6 +219,7 @@ export const proofOfDeliveries = pgTable('proof_of_deliveries', {
   codCollected: jsonb('cod_collected'),
   driverNote: text('driver_note'),
   customerNote: text('customer_note'),
+  barcodesScanned: jsonb('barcodes_scanned').notNull().default('[]'),
   // Enhanced POD fields
   signatureData: text('signature_data'),
   idPhotoUrl: text('id_photo_url'),

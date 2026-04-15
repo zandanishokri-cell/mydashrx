@@ -3,7 +3,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { PodCaptureModal } from '@/components/PodCaptureModal';
-import { ArrowLeft, Phone, MapPin, Package, Camera, CheckCircle2, XCircle, Clock, AlertTriangle, Thermometer, PenLine, Upload } from 'lucide-react';
+import { BarcodeScanner } from '@/components/BarcodeScanner';
+import { ArrowLeft, Phone, MapPin, Package, Camera, CheckCircle2, XCircle, Clock, AlertTriangle, Thermometer, PenLine, Upload, ScanBarcode } from 'lucide-react';
 
 interface Stop {
   id: string; routeId: string; recipientName: string; address: string;
@@ -13,6 +14,7 @@ interface Stop {
   rxNumbers: string[]; packageCount: number; deliveryNotes?: string;
   codAmount?: number; arrivedAt?: string; completedAt?: string;
   failureReason?: string; failureNote?: string;
+  barcodesScanned?: string[]; packageConfirmed?: boolean;
 }
 
 const FAILURE_REASONS = [
@@ -32,6 +34,8 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
   const [failureNote, setFailureNote] = useState('');
   const [showFailure, setShowFailure] = useState(false);
   const [showPodModal, setShowPodModal] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannedBarcodes, setScannedBarcodes] = useState<string[]>([]);
   const [ageVerified, setAgeVerified] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -40,11 +44,8 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
 
   useEffect(() => {
     api.get<Stop>(`/driver/me/stops/${stopId}`)
-      .then(setStop)
-      .catch(() => {
-        // Fallback: fetch from generic stops if driver endpoint fails
-        setError('Could not load stop');
-      })
+      .then(s => { setStop(s); setScannedBarcodes(s.barcodesScanned ?? []); })
+      .catch(() => setError('Could not load stop'))
       .finally(() => setLoading(false));
 
     // Load existing photo
@@ -52,6 +53,18 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
       .then(pod => { if (pod.photos?.length) setPhotoUrl(pod.photos[pod.photos.length - 1].url); })
       .catch(() => null);
   }, [stopId]);
+
+  const handleBarcodeScan = async (value: string) => {
+    setShowScanner(false);
+    setError('');
+    try {
+      const result = await api.post<Stop>(`/driver/me/stops/${stopId}/barcode`, { barcode: value });
+      setScannedBarcodes(result.barcodesScanned ?? []);
+      setSuccess(`Barcode scanned: ${value.slice(0, 20)}${value.length > 20 ? '…' : ''}`);
+    } catch (err: any) {
+      setError(err?.message ?? 'Scan failed');
+    }
+  };
 
   const updateStatus = async (status: string) => {
     if (!stop) return;
@@ -190,6 +203,22 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
           )}
         </div>
 
+        {/* Barcode scan */}
+        {!isDone && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <h3 className="font-semibold text-gray-800 mb-3 text-sm">Package Verification</h3>
+            <button
+              onClick={() => setShowScanner(true)}
+              className="w-full border-2 border-dashed border-gray-300 rounded-2xl py-4 flex items-center justify-center gap-2 text-gray-500 active:bg-gray-50"
+            >
+              <ScanBarcode size={20} />
+              {scannedBarcodes.length > 0
+                ? `${scannedBarcodes.length} barcode${scannedBarcodes.length !== 1 ? 's' : ''} scanned ✓`
+                : 'Scan Package Barcode (optional)'}
+            </button>
+          </div>
+        )}
+
         {/* Photo upload */}
         <div className="bg-white rounded-2xl p-4 shadow-sm">
           <h3 className="font-semibold text-gray-800 mb-3 text-sm">Proof of Delivery Photo</h3>
@@ -318,6 +347,10 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
           <MapPin size={16} /> Open in Maps
         </a>
       </div>
+
+      {showScanner && (
+        <BarcodeScanner onScan={handleBarcodeScan} onClose={() => setShowScanner(false)} />
+      )}
 
       {showPodModal && stop && (
         <PodCaptureModal
