@@ -3,7 +3,7 @@ import { db } from '../db/connection.js';
 import { stops, routes } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
-import { sendStopNotification } from '../services/notifications.js';
+import { sendStopNotification, sendDriverArrivalEmail } from '../services/notifications.js';
 import { fireTrigger } from '../services/automation.js';
 import type { StopStatus } from '@mydash-rx/shared';
 
@@ -107,8 +107,11 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     const [updated] = await db.update(stops).set(updates).where(eq(stops.id, stopId)).returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
 
-    // Fire notification async — don't await
+    // Fire notifications async — don't await
     sendStopNotification(updated, status).catch(console.error);
+    if (status === 'arrived') {
+      sendDriverArrivalEmail(updated).catch(console.error);
+    }
 
     // Fire automation triggers — fire-and-forget
     fireTrigger({

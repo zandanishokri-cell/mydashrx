@@ -1,7 +1,7 @@
 import twilio from 'twilio';
 import { db } from '../db/connection.js';
-import { notificationLogs, organizations } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { notificationLogs, organizations, users } from '../db/schema.js';
+import { eq, and, isNull, inArray } from 'drizzle-orm';
 
 const SMS_TEMPLATES: Record<string, (d: Record<string, string>) => string> = {
   route_dispatched: (d) =>
@@ -82,4 +82,70 @@ export async function sendStopNotification(
     });
     console.error('SMS notification failed:', err);
   }
+}
+
+export async function sendDriverArrivalEmail(stop: {
+  id: string;
+  orgId: string;
+  recipientName: string;
+  address: string;
+  arrivedAt?: Date | null;
+}): Promise<void> {
+  const resendKey = process.env.RESEND_API_KEY;
+  const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+  if (!resendKey) return;
+
+  const [org] = await db.select({ name: organizations.name })
+    .from(organizations).where(eq(organizations.id, stop.orgId)).limit(1);
+
+  const recipients = await db
+    .select({ email: users.email, name: users.name })
+    .from(users)
+    .where(and(
+      eq(users.orgId, stop.orgId),
+      inArray(users.role, ['pharmacist', 'pharmacy_admin'] as const),
+      isNull(users.deletedAt),
+    ));
+
+  if (recipients.length === 0) return;
+
+  const arrivedTime = stop.arrivedAt
+    ? new Date(stop.arrivedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Detroit' })
+    : 'just now';
+
+  const dashboardUrl = process.env.DASHBOARD_URL ?? 'https://app.mydashrx.com';
+  const orgName = org?.name ?? 'Your Pharmacy';
+
+  const html = `
+    <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#fff;">
+      <div style="background:#0F4C81;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
+        <h2 style="color:#fff;margin:0;font-size:18px;">Driver Has Arrived</h2>
+        <p style="color:#9fc3e8;margin:4px 0 0;font-size:13px;">${orgName}</p>
+      </div>
+      <table style="width:100%;border-collapse:collapse;">
+        <tr><td style="padding:8px 0;color:#6b7280;font-size:13px;width:100px;">Recipient</td>
+            <td style="padding:8px 0;font-weight:600;color:#111827;">${stop.recipientName}</td></tr>
+        <tr><td style="padding:8px 0;color:#6b7280;font-size:13px;">Address</td>
+            <td style="padding:8px 0;color:#374151;font-size:14px;">${stop.address}</td></tr>
+        <tr><td style="padding:8px 0;color:#6b7280;font-size:13px;">Arrived at</td>
+            <td style="padding:8px 0;color:#374151;font-size:14px;">${arrivedTime}</td></tr>
+      </table>
+      <a href="${dashboardUrl}/pharmacist/queue" style="display:inline-block;margin-top:20px;background:#0F4C81;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:500;">
+        View Queue
+      </a>
+      <p style="color:#9ca3af;font-size:11px;margin-top:20px;">MyDashRx · Sent to pharmacists at ${orgName}</p>
+    </div>`;
+
+  await Promise.allSettled(recipients.map(r =>
+    fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+      body: JSON.stringify({
+        from: `MyDashRx <noreply@${senderDomain}>`,
+        to: r.email,
+        subject: `Driver arrived — ${stop.recipientName} · ${stop.address.split(',')[0]}`,
+        html,
+      }),
+    })
+  ));
 }

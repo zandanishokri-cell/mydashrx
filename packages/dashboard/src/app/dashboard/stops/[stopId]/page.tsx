@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
@@ -67,8 +67,7 @@ const TIMELINE_ICONS: Record<string, React.ElementType> = {
 const initials = (name: string) =>
   name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
 
-export default function StopDetailPage() {
-  const { stopId } = useParams<{ stopId: string }>();
+function StopDetailContent({ stopId }: { stopId: string }) {
   const router = useRouter();
   const user = getUser();
   const [stop, setStop] = useState<StopDetail | null>(null);
@@ -78,6 +77,7 @@ export default function StopDetailPage() {
   const [notesValue, setNotesValue] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [rescheduling, setRescheduling] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState<string | null>(null);
   const [showPod, setShowPod] = useState(false);
 
   const load = useCallback(async () => {
@@ -109,11 +109,13 @@ export default function StopDetailPage() {
   const reschedule = async () => {
     if (!stop || !user || !stop.routeId) return;
     setRescheduling(true);
+    setRescheduleError(null);
     try {
       await api.patch(`/routes/${stop.routeId}/stops/${stop.id}/status`, { status: 'pending' });
       await load();
-    } catch { /* silent */ }
-    finally { setRescheduling(false); }
+    } catch {
+      setRescheduleError('Failed to reschedule. Please try again.');
+    } finally { setRescheduling(false); }
   };
 
   if (loading) return (
@@ -377,13 +379,18 @@ export default function StopDetailPage() {
         {/* Actions */}
         <section className="flex flex-wrap gap-3">
           {stop.status === 'failed' && (
-            <button
-              onClick={reschedule}
-              disabled={rescheduling}
-              className="flex items-center gap-2 px-4 py-2 bg-[#0F4C81] text-white rounded-xl text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
-            >
-              <RotateCcw size={15} /> {rescheduling ? 'Rescheduling…' : 'Reschedule Delivery'}
-            </button>
+            <div className="flex flex-col gap-1.5">
+              <button
+                onClick={reschedule}
+                disabled={rescheduling}
+                className="flex items-center gap-2 px-4 py-2 bg-[#0F4C81] text-white rounded-xl text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
+              >
+                <RotateCcw size={15} /> {rescheduling ? 'Rescheduling…' : 'Reschedule Delivery'}
+              </button>
+              {rescheduleError && (
+                <p className="text-xs text-red-600">{rescheduleError}</p>
+              )}
+            </div>
           )}
           {stop.trackingToken && (
             <a
@@ -406,5 +413,18 @@ export default function StopDetailPage() {
         </section>
       </div>
     </div>
+  );
+}
+
+export default function StopDetailPage() {
+  const { stopId } = useParams<{ stopId: string }>();
+  return (
+    <Suspense fallback={
+      <div className="p-6 space-y-4">
+        {[1, 2, 3].map(i => <div key={i} className="h-20 bg-gray-100 rounded-xl animate-pulse" />)}
+      </div>
+    }>
+      <StopDetailContent stopId={stopId} />
+    </Suspense>
   );
 }
