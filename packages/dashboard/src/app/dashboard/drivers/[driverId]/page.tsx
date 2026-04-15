@@ -1,10 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell,
-} from 'recharts';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
@@ -38,7 +34,32 @@ interface Stop {
   createdAt: string; completedAt: string | null; failureReason: string | null;
 }
 
-const PIE_COLORS = ['#ef4444', '#f97316', '#eab308', '#6b7280', '#8b5cf6'];
+const REASON_COLORS = ['#ef4444', '#f97316', '#eab308', '#6b7280', '#8b5cf6'];
+
+/** Vertical grouped bars for daily totals */
+function DailyBars({ data, formatDate }: { data: { date: string; total: number; completed: number; failed: number }[]; formatDate: (s: string) => string }) {
+  if (data.length === 0) return <p className="text-sm text-gray-400 text-center py-8">No delivery data for this period.</p>;
+  const maxVal = Math.max(...data.map(d => d.total), 1);
+  return (
+    <div className="overflow-x-auto">
+      <div className="flex items-end gap-1 h-40" style={{ minWidth: data.length * 32 }}>
+        {data.map(d => (
+          <div key={d.date} className="flex flex-col items-center gap-0.5 flex-1 min-w-[28px]">
+            <div className="w-full flex items-end gap-px" style={{ height: 120 }}>
+              <div className="flex-1 rounded-t transition-all bg-[#0F4C81]" style={{ height: `${(d.completed / maxVal) * 100}%`, minHeight: d.completed > 0 ? 2 : 0 }} title={`Completed: ${d.completed}`} />
+              <div className="flex-1 rounded-t transition-all bg-red-400" style={{ height: `${(d.failed / maxVal) * 100}%`, minHeight: d.failed > 0 ? 2 : 0 }} title={`Failed: ${d.failed}`} />
+            </div>
+            <span className="text-[9px] text-gray-400 rotate-45 origin-top-left translate-x-1">{d.date.slice(5)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-4 mt-6 text-xs text-gray-500">
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-[#0F4C81]" /> Completed</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-red-400" /> Failed</span>
+      </div>
+    </div>
+  );
+}
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
@@ -170,23 +191,7 @@ export default function DriverDetailPage() {
       {/* Daily delivery chart */}
       <div className="bg-white rounded-xl border border-gray-100 p-5">
         <h3 className="text-sm font-semibold text-gray-700 mb-4">Daily Deliveries</h3>
-        {perf.daily.length === 0 ? (
-          <p className="text-sm text-gray-400 text-center py-8">No delivery data for this period.</p>
-        ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={perf.daily} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={formatDate} />
-              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-              <Tooltip
-                formatter={(val, name) => [val, String(name).charAt(0).toUpperCase() + String(name).slice(1)]}
-                labelFormatter={(s) => formatDate(String(s))}
-              />
-              <Line type="monotone" dataKey="total" stroke="#0F4C81" strokeWidth={2} dot={false} name="total" />
-              <Line type="monotone" dataKey="completed" stroke="#10b981" strokeWidth={2} dot={false} name="completed" />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
+        <DailyBars data={perf.daily} formatDate={formatDate} />
       </div>
 
       {/* Failure reasons + recent activity */}
@@ -199,28 +204,23 @@ export default function DriverDetailPage() {
               <CheckCircle2 size={28} className="text-emerald-400 mb-2" />
               <p className="text-sm text-gray-400">No failures this period</p>
             </div>
-          ) : (
-            <div className="flex items-center gap-4">
-              <PieChart width={120} height={120}>
-                <Pie data={perf.failureReasons} dataKey="count" cx={55} cy={55} innerRadius={30} outerRadius={55}>
-                  {perf.failureReasons.map((_, i) => (
-                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                  ))}
-                </Pie>
-              </PieChart>
-              <div className="space-y-1.5 flex-1">
+          ) : (() => {
+            const maxCount = Math.max(...perf.failureReasons.map(r => r.count), 1);
+            return (
+              <div className="space-y-3">
                 {perf.failureReasons.map((r, i) => (
-                  <div key={r.reason} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                      <span className="text-gray-600 capitalize">{r.reason.replace(/_/g, ' ')}</span>
+                  <div key={r.reason} className="flex items-center gap-3">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: REASON_COLORS[i % REASON_COLORS.length] }} />
+                    <span className="text-xs text-gray-600 w-36 truncate shrink-0 capitalize">{r.reason.replace(/_/g, ' ')}</span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-2">
+                      <div className="h-2 rounded-full transition-all" style={{ width: `${(r.count / maxCount) * 100}%`, background: REASON_COLORS[i % REASON_COLORS.length] }} />
                     </div>
-                    <span className="font-semibold text-gray-800">{r.count}</span>
+                    <span className="text-xs font-semibold text-gray-800 w-6 text-right shrink-0">{r.count}</span>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Recent activity */}
