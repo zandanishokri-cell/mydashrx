@@ -38,15 +38,6 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Load stop from the dispatcher routes endpoint since driver can read their stops
-    api.get<Stop[]>(`/driver/me/routes/any/stops`)
-      .catch(() => null);
-
-    // Just fetch the stop directly via the stops route
-    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/v1/routes/any/stops/${stopId}`)
-      .catch(() => null);
-
-    // Use the driver stops endpoint
     api.get<Stop>(`/driver/me/stops/${stopId}`)
       .then(setStop)
       .catch(() => {

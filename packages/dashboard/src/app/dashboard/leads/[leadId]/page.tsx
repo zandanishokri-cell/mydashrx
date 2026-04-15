@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback, use } from 'react';
+import { useEffect, useState, useCallback, use, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
@@ -40,8 +40,7 @@ function ScoreBadge({ score }: { score: number }) {
   return <span className={`text-sm font-bold px-2.5 py-1 rounded-full ${cls}`}>{score}/100</span>;
 }
 
-export default function LeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
-  const { leadId } = use(params);
+function LeadDetailContent({ leadId }: { leadId: string }) {
   const [user] = useState(getUser);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -412,5 +411,19 @@ export default function LeadDetailPage({ params }: { params: Promise<{ leadId: s
         </div>
       )}
     </div>
+  );
+}
+
+export default function LeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
+  const { leadId } = use(params);
+  return (
+    <Suspense fallback={
+      <div className="p-6 space-y-4">
+        <div className="h-8 w-48 bg-gray-100 rounded-lg animate-pulse" />
+        <div className="h-64 bg-white rounded-xl border border-gray-100 animate-pulse" />
+      </div>
+    }>
+      <LeadDetailContent leadId={leadId} />
+    </Suspense>
   );
 }
