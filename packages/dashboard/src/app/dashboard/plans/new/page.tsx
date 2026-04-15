@@ -32,6 +32,7 @@ export default function NewPlanPage() {
     setError('');
     try {
       const plan = await api.post<{ id: string }>(`/orgs/${user.orgId}/plans`, { depotId, date });
+      router.refresh();
       router.replace(`/dashboard/plans/${plan.id}`);
     } catch {
       setError('Failed to create plan');

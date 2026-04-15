@@ -69,6 +69,12 @@ export default function PlansPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [load]);
+
   const optimizePlan = async (planId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
