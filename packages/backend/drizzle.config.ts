@@ -6,5 +6,6 @@ export default {
   driver: 'pg',
   dbCredentials: {
     connectionString: process.env.DATABASE_URL!,
+    ssl: process.env.NODE_ENV === 'production' || process.env.DATABASE_URL?.includes('render.com') ? { rejectUnauthorized: false } : false,
   },
 } satisfies Config;

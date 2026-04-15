@@ -20,6 +20,13 @@ import { eq } from 'drizzle-orm';
 
 console.log('🌱 Seeding MyDashRx database...');
 
+// ── Guard: skip if already seeded ──────────────────────────────────────────
+const existingOrg = await db.select().from(organizations).where(eq(organizations.name, 'Greater Care Pharmacy')).limit(1);
+if (existingOrg.length > 0) {
+  console.log('ℹ️  Database already seeded — skipping.');
+  process.exit(0);
+}
+
 // ── Org ────────────────────────────────────────────────────────────────────
 const [org] = await db
   .insert(organizations)
