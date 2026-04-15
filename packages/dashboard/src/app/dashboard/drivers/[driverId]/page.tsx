@@ -16,6 +16,7 @@ interface PerformanceData {
   summary: {
     totalStops: number; completed: number; failed: number;
     completionRate: number; avgStopsPerDay: number; activeDays: number;
+    onTimeRate: number | null;
   };
   daily: { date: string; total: number; completed: number; failed: number }[];
   failureReasons: { reason: string; count: number }[];
@@ -176,7 +177,7 @@ export default function DriverDetailPage() {
             </span>
           )}
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <StatCard label="Total Stops" value={perf.summary.totalStops} />
           <StatCard
             label="Completion Rate"
@@ -184,6 +185,11 @@ export default function DriverDetailPage() {
             sub={`${perf.summary.completed} completed`}
           />
           <StatCard label="Avg Stops/Day" value={perf.summary.avgStopsPerDay} sub={`${perf.summary.activeDays} active days`} />
+          <StatCard
+            label="On-Time Rate"
+            value={perf.summary.onTimeRate !== null ? `${perf.summary.onTimeRate}%` : '—'}
+            sub={perf.summary.onTimeRate !== null ? 'within delivery window' : 'no window data'}
+          />
           <StatCard label="Failed Stops" value={perf.summary.failed} sub={perf.summary.failed > 0 ? 'See reasons below' : 'Clean record'} />
         </div>
       </div>

@@ -123,6 +123,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
         failureReason: stops.failureReason,
         completedAt: stops.completedAt,
         createdAt: stops.createdAt,
+        windowEnd: stops.windowEnd,
       })
       .from(stops)
       .innerJoin(routes, eq(stops.routeId, routes.id))
@@ -138,6 +139,11 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     const completed = driverStops.filter(s => s.status === 'completed').length;
     const failed = driverStops.filter(s => s.status === 'failed').length;
     const completionRate = total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
+
+    // On-time rate: completed stops with windowEnd that finished before the window closed
+    const completedWithWindow = driverStops.filter(s => s.status === 'completed' && s.windowEnd);
+    const onTimeCount = completedWithWindow.filter(s => s.completedAt && s.windowEnd && s.completedAt <= s.windowEnd).length;
+    const onTimeRate = completedWithWindow.length > 0 ? Math.round((onTimeCount / completedWithWindow.length) * 1000) / 10 : null;
 
     // Daily breakdown
     const dailyMap = new Map<string, { total: number; completed: number; failed: number }>();
@@ -196,7 +202,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
       driverId,
       driverName: driver.name,
       period: { from, to },
-      summary: { totalStops: total, completed, failed, completionRate, avgStopsPerDay, activeDays },
+      summary: { totalStops: total, completed, failed, completionRate, avgStopsPerDay, activeDays, onTimeRate },
       daily,
       failureReasons,
       rank,
