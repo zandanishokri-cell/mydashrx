@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
@@ -46,7 +46,7 @@ function StatusBadge({ status }: { status: string }) {
 
 interface EditState { id: string; notes: string; }
 
-export default function ComplianceItemsPage() {
+function ComplianceItemsContent() {
   const [user] = useState(getUser);
   const searchParams = useSearchParams();
   const initCategory = searchParams.get('category') ?? '';
@@ -290,5 +290,13 @@ export default function ComplianceItemsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ComplianceItemsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-gray-400 text-sm">Loading…</div>}>
+      <ComplianceItemsContent />
+    </Suspense>
   );
 }
