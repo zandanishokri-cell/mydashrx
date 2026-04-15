@@ -12,6 +12,16 @@ interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; }
 interface Stop { id: string; status: string; routeId: string; }
 interface DashboardSummary { stopsToday: number; completedToday: number; inProgressToday: number; activeDrivers: number; }
+interface DriverStatus {
+  id: string;
+  name: string;
+  status: 'available' | 'on_route' | 'offline';
+  vehicleType: string;
+  routeId: string | null;
+  routeStatus: string | null;
+  totalStops: number;
+  completedStops: number;
+}
 
 interface PlanWithRoutes extends Plan { routes: Route[]; }
 
@@ -26,6 +36,8 @@ export default function CommandCenter() {
   const [plans, setPlans] = useState<PlanWithRoutes[]>([]);
   const [stops, setStops] = useState<Stop[]>([]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [driversList, setDriversList] = useState<DriverStatus[]>([]);
+  const [driversLoading, setDriversLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -34,6 +46,7 @@ export default function CommandCenter() {
   const [user] = useState(getUser);
   const today = new Date().toISOString().split('T')[0];
   const summaryTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const driversTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadSummary = useCallback(async () => {
     if (!user) return;
@@ -52,6 +65,21 @@ export default function CommandCenter() {
     summaryTimer.current = setInterval(loadSummary, 60_000);
     return () => { if (summaryTimer.current) clearInterval(summaryTimer.current); };
   }, [loadSummary]);
+
+  const loadDrivers = useCallback(() => {
+    if (!user) return;
+    let cancelled = false;
+    api.get<{ drivers: DriverStatus[] }>(`/orgs/${user.orgId}/dashboard/drivers`)
+      .then(res => { if (!cancelled) { setDriversList(res.drivers); setDriversLoading(false); } })
+      .catch(() => { if (!cancelled) setDriversLoading(false); });
+    return () => { cancelled = true; };
+  }, [user]);
+
+  useEffect(() => {
+    loadDrivers();
+    driversTimer.current = setInterval(loadDrivers, 30_000);
+    return () => { if (driversTimer.current) clearInterval(driversTimer.current); };
+  }, [loadDrivers]);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!user) return;
@@ -92,7 +120,7 @@ export default function CommandCenter() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleRefresh = () => { load(true); loadSummary(); };
+  const handleRefresh = () => { load(true); loadSummary(); loadDrivers(); };
 
   const allRoutes = plans.flatMap(p => p.routes);
   const completedStops = stops.filter(s => s.status === 'completed').length;
@@ -151,7 +179,7 @@ export default function CommandCenter() {
           <p className="text-gray-400 text-sm mt-1">{dateLabel}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <DepotFilter value={depotId} onChange={setDepotId} />
+          <DepotFilter value={depotId} onChange={(id) => setDepotId(id)} />
           <Link
             href="/dashboard/map"
             className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
@@ -185,6 +213,43 @@ export default function CommandCenter() {
           ))
         )}
       </div>
+
+      {/* Fleet status */}
+      {!driversLoading && driversList.length > 0 && (
+        <div className="mb-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5">
+            <Truck size={14} className="text-gray-400" /> Fleet Status
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            {driversList.map(d => {
+              const dotColor = d.status === 'on_route' ? 'bg-emerald-400' : d.status === 'available' ? 'bg-amber-400' : 'bg-gray-300';
+              const pct = d.totalStops > 0 ? Math.round((d.completedStops / d.totalStops) * 100) : 0;
+              return (
+                <Link
+                  key={d.id}
+                  href={`/dashboard/drivers/${d.id}`}
+                  className="bg-white rounded-xl border border-gray-100 shadow-sm p-3 hover:shadow-md transition-shadow"
+                >
+                  <div className="flex items-center gap-2 mb-2 min-w-0">
+                    <span className={`w-2 h-2 rounded-full ${dotColor} shrink-0`} />
+                    <span className="text-sm font-semibold text-gray-900 truncate">{d.name}</span>
+                  </div>
+                  {d.routeId ? (
+                    <>
+                      <p className="text-xs text-gray-500 mb-1.5">{d.completedStops}/{d.totalStops} stops</p>
+                      <div className="w-full bg-gray-100 rounded-full h-1">
+                        <div className="bg-[#00B8A9] h-1 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-400 italic">No route today</p>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Progress bar */}
       {!loading && stops.length > 0 && (
