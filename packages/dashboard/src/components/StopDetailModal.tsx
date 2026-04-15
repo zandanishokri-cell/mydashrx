@@ -1,10 +1,11 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { Phone, MapPin, Package, Thermometer, AlertTriangle, PenLine, ClipboardList, Trash2 } from 'lucide-react';
+import { PodViewer } from '@/components/PodViewer';
+import { Phone, MapPin, Package, Thermometer, AlertTriangle, PenLine, ClipboardList, Trash2, FileCheck } from 'lucide-react';
 
 interface Stop {
   id: string;
@@ -54,6 +55,20 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
+  const [pod, setPod] = useState<Record<string, unknown> | null>(null);
+  const [showPod, setShowPod] = useState(false);
+  const [podLoading, setPodLoading] = useState(false);
+
+  const loadPod = async () => {
+    if (pod) { setShowPod(true); return; }
+    setPodLoading(true);
+    try {
+      const data = await api.get<Record<string, unknown>>(`/stops/${stop.id}/pod`);
+      setPod(data);
+      setShowPod(true);
+    } catch { setPod({}); setShowPod(true); }
+    finally { setPodLoading(false); }
+  };
 
   const dirty = status !== stop.status || failureReason !== (stop.failureReason ?? '') || failureNote !== (stop.failureNote ?? '');
 
@@ -160,6 +175,29 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
           <div className="text-xs text-gray-400 space-y-1">
             {stop.arrivedAt && <div>Arrived: {new Date(stop.arrivedAt).toLocaleTimeString()}</div>}
             {stop.completedAt && <div>Completed: {new Date(stop.completedAt).toLocaleTimeString()}</div>}
+          </div>
+        )}
+
+        {/* POD viewer for completed stops */}
+        {stop.status === 'completed' && (
+          <div>
+            {!showPod ? (
+              <Button variant="secondary" size="sm" onClick={loadPod} loading={podLoading} className="w-full flex items-center justify-center gap-1.5">
+                <FileCheck size={14} /> View Proof of Delivery
+              </Button>
+            ) : pod && Object.keys(pod).length > 0 ? (
+              <div className="border border-gray-100 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-semibold text-gray-800 text-sm flex items-center gap-1.5">
+                    <FileCheck size={14} className="text-green-600" /> Proof of Delivery
+                  </h4>
+                  <button onClick={() => setShowPod(false)} className="text-xs text-gray-400 hover:text-gray-600">Hide</button>
+                </div>
+                <PodViewer pod={pod as any} />
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 text-center py-2">No POD on file</p>
+            )}
           </div>
         )}
 

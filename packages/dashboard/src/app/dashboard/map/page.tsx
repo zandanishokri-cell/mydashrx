@@ -1,81 +1,101 @@
 'use client';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Clock } from 'lucide-react';
 
 const LiveMap = dynamic(() => import('@/components/LiveMap').then((m) => m.LiveMap), { ssr: false });
 
-interface Driver {
-  id: string; name: string; status: string;
-  currentLat: number | null; currentLng: number | null; lastPingAt: string | null;
+interface NextStop {
+  stopId: string;
+  address: string;
+  recipientName: string;
+  status: string;
 }
 
-interface Stop {
-  id: string; routeId: string; recipientName: string; address: string;
-  status: string; lat: number; lng: number; sequenceNumber: number | null;
+interface ActiveRoute {
+  routeId: string;
+  driverId: string;
+  driverName: string;
+  driverPhone: string;
+  status: string;
+  currentLat: number | null;
+  currentLng: number | null;
+  lastPingAt: string | null;
+  stopsTotal: number;
+  stopsCompleted: number;
+  stopsPending: number;
+  nextStop: NextStop | null;
+  estimatedCompletion: string;
 }
 
-interface Route { id: string; driverId: string; status: string; }
-interface Plan { id: string; date: string; status: string; routes: Route[]; }
+interface LiveData {
+  activeRoutes: ActiveRoute[];
+  summary: { activeDrivers: number; totalStopsRemaining: number; completedToday: number };
+}
+
+const timeAgo = (iso: string | null): string => {
+  if (!iso) return 'never';
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ago`;
+};
+
+const isStale = (iso: string | null) =>
+  iso ? Date.now() - new Date(iso).getTime() > 5 * 60 * 1000 : false;
+
+const fmtTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
 export default function MapPage() {
-  const user = getUser();
-  const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [stops, setStops] = useState<Stop[]>([]);
-  const [plans, setPlans] = useState<Plan[]>([]);
+  const [user] = useState(getUser);
+  const [liveData, setLiveData] = useState<LiveData | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [secondsAgo, setSecondsAgo] = useState(0);
+  const [highlightedDriverId, setHighlightedDriverId] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!user) return;
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const [driversData, plansData] = await Promise.all([
-        api.get<Driver[]>(`/orgs/${user.orgId}/drivers`),
-        api.get<Plan[]>(`/orgs/${user.orgId}/plans?date=${today}`),
-      ]);
-      setDrivers(driversData);
-      setPlans(plansData);
-
-      // Load stops for all active/distributed plans
-      const allStops: Stop[] = [];
-      for (const plan of plansData) {
-        if (plan.status === 'distributed' || plan.status === 'optimized') {
-          const routes = await api.get<Route[]>(`/plans/${plan.id}/routes`);
-          for (const route of routes) {
-            const routeStops = await api.get<Stop[]>(`/plans/${plan.id}/routes/${route.id}/stops`);
-            allStops.push(...routeStops);
-          }
-        }
-      }
-      setStops(allStops);
+      const data = await api.get<LiveData>(`/orgs/${user.orgId}/tracking/live`);
+      setLiveData(data);
       setLastRefresh(new Date());
+      setSecondsAgo(0);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     load();
-    intervalRef.current = setInterval(load, 15000); // refresh every 15s
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    intervalRef.current = setInterval(load, 15000);
+    tickRef.current = setInterval(() => setSecondsAgo((s) => s + 1), 1000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (tickRef.current) clearInterval(tickRef.current);
+    };
+  }, [load]);
 
-  const driverMarkers = drivers
-    .filter((d) => d.currentLat && d.currentLng)
-    .map((d) => ({ id: d.id, name: d.name, lat: d.currentLat!, lng: d.currentLng!, status: d.status }));
+  const driverMarkers = (liveData?.activeRoutes ?? [])
+    .filter((r) => r.currentLat && r.currentLng)
+    .map((r) => ({
+      id: r.driverId,
+      name: r.driverName,
+      lat: r.currentLat!,
+      lng: r.currentLng!,
+      status: r.status,
+    }));
 
-  const today = new Date().toISOString().split('T')[0];
-  const todayPlans = plans.filter((p) => p.date === today);
-  const activeDrivers = drivers.filter((d) => d.status === 'on_route').length;
-  const completedStops = stops.filter((s) => s.status === 'completed').length;
-  const pendingStops = stops.filter((s) => s.status === 'pending').length;
+  const { summary } = liveData ?? { summary: { activeDrivers: 0, totalStopsRemaining: 0, completedToday: 0 } };
 
   return (
     <div className="flex flex-col h-full">
@@ -84,14 +104,14 @@ export default function MapPage() {
         <div className="flex items-center gap-6">
           <h1 className="font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>Live Map</h1>
           <div className="flex items-center gap-4 text-sm text-gray-500">
-            <span><strong className="text-[#0F4C81]">{activeDrivers}</strong> active drivers</span>
-            <span><strong className="text-[#10b981]">{completedStops}</strong> completed</span>
-            <span><strong className="text-gray-500">{pendingStops}</strong> pending</span>
+            <span><strong className="text-[#0F4C81]">{summary.activeDrivers}</strong> active drivers</span>
+            <span><strong className="text-[#10b981]">{summary.completedToday}</strong> completed</span>
+            <span><strong className="text-gray-500">{summary.totalStopsRemaining}</strong> remaining</span>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-400">
-            Updated {lastRefresh.toLocaleTimeString()}
+          <span className="text-xs text-gray-400 flex items-center gap-1">
+            <Clock size={11} /> {secondsAgo < 5 ? 'Just updated' : `${secondsAgo}s ago`}
           </span>
           <button onClick={load} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors" title="Refresh">
             <RefreshCw size={14} className="text-gray-500" />
@@ -107,71 +127,108 @@ export default function MapPage() {
               <div className="text-gray-400 text-sm">Loading map…</div>
             </div>
           ) : (
-            <LiveMap drivers={driverMarkers} stops={stops} />
+            <LiveMap
+              drivers={driverMarkers}
+              stops={[]}
+              highlightedDriverId={highlightedDriverId}
+              onMarkerClick={(id) => setHighlightedDriverId((prev) => (prev === id ? null : id))}
+            />
           )}
         </div>
 
         {/* Sidebar */}
-        <div className="w-64 border-l border-gray-100 bg-white overflow-y-auto shrink-0">
-          {/* Drivers panel */}
+        <div className="w-72 bg-white border-l border-gray-100 overflow-y-auto shrink-0">
           <div className="px-4 py-3 border-b border-gray-50">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Drivers</p>
-            <div className="space-y-2">
-              {drivers.map((driver) => (
-                <div key={driver.id} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-full bg-blue-50 flex items-center justify-center text-[#0F4C81] font-semibold text-xs">
-                      {driver.name[0]}
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-gray-900">{driver.name.split(' ')[0]}</p>
-                      {driver.lastPingAt && (
-                        <p className="text-xs text-gray-400">
-                          {Math.floor((Date.now() - new Date(driver.lastPingAt).getTime()) / 60000)}m ago
-                        </p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Active Routes</p>
+          </div>
+
+          {(liveData?.activeRoutes ?? []).length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-gray-400">No active routes</div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {(liveData?.activeRoutes ?? []).map((r) => {
+                const stale = isStale(r.lastPingAt);
+                const selected = highlightedDriverId === r.driverId;
+                return (
+                  <button
+                    key={r.routeId}
+                    onClick={() => setHighlightedDriverId((prev) => (prev === r.driverId ? null : r.driverId))}
+                    className={`w-full text-left px-4 py-3 transition-colors hover:bg-gray-50 ${
+                      selected ? 'bg-blue-50 border-l-2 border-[#0F4C81]' : ''
+                    } ${stale ? 'border-l-2 border-amber-400' : ''}`}
+                  >
+                    {/* Driver header */}
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs shrink-0"
+                          style={{ background: selected ? '#0F4C81' : '#64748b' }}
+                        >
+                          {r.driverName.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase()}
+                        </div>
+                        <span className="text-xs font-semibold text-gray-900">{r.driverName}</span>
+                      </div>
+                      {stale && (
+                        <span title="No ping in 5+ min">
+                          <AlertTriangle size={13} className="text-amber-500" />
+                        </span>
                       )}
                     </div>
-                  </div>
-                  <Badge status={driver.status} />
-                </div>
-              ))}
-              {drivers.length === 0 && <p className="text-xs text-gray-400">No drivers</p>}
-            </div>
-          </div>
 
-          {/* Today's plans */}
-          <div className="px-4 py-3">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Today&apos;s Plans</p>
-            <div className="space-y-2">
-              {todayPlans.map((plan) => (
-                <a
-                  key={plan.id}
-                  href={`/dashboard/plans/${plan.id}`}
-                  className="flex items-center justify-between hover:bg-gray-50 rounded-lg px-2 py-1.5 transition-colors"
-                >
-                  <span className="text-xs text-gray-700">{plan.date}</span>
-                  <Badge status={plan.status} />
-                </a>
-              ))}
-              {todayPlans.length === 0 && <p className="text-xs text-gray-400">No plans today</p>}
+                    {/* Progress */}
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                        <div
+                          className="bg-[#0F4C81] h-1.5 rounded-full transition-all"
+                          style={{ width: `${r.stopsTotal > 0 ? (r.stopsCompleted / r.stopsTotal) * 100 : 0}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-gray-500 shrink-0">
+                        {r.stopsCompleted}/{r.stopsTotal}
+                      </span>
+                    </div>
+
+                    {/* Next stop */}
+                    {r.nextStop && (
+                      <p className="text-xs text-gray-500 truncate mb-1">
+                        <span className="text-gray-400">Next:</span> {r.nextStop.address}
+                      </p>
+                    )}
+                    {!r.nextStop && r.stopsPending === 0 && (
+                      <p className="text-xs text-green-600 font-medium mb-1">All stops complete</p>
+                    )}
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-400">{timeAgo(r.lastPingAt)}</span>
+                      <span className="text-xs text-gray-400">Est. {fmtTime(r.estimatedCompletion)}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
-          </div>
+          )}
 
           {/* Legend */}
-          <div className="px-4 py-3 border-t border-gray-50">
+          <div className="px-4 py-3 border-t border-gray-50 mt-2">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Legend</p>
             <div className="space-y-1.5">
               {[
-                { color: '#94a3b8', label: 'Pending' },
+                { color: '#94a3b8', label: 'Pending stop' },
+                { color: '#3b82f6', label: 'En route' },
                 { color: '#f59e0b', label: 'Arrived' },
                 { color: '#10b981', label: 'Completed' },
                 { color: '#ef4444', label: 'Failed' },
               ].map(({ color, label }) => (
                 <div key={label} className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ background: color }} />
+                  <div className="w-3 h-3 rounded-full shrink-0" style={{ background: color }} />
                   <span className="text-xs text-gray-600">{label}</span>
                 </div>
               ))}
+              <div className="flex items-center gap-2 mt-1">
+                <AlertTriangle size={12} className="text-amber-500 shrink-0" />
+                <span className="text-xs text-gray-600">No ping &gt;5 min</span>
+              </div>
             </div>
           </div>
         </div>

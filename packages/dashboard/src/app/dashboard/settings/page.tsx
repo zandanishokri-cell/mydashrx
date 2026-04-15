@@ -1,0 +1,695 @@
+'use client';
+import { useEffect, useState, useCallback } from 'react';
+import { api } from '@/lib/api';
+import { getUser } from '@/lib/auth';
+import {
+  Building2, Users, Warehouse, Bell, Check, X, Copy,
+  Plus, Trash2, Pencil, Loader2, ChevronDown, AlertCircle,
+} from 'lucide-react';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+type Role = 'super_admin' | 'pharmacy_admin' | 'dispatcher' | 'driver' | 'pharmacist';
+
+interface Org {
+  id: string;
+  name: string;
+  timezone: string;
+  hipaaBaaStatus: string;
+  billingPlan: string;
+}
+
+interface OrgUser {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  depotIds: string[];
+  createdAt: string;
+}
+
+interface Depot {
+  id: string;
+  name: string;
+  address: string;
+  phone: string | null;
+  lat: number;
+  lng: number;
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const TIMEZONES = [
+  'America/New_York', 'America/Chicago', 'America/Denver',
+  'America/Los_Angeles', 'America/Phoenix', 'America/Anchorage',
+  'America/Honolulu', 'America/Detroit', 'America/Indiana/Indianapolis',
+];
+
+const ROLES: Role[] = ['pharmacy_admin', 'dispatcher', 'pharmacist', 'driver'];
+
+const ROLE_LABELS: Record<Role, string> = {
+  super_admin: 'Super Admin',
+  pharmacy_admin: 'Admin',
+  dispatcher: 'Dispatcher',
+  driver: 'Driver',
+  pharmacist: 'Pharmacist',
+};
+
+const ROLE_COLORS: Record<Role, string> = {
+  super_admin: 'bg-purple-100 text-purple-700',
+  pharmacy_admin: 'bg-blue-100 text-blue-700',
+  dispatcher: 'bg-teal-100 text-teal-700',
+  driver: 'bg-amber-100 text-amber-700',
+  pharmacist: 'bg-green-100 text-green-700',
+};
+
+const NOTIF_KEYS = [
+  { key: 'failedDeliveries', label: 'Email alerts for failed deliveries' },
+  { key: 'dailySummary', label: 'Daily summary report' },
+  { key: 'newOrders', label: 'New pharmacy order notifications' },
+] as const;
+
+type NotifKey = typeof NOTIF_KEYS[number]['key'];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const loadNotifPrefs = (): Record<NotifKey, boolean> => {
+  try {
+    const raw = localStorage.getItem('notifPrefs');
+    return raw ? JSON.parse(raw) : { failedDeliveries: true, dailySummary: false, newOrders: true };
+  } catch { return { failedDeliveries: true, dailySummary: false, newOrders: true }; }
+};
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap ${
+        active
+          ? 'border-b-2 border-[#0F4C81] text-[#0F4C81]'
+          : 'text-gray-500 hover:text-gray-700'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function Badge({ role }: { role: Role }) {
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${ROLE_COLORS[role]}`}>
+      {ROLE_LABELS[role]}
+    </span>
+  );
+}
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${checked ? 'bg-[#0F4C81]' : 'bg-gray-200'}`}
+    >
+      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+    </button>
+  );
+}
+
+// ─── Tab: Organization ────────────────────────────────────────────────────────
+function OrgTab({ orgId }: { orgId: string }) {
+  const [org, setOrg] = useState<Org | null>(null);
+  const [name, setName] = useState('');
+  const [timezone, setTimezone] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.get<Org>(`/orgs/${orgId}`).then(o => {
+      setOrg(o); setName(o.name); setTimezone(o.timezone);
+    }).catch(() => setError('Failed to load organization'));
+  }, [orgId]);
+
+  const save = async () => {
+    setSaving(true); setError(''); setSaved(false);
+    try {
+      const updated = await api.patch<Org>(`/orgs/${orgId}`, { name, timezone });
+      setOrg(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch { setError('Failed to save changes'); }
+    finally { setSaving(false); }
+  };
+
+  if (!org) return (
+    <div className="flex items-center justify-center py-20">
+      <Loader2 className="animate-spin text-gray-400" size={24} />
+    </div>
+  );
+
+  const baaColors: Record<string, string> = {
+    signed: 'bg-green-100 text-green-700',
+    pending: 'bg-amber-100 text-amber-700',
+    not_required: 'bg-gray-100 text-gray-500',
+    expired: 'bg-red-100 text-red-700',
+  };
+
+  return (
+    <div className="max-w-xl space-y-6">
+      <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white">
+        <div className="px-5 py-4">
+          <h3 className="text-sm font-semibold text-gray-800 mb-3">Organization Details</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Organization Name</label>
+              <input
+                value={name}
+                onChange={e => setName(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Timezone</label>
+              <div className="relative">
+                <select
+                  value={timezone}
+                  onChange={e => setTimezone(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+                >
+                  {TIMEZONES.map(tz => (
+                    <option key={tz} value={tz}>{tz.replace('America/', '').replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-medium text-gray-600">HIPAA BAA Status</p>
+            <span className={`mt-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${baaColors[org.hipaaBaaStatus] ?? 'bg-gray-100 text-gray-500'}`}>
+              {org.hipaaBaaStatus.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+            </span>
+          </div>
+          <div className="text-right">
+            <p className="text-xs font-medium text-gray-600">Billing Plan</p>
+            <span className="mt-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 capitalize">
+              {org.billingPlan}
+            </span>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 flex items-center justify-between">
+          <a href="/dashboard/billing" className="text-sm text-[#0F4C81] hover:underline font-medium">
+            Manage Billing →
+          </a>
+          <div className="flex items-center gap-3">
+            {error && <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} />{error}</p>}
+            {saved && <span className="text-xs text-green-600 flex items-center gap-1"><Check size={12} />Saved</span>}
+            <button
+              onClick={save}
+              disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] transition-colors disabled:opacity-50"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : null}
+              Save Changes
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tab: Team Members ────────────────────────────────────────────────────────
+function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: string }) {
+  const [members, setMembers] = useState<OrgUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showInvite, setShowInvite] = useState(false);
+  const [tempPassInfo, setTempPassInfo] = useState<{ name: string; email: string; pass: string } | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<OrgUser | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const [invite, setInvite] = useState({ name: '', email: '', role: 'dispatcher' as Role, depotIds: [] as string[] });
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.get<OrgUser[]>(`/orgs/${orgId}/users`).then(setMembers).finally(() => setLoading(false));
+  }, [orgId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleInvite = async () => {
+    if (!invite.name || !invite.email) { setInviteError('Name and email are required'); return; }
+    setInviting(true); setInviteError('');
+    try {
+      const res = await api.post<{ user: OrgUser; tempPassword: string }>(`/orgs/${orgId}/users/invite`, invite);
+      setMembers(prev => [...prev, res.user]);
+      setTempPassInfo({ name: res.user.name, email: res.user.email, pass: res.tempPassword });
+      setShowInvite(false);
+      setInvite({ name: '', email: '', role: 'dispatcher', depotIds: [] });
+    } catch (e: any) {
+      setInviteError(e.message?.includes('409') || e.message?.includes('already exists')
+        ? 'A user with this email already exists in the organization'
+        : 'Failed to invite user');
+    } finally { setInviting(false); }
+  };
+
+  const handleRemove = async () => {
+    if (!removeTarget) return;
+    try {
+      await api.del(`/orgs/${orgId}/users/${removeTarget.id}`);
+      setMembers(prev => prev.filter(m => m.id !== removeTarget.id));
+    } catch { /* ignore */ }
+    setRemoveTarget(null);
+  };
+
+  const copyPass = () => {
+    if (tempPassInfo) navigator.clipboard.writeText(tempPassInfo.pass).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  };
+
+  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-gray-400" size={24} /></div>;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm text-gray-500">{members.length} member{members.length !== 1 ? 's' : ''}</p>
+        <button
+          onClick={() => setShowInvite(true)}
+          className="flex items-center gap-2 px-3 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] transition-colors"
+        >
+          <Plus size={14} /> Invite Member
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50">
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Name</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Email</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Role</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Joined</th>
+              <th className="px-4 py-3" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {members.map(m => (
+              <tr key={m.id} className="hover:bg-gray-50/50">
+                <td className="px-4 py-3 font-medium text-gray-800">
+                  {m.name}
+                  {m.id === currentUserId && <span className="ml-2 text-xs text-gray-400">(you)</span>}
+                </td>
+                <td className="px-4 py-3 text-gray-500">{m.email}</td>
+                <td className="px-4 py-3"><Badge role={m.role} /></td>
+                <td className="px-4 py-3 text-gray-400 text-xs">{new Date(m.createdAt).toLocaleDateString()}</td>
+                <td className="px-4 py-3 text-right">
+                  {m.id !== currentUserId && (
+                    <button
+                      onClick={() => setRemoveTarget(m)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {members.length === 0 && (
+              <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-gray-400">No team members yet</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Invite Modal */}
+      {showInvite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-semibold text-gray-800">Invite Team Member</h3>
+              <button onClick={() => { setShowInvite(false); setInviteError(''); }} className="p-1 rounded-lg hover:bg-gray-100"><X size={16} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Full Name</label>
+                <input value={invite.name} onChange={e => setInvite(p => ({ ...p, name: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+                  placeholder="Jane Smith" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                <input type="email" value={invite.email} onChange={e => setInvite(p => ({ ...p, email: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+                  placeholder="jane@pharmacy.com" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
+                <div className="relative">
+                  <select value={invite.role} onChange={e => setInvite(p => ({ ...p, role: e.target.value as Role }))}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]">
+                    {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                </div>
+              </div>
+              {inviteError && <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} />{inviteError}</p>}
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => { setShowInvite(false); setInviteError(''); }}
+                className="flex-1 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleInvite} disabled={inviting}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] transition-colors disabled:opacity-50">
+                {inviting ? <Loader2 size={14} className="animate-spin" /> : null}
+                Send Invite
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Temp Password Modal */}
+      {tempPassInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-800">User Created</h3>
+              <button onClick={() => { setTempPassInfo(null); setCopied(false); }} className="p-1 rounded-lg hover:bg-gray-100"><X size={16} /></button>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              <strong>{tempPassInfo.name}</strong> ({tempPassInfo.email}) has been added. Share this temporary password with them — they should change it on first login.
+            </p>
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+              <code className="flex-1 font-mono text-base font-semibold text-gray-800 tracking-wider">{tempPassInfo.pass}</code>
+              <button onClick={copyPass}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${copied ? 'bg-green-100 text-green-700' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                {copied ? <><Check size={12} />Copied</> : <><Copy size={12} />Copy</>}
+              </button>
+            </div>
+            <button onClick={() => { setTempPassInfo(null); setCopied(false); }}
+              className="w-full mt-4 px-4 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] transition-colors">
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Remove Confirm Dialog */}
+      {removeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <h3 className="font-semibold text-gray-800 mb-2">Remove Member</h3>
+            <p className="text-sm text-gray-500 mb-5">
+              Remove <strong>{removeTarget.name}</strong> from the organization? They will lose access immediately.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setRemoveTarget(null)}
+                className="flex-1 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleRemove}
+                className="flex-1 px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 transition-colors">
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab: Depots ──────────────────────────────────────────────────────────────
+function DepotsTab({ orgId }: { orgId: string }) {
+  const [depots, setDepots] = useState<Depot[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editTarget, setEditTarget] = useState<Depot | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Depot | null>(null);
+  const [form, setForm] = useState({ name: '', address: '', phone: '', lat: '', lng: '' });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.get<Depot[]>(`/orgs/${orgId}/depots`).then(setDepots).finally(() => setLoading(false));
+  }, [orgId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openEdit = (d: Depot) => {
+    setEditTarget(d);
+    setForm({ name: d.name, address: d.address, phone: d.phone ?? '', lat: String(d.lat), lng: String(d.lng) });
+    setFormError('');
+  };
+
+  const resetForm = () => { setForm({ name: '', address: '', phone: '', lat: '', lng: '' }); setFormError(''); };
+
+  const handleSave = async () => {
+    if (!form.name || !form.address) { setFormError('Name and address are required'); return; }
+    setSaving(true); setFormError('');
+    const payload = { name: form.name, address: form.address, phone: form.phone || undefined, lat: Number(form.lat) || 0, lng: Number(form.lng) || 0 };
+    try {
+      if (editTarget) {
+        const updated = await api.put<Depot>(`/orgs/${orgId}/depots/${editTarget.id}`, payload);
+        setDepots(prev => prev.map(d => d.id === updated.id ? updated : d));
+        setEditTarget(null);
+      } else {
+        const created = await api.post<Depot>(`/orgs/${orgId}/depots`, payload);
+        setDepots(prev => [...prev, created]);
+        setShowAdd(false);
+      }
+      resetForm();
+    } catch { setFormError('Failed to save depot'); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.del(`/orgs/${orgId}/depots/${deleteTarget.id}`);
+      setDepots(prev => prev.filter(d => d.id !== deleteTarget.id));
+    } catch { /* ignore */ }
+    setDeleteTarget(null);
+  };
+
+  const DepotForm = ({ isEdit }: { isEdit?: boolean }) => (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Depot Name</label>
+          <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+            placeholder="Main Pharmacy" />
+        </div>
+        <div className="col-span-2">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Address</label>
+          <input value={form.address} onChange={e => setForm(p => ({ ...p, address: e.target.value }))}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+            placeholder="123 Main St, Detroit, MI 48201" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
+          <input value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+            placeholder="(313) 555-0100" />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Latitude</label>
+            <input value={form.lat} onChange={e => setForm(p => ({ ...p, lat: e.target.value }))}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+              placeholder="42.33" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Longitude</label>
+            <input value={form.lng} onChange={e => setForm(p => ({ ...p, lng: e.target.value }))}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+              placeholder="-83.04" />
+          </div>
+        </div>
+      </div>
+      {formError && <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} />{formError}</p>}
+    </div>
+  );
+
+  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-gray-400" size={24} /></div>;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm text-gray-500">{depots.length} depot{depots.length !== 1 ? 's' : ''}</p>
+        <button
+          onClick={() => { resetForm(); setShowAdd(true); }}
+          className="flex items-center gap-2 px-3 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] transition-colors"
+        >
+          <Plus size={14} /> Add Depot
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {depots.map(d => (
+          <div key={d.id} className="rounded-xl border border-gray-200 bg-white px-4 py-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="font-medium text-gray-800 text-sm">{d.name}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{d.address}</p>
+              {d.phone && <p className="text-xs text-gray-400 mt-0.5">{d.phone}</p>}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => openEdit(d)}
+                className="p-1.5 rounded-lg text-gray-400 hover:bg-blue-50 hover:text-blue-500 transition-colors">
+                <Pencil size={14} />
+              </button>
+              <button onClick={() => setDeleteTarget(d)}
+                className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors">
+                <Trash2 size={14} />
+              </button>
+            </div>
+          </div>
+        ))}
+        {depots.length === 0 && (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-white py-10 text-center text-sm text-gray-400">
+            No depots yet. Add your first depot to get started.
+          </div>
+        )}
+      </div>
+
+      {/* Add Modal */}
+      {showAdd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-semibold text-gray-800">Add Depot</h3>
+              <button onClick={() => { setShowAdd(false); resetForm(); }} className="p-1 rounded-lg hover:bg-gray-100"><X size={16} /></button>
+            </div>
+            <DepotForm />
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => { setShowAdd(false); resetForm(); }}
+                className="flex-1 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50">
+                Cancel
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] disabled:opacity-50">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : null} Add Depot
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {editTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-semibold text-gray-800">Edit Depot</h3>
+              <button onClick={() => { setEditTarget(null); resetForm(); }} className="p-1 rounded-lg hover:bg-gray-100"><X size={16} /></button>
+            </div>
+            <DepotForm isEdit />
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => { setEditTarget(null); resetForm(); }}
+                className="flex-1 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50">
+                Cancel
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] disabled:opacity-50">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : null} Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirm */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <h3 className="font-semibold text-gray-800 mb-2">Delete Depot</h3>
+            <p className="text-sm text-gray-500 mb-5">Delete <strong>{deleteTarget.name}</strong>? This cannot be undone.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteTarget(null)}
+                className="flex-1 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50">
+                Cancel
+              </button>
+              <button onClick={handleDelete}
+                className="flex-1 px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600">
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab: Notifications ───────────────────────────────────────────────────────
+function NotificationsTab() {
+  const [prefs, setPrefs] = useState<Record<NotifKey, boolean>>(loadNotifPrefs);
+
+  const toggle = (key: NotifKey) => {
+    setPrefs(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      localStorage.setItem('notifPrefs', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  return (
+    <div className="max-w-xl">
+      <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
+        {NOTIF_KEYS.map(({ key, label }) => (
+          <div key={key} className="flex items-center justify-between px-5 py-4">
+            <span className="text-sm text-gray-700">{label}</span>
+            <Toggle checked={prefs[key]} onChange={() => toggle(key)} />
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-xs text-gray-400">
+        Configure automation rules in the <a href="/dashboard/automation" className="text-[#0F4C81] hover:underline">Automation</a> section for SMS/email triggers.
+      </p>
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+const TABS = [
+  { id: 'org', label: 'Organization', icon: Building2 },
+  { id: 'team', label: 'Team Members', icon: Users },
+  { id: 'depots', label: 'Depots', icon: Warehouse },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
+] as const;
+
+type TabId = typeof TABS[number]['id'];
+
+export default function SettingsPage() {
+  const [tab, setTab] = useState<TabId>('org');
+  const user = getUser();
+  const orgId = user?.orgId ?? '';
+  const userId = user?.id ?? '';
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>Settings</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Manage your organization, team, and preferences</p>
+      </div>
+
+      {/* Tab bar */}
+      <div className="border-b border-gray-200 mb-6 -mx-0 flex gap-1">
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <TabButton key={id} label={label} active={tab === id} onClick={() => setTab(id)} />
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {tab === 'org' && <OrgTab orgId={orgId} />}
+      {tab === 'team' && <TeamTab orgId={orgId} currentUserId={userId} />}
+      {tab === 'depots' && <DepotsTab orgId={orgId} />}
+      {tab === 'notifications' && <NotificationsTab />}
+    </div>
+  );
+}

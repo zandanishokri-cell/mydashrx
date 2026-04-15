@@ -11,7 +11,7 @@ interface Depot { id: string; name: string; address: string; }
 
 export default function NewPlanPage() {
   const router = useRouter();
-  const user = getUser();
+  const [user] = useState(getUser);
   const [depots, setDepots] = useState<Depot[]>([]);
   const [depotId, setDepotId] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);

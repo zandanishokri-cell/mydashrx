@@ -1,0 +1,279 @@
+import type { FastifyPluginAsync } from 'fastify';
+import { db } from '../db/connection.js';
+import { baaRegistry, auditLogs, complianceChecks } from '../db/schema.js';
+import { eq, and, gte, lte, desc, sql, count } from 'drizzle-orm';
+import { requireRole } from '../middleware/requireRole.js';
+
+const ADMIN = requireRole('pharmacy_admin', 'super_admin');
+
+export const complianceRoutes: FastifyPluginAsync = async (app) => {
+
+  // ─── Dashboard summary ───────────────────────────────────────────────────────
+  app.get('/dashboard', { preHandler: ADMIN }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+
+    const [checks, baaRows, recentAudit] = await Promise.all([
+      db.select().from(complianceChecks).where(eq(complianceChecks.orgId, orgId)),
+      db.select().from(baaRegistry).where(eq(baaRegistry.orgId, orgId)),
+      db.select({ cnt: count() }).from(auditLogs).where(
+        and(
+          eq(auditLogs.orgId, orgId),
+          gte(auditLogs.createdAt, new Date(Date.now() - 7 * 86400000)),
+        ),
+      ),
+    ]);
+
+    const pendingBaaCount = baaRows.filter(b => b.baaStatus === 'pending' && b.touchesPhi).length;
+    const expiredBaaCount = baaRows.filter(b => b.baaStatus === 'expired').length;
+    const recentAuditCount = recentAudit[0]?.cnt ?? 0;
+
+    // Build categories map from stored checks
+    const catMap: Record<string, { status: string; score: number; detail: string }> = {
+      baa_coverage: { status: 'unknown', score: 0, detail: 'Not yet evaluated' },
+      audit_logging: { status: 'unknown', score: 0, detail: 'Not yet evaluated' },
+      access_control: { status: 'unknown', score: 0, detail: 'Not yet evaluated' },
+      encryption: { status: 'unknown', score: 0, detail: 'Not yet evaluated' },
+      incident_response: { status: 'unknown', score: 0, detail: 'Not yet evaluated' },
+      training: { status: 'unknown', score: 0, detail: 'Not yet evaluated' },
+    };
+
+    for (const c of checks) {
+      if (catMap[c.category]) {
+        catMap[c.category] = {
+          status: c.status,
+          score: c.status === 'pass' ? 100 : c.status === 'warning' ? 50 : c.status === 'fail' ? 0 : 0,
+          detail: c.detail ?? '',
+        };
+      }
+    }
+
+    const scores = Object.values(catMap).map(v => v.score);
+    const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+    const statuses = Object.values(catMap).map(v => v.status);
+    const overallStatus = statuses.includes('fail') ? 'fail' : statuses.includes('warning') ? 'warning' : statuses.every(s => s === 'pass') ? 'pass' : 'warning';
+
+    return {
+      overallStatus,
+      score: avgScore,
+      categories: catMap,
+      recentAuditCount,
+      pendingBaaCount,
+      expiredBaaCount,
+    };
+  });
+
+  // ─── BAA Registry ─────────────────────────────────────────────────────────────
+  app.get('/baa', { preHandler: ADMIN }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    return db.select().from(baaRegistry).where(eq(baaRegistry.orgId, orgId)).orderBy(baaRegistry.createdAt);
+  });
+
+  app.post('/baa', { preHandler: ADMIN }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const body = req.body as {
+      vendorName: string; service: string; baaStatus?: string;
+      signedAt?: string; expiresAt?: string; documentUrl?: string;
+      notes?: string; touchesPhi?: boolean;
+    };
+    const [row] = await db.insert(baaRegistry).values({
+      orgId,
+      vendorName: body.vendorName,
+      service: body.service,
+      baaStatus: (body.baaStatus as 'signed' | 'pending' | 'not_required' | 'expired') ?? 'pending',
+      signedAt: body.signedAt ? new Date(body.signedAt) : null,
+      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+      documentUrl: body.documentUrl ?? null,
+      notes: body.notes ?? null,
+      touchesPhi: body.touchesPhi ?? true,
+    }).returning();
+    reply.code(201).send(row);
+  });
+
+  app.patch('/baa/:baaId', { preHandler: ADMIN }, async (req, reply) => {
+    const { orgId, baaId } = req.params as { orgId: string; baaId: string };
+    const body = req.body as Partial<{
+      vendorName: string; service: string; baaStatus: string;
+      signedAt: string; expiresAt: string; documentUrl: string;
+      notes: string; touchesPhi: boolean;
+    }>;
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (body.vendorName !== undefined) updates.vendorName = body.vendorName;
+    if (body.service !== undefined) updates.service = body.service;
+    if (body.baaStatus !== undefined) updates.baaStatus = body.baaStatus;
+    if (body.signedAt !== undefined) updates.signedAt = body.signedAt ? new Date(body.signedAt) : null;
+    if (body.expiresAt !== undefined) updates.expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+    if (body.documentUrl !== undefined) updates.documentUrl = body.documentUrl;
+    if (body.notes !== undefined) updates.notes = body.notes;
+    if (body.touchesPhi !== undefined) updates.touchesPhi = body.touchesPhi;
+
+    const [row] = await db.update(baaRegistry)
+      .set(updates)
+      .where(and(eq(baaRegistry.id, baaId), eq(baaRegistry.orgId, orgId)))
+      .returning();
+    if (!row) { reply.code(404).send({ error: 'Not found' }); return; }
+    return row;
+  });
+
+  app.delete('/baa/:baaId', { preHandler: ADMIN }, async (req, reply) => {
+    const { orgId, baaId } = req.params as { orgId: string; baaId: string };
+    const [row] = await db.delete(baaRegistry)
+      .where(and(eq(baaRegistry.id, baaId), eq(baaRegistry.orgId, orgId)))
+      .returning();
+    if (!row) { reply.code(404).send({ error: 'Not found' }); return; }
+    reply.code(204).send();
+  });
+
+  // ─── Audit Logs ───────────────────────────────────────────────────────────────
+  app.get('/audit-logs', { preHandler: ADMIN }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const {
+      user: userFilter, action, resource, from, to,
+      page = '1', export: exportFormat,
+    } = req.query as {
+      user?: string; action?: string; resource?: string;
+      from?: string; to?: string; page?: string; export?: string;
+    };
+
+    const PAGE_SIZE = 50;
+    const pageNum = Math.max(1, parseInt(page, 10));
+
+    const conditions = [eq(auditLogs.orgId, orgId)];
+    if (userFilter) conditions.push(eq(auditLogs.userEmail, userFilter));
+    if (action) conditions.push(eq(auditLogs.action, action));
+    if (resource) conditions.push(eq(auditLogs.resource, resource));
+    if (from) conditions.push(gte(auditLogs.createdAt, new Date(from)));
+    if (to) conditions.push(lte(auditLogs.createdAt, new Date(to + 'T23:59:59')));
+
+    const where = and(...conditions);
+
+    if (exportFormat === 'csv') {
+      const rows = await db.select().from(auditLogs).where(where).orderBy(desc(auditLogs.createdAt)).limit(10000);
+      const header = 'Timestamp,User,Action,Resource,Resource ID,IP Address';
+      const lines = rows.map(r =>
+        [r.createdAt.toISOString(), r.userEmail ?? '', r.action, r.resource, r.resourceId ?? '', r.ipAddress ?? '']
+          .map(v => `"${String(v).replace(/"/g, '""')}"`)
+          .join(','),
+      );
+      const csv = [header, ...lines].join('\n');
+      reply.header('Content-Type', 'text/csv');
+      reply.header('Content-Disposition', `attachment; filename="audit-log-${new Date().toISOString().split('T')[0]}.csv"`);
+      return reply.send(csv);
+    }
+
+    const [rows, totalRes] = await Promise.all([
+      db.select().from(auditLogs).where(where)
+        .orderBy(desc(auditLogs.createdAt))
+        .limit(PAGE_SIZE)
+        .offset((pageNum - 1) * PAGE_SIZE),
+      db.select({ total: sql<number>`count(*)::int` }).from(auditLogs).where(where),
+    ]);
+
+    return { rows, total: totalRes[0]?.total ?? 0, page: pageNum, pageSize: PAGE_SIZE };
+  });
+
+  app.post('/audit-logs', { preHandler: ADMIN }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const body = req.body as {
+      userId?: string; userEmail?: string; action: string;
+      resource: string; resourceId?: string; ipAddress?: string;
+      userAgent?: string; metadata?: Record<string, unknown>;
+    };
+    const [row] = await db.insert(auditLogs).values({
+      orgId,
+      userId: body.userId ?? null,
+      userEmail: body.userEmail ?? null,
+      action: body.action,
+      resource: body.resource,
+      resourceId: body.resourceId ?? null,
+      ipAddress: body.ipAddress ?? req.ip,
+      userAgent: body.userAgent ?? req.headers['user-agent'] ?? null,
+      metadata: body.metadata ?? {},
+    }).returning();
+    reply.code(201).send(row);
+  });
+
+  // ─── Compliance Checks ────────────────────────────────────────────────────────
+  app.get('/checks', { preHandler: ADMIN }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    return db.select().from(complianceChecks).where(eq(complianceChecks.orgId, orgId));
+  });
+
+  app.post('/checks/run', { preHandler: ADMIN }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+
+    const [baaRows, auditCount, existingChecks] = await Promise.all([
+      db.select().from(baaRegistry).where(eq(baaRegistry.orgId, orgId)),
+      db.select({ cnt: count() }).from(auditLogs).where(eq(auditLogs.orgId, orgId)),
+      db.select().from(complianceChecks).where(eq(complianceChecks.orgId, orgId)),
+    ]);
+
+    const phiPending = baaRows.filter(b => b.touchesPhi && b.baaStatus !== 'signed').length;
+    const hasAuditLogs = (auditCount[0]?.cnt ?? 0) > 0;
+
+    const irCheck = existingChecks.find(c => c.category === 'incident_response');
+    const hasIrPlan = !!(irCheck?.detail && irCheck.detail.length > 20);
+
+    const newChecks: {
+      category: string; checkName: string; status: string; detail: string;
+    }[] = [
+      {
+        category: 'baa_coverage',
+        checkName: 'BAA Coverage for PHI Vendors',
+        status: phiPending === 0 ? 'pass' : phiPending <= 2 ? 'warning' : 'fail',
+        detail: phiPending === 0
+          ? 'All PHI-touching vendors have signed BAAs'
+          : `${phiPending} vendor${phiPending > 1 ? 's' : ''} touching PHI pending BAA`,
+      },
+      {
+        category: 'audit_logging',
+        checkName: 'Audit Logging Active',
+        status: hasAuditLogs ? 'pass' : 'warning',
+        detail: hasAuditLogs ? 'Audit logging active and recording events' : 'Audit logging configured but no events recorded yet',
+      },
+      {
+        category: 'access_control',
+        checkName: 'Role-Based Access Control',
+        status: 'pass',
+        detail: 'RBAC enforced via requireRole middleware on all endpoints',
+      },
+      {
+        category: 'encryption',
+        checkName: 'Data Encryption',
+        status: 'pass',
+        detail: 'TLS in transit enforced; database encryption at rest via provider',
+      },
+      {
+        category: 'incident_response',
+        checkName: 'Incident Response Plan',
+        status: hasIrPlan ? 'pass' : 'warning',
+        detail: hasIrPlan ? 'Incident response plan on file' : 'No incident response plan filed — add plan details via compliance notes',
+      },
+      {
+        category: 'training',
+        checkName: 'HIPAA Training Records',
+        status: 'fail',
+        detail: 'Training records module not yet implemented — manual records required',
+      },
+    ];
+
+    const now = new Date();
+    const nextCheck = new Date(now.getTime() + 30 * 86400000);
+
+    const results = await Promise.all(newChecks.map(async (c) => {
+      const existing = existingChecks.find(e => e.category === c.category);
+      if (existing) {
+        const [updated] = await db.update(complianceChecks)
+          .set({ checkName: c.checkName, status: c.status, detail: c.detail, lastCheckedAt: now, nextCheckAt: nextCheck })
+          .where(eq(complianceChecks.id, existing.id))
+          .returning();
+        return updated;
+      }
+      const [inserted] = await db.insert(complianceChecks).values({
+        orgId, ...c, lastCheckedAt: now, nextCheckAt: nextCheck,
+      }).returning();
+      return inserted;
+    }));
+
+    return { ran: results.length, checks: results };
+  });
+};

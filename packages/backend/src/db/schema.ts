@@ -147,7 +147,6 @@ export const routes = pgTable('routes', {
     .notNull()
     .references(() => plans.id),
   driverId: uuid('driver_id')
-    .notNull()
     .references(() => drivers.id),
   status: routeStatusEnum('status').notNull().default('pending'),
   stopOrder: jsonb('stop_order').notNull().default('[]'),
@@ -218,6 +217,14 @@ export const proofOfDeliveries = pgTable('proof_of_deliveries', {
   codCollected: jsonb('cod_collected'),
   driverNote: text('driver_note'),
   customerNote: text('customer_note'),
+  // Enhanced POD fields
+  signatureData: text('signature_data'),
+  idPhotoUrl: text('id_photo_url'),
+  idVerified: boolean('id_verified').notNull().default(false),
+  recipientName: text('recipient_name'),
+  deliveryNotes: text('delivery_notes'),
+  isControlledSubstance: boolean('is_controlled_substance').notNull().default(false),
+  idDobConfirmed: boolean('id_dob_confirmed').notNull().default(false),
   capturedAt: timestamp('captured_at').notNull().defaultNow(),
 });
 
@@ -248,3 +255,199 @@ export const driverLocationHistory = pgTable(
   },
   (t) => ({ driverIdx: index('location_driver_idx').on(t.driverId) }),
 );
+
+// ─── Lead Finder ──────────────────────────────────────────────────────────────
+export const leadStatusEnum = pgEnum('lead_status', [
+  'new', 'contacted', 'interested', 'negotiating', 'closed', 'lost',
+]);
+
+export const leadProspects = pgTable('lead_prospects', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  name: text('name').notNull(),
+  address: text('address').notNull(),
+  city: text('city').notNull(),
+  state: varchar('state', { length: 2 }).notNull().default('MI'),
+  zip: varchar('zip', { length: 10 }),
+  phone: varchar('phone', { length: 20 }),
+  website: text('website'),
+  email: text('email'),
+  ownerName: text('owner_name'),
+  businessType: text('business_type'),
+  googlePlaceId: text('google_place_id').unique(),
+  rating: real('rating'),
+  reviewCount: integer('review_count'),
+  score: integer('score').notNull().default(0),
+  status: leadStatusEnum('status').notNull().default('new'),
+  assignedTo: uuid('assigned_to').references(() => users.id),
+  notes: text('notes'),
+  nextFollowUp: timestamp('next_follow_up'),
+  lastContactedAt: timestamp('last_contacted_at'),
+  tags: jsonb('tags').notNull().default('[]'),
+  sourceData: jsonb('source_data').notNull().default('{}'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at'),
+}, (t) => ({
+  orgIdx: index('leads_org_idx').on(t.orgId),
+  statusIdx: index('leads_status_idx').on(t.status),
+}));
+
+export const leadOutreachLog = pgTable('lead_outreach_log', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  leadId: uuid('lead_id').notNull().references(() => leadProspects.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  channel: text('channel').notNull().default('email'),
+  subject: text('subject'),
+  body: text('body'),
+  sentAt: timestamp('sent_at').notNull().defaultNow(),
+  sentBy: uuid('sent_by').references(() => users.id),
+  resendMessageId: text('resend_message_id'),
+  status: text('status').notNull().default('sent'),
+});
+
+// ─── HIPAA Compliance ─────────────────────────────────────────────────────────
+export const baaStatusEnum = pgEnum('baa_status', ['signed', 'pending', 'not_required', 'expired']);
+
+export const baaRegistry = pgTable('baa_registry', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  vendorName: text('vendor_name').notNull(),
+  service: text('service').notNull(),
+  baaStatus: baaStatusEnum('baa_status').notNull().default('pending'),
+  signedAt: timestamp('signed_at'),
+  expiresAt: timestamp('expires_at'),
+  documentUrl: text('document_url'),
+  notes: text('notes'),
+  touchesPhi: boolean('touches_phi').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+export const auditLogs = pgTable('audit_logs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  userId: uuid('user_id').references(() => users.id),
+  userEmail: text('user_email'),
+  action: text('action').notNull(),
+  resource: text('resource').notNull(),
+  resourceId: text('resource_id'),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  metadata: jsonb('metadata').notNull().default('{}'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index('audit_org_idx').on(t.orgId),
+  createdIdx: index('audit_created_idx').on(t.createdAt),
+}));
+
+export const complianceChecks = pgTable('compliance_checks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  category: text('category').notNull(),
+  checkName: text('check_name').notNull(),
+  status: text('status').notNull().default('unknown'),
+  detail: text('detail'),
+  lastCheckedAt: timestamp('last_checked_at').notNull().defaultNow(),
+  nextCheckAt: timestamp('next_check_at'),
+});
+
+// ─── Michigan Compliance ──────────────────────────────────────────────────────
+export const miComplianceItems = pgTable('mi_compliance_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  category: text('category').notNull(),
+  itemName: text('item_name').notNull(),
+  status: text('status').notNull().default('pending'),
+  notes: text('notes'),
+  dueDate: timestamp('due_date'),
+  completedAt: timestamp('completed_at'),
+  legalRef: text('legal_ref'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index('mi_compliance_org_idx').on(t.orgId),
+  categoryIdx: index('mi_compliance_category_idx').on(t.category),
+}));
+
+export const regulatoryUpdates = pgTable('regulatory_updates', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  title: text('title').notNull(),
+  summary: text('summary').notNull(),
+  source: text('source').notNull(),
+  impactLevel: text('impact_level').notNull().default('medium'),
+  effectiveDate: timestamp('effective_date'),
+  url: text('url'),
+  acknowledged: boolean('acknowledged').notNull().default(false),
+  acknowledgedAt: timestamp('acknowledged_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index('regulatory_updates_org_idx').on(t.orgId),
+}));
+
+// ─── Recurring Deliveries ─────────────────────────────────────────────────────
+export const recurringScheduleEnum = pgEnum('recurring_schedule', [
+  'weekly', 'biweekly', 'monthly', 'custom',
+]);
+
+export const recurringDeliveries = pgTable('recurring_deliveries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  recipientName: text('recipient_name').notNull(),
+  address: text('address').notNull(),
+  lat: real('lat'),
+  lng: real('lng'),
+  recipientPhone: varchar('recipient_phone', { length: 20 }),
+  recipientEmail: text('recipient_email'),
+  notes: text('notes'),
+  schedule: recurringScheduleEnum('schedule').notNull().default('weekly'),
+  dayOfWeek: integer('day_of_week'),
+  dayOfMonth: integer('day_of_month'),
+  nextDeliveryDate: timestamp('next_delivery_date'),
+  lastDeliveryDate: timestamp('last_delivery_date'),
+  rxNumber: text('rx_number'),
+  isControlled: boolean('is_controlled').notNull().default(false),
+  enabled: boolean('enabled').notNull().default(true),
+  depotId: uuid('depot_id').references(() => depots.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at'),
+}, (t) => ({ orgIdx: index('recurring_org_idx').on(t.orgId) }));
+
+// ─── Automation ───────────────────────────────────────────────────────────────
+export const automationTriggerEnum = pgEnum('automation_trigger', [
+  'stop_status_changed',
+  'stop_failed',
+  'stop_completed',
+  'driver_started_route',
+  'route_completed',
+  'stop_approaching',
+]);
+
+export const automationRules = pgTable('automation_rules', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  name: text('name').notNull(),
+  trigger: automationTriggerEnum('trigger').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  conditions: jsonb('conditions').notNull().default('{}'),
+  actions: jsonb('actions').notNull().default('[]'),
+  smsTemplate: text('sms_template'),
+  emailSubject: text('email_subject'),
+  emailTemplate: text('email_template'),
+  runCount: integer('run_count').notNull().default(0),
+  lastRunAt: timestamp('last_run_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+export const automationLog = pgTable('automation_log', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  ruleId: uuid('rule_id').notNull().references(() => automationRules.id),
+  trigger: text('trigger').notNull(),
+  resourceId: text('resource_id'),
+  status: text('status').notNull().default('success'),
+  detail: text('detail'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({ orgIdx: index('auto_log_org_idx').on(t.orgId) }));

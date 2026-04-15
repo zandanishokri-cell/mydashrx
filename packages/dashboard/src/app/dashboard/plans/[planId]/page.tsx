@@ -25,7 +25,7 @@ interface Driver { id: string; name: string; vehicleType: string; status: string
 
 export default function PlanDetailPage({ params }: { params: { planId: string } }) {
   const router = useRouter();
-  const user = getUser();
+  const [user] = useState(getUser);
   const { planId } = params;
 
   const [plan, setPlan] = useState<Plan | null>(null);

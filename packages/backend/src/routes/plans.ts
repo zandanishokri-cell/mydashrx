@@ -69,13 +69,15 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
           .select()
           .from(stops)
           .where(and(eq(stops.routeId, route.id), isNull(stops.deletedAt)));
-        if (routeStops.length === 0) return route;
+        if (routeStops.length === 0) return null;
 
+        const originalOrder = [...(route.stopOrder as string[])];
         const optimized = await optimizeRoute(depot.lat, depot.lng, routeStops);
+        const estimatedDuration = optimized.stopIds.length * 8 * 60; // 8 min/stop in seconds
 
         await db.update(routes).set({
           stopOrder: optimized.stopIds,
-          estimatedDuration: optimized.totalDuration,
+          estimatedDuration,
           totalDistance: optimized.totalDistance,
         }).where(eq(routes.id, route.id));
 
@@ -85,12 +87,13 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
           ),
         );
 
-        return { ...route, stopOrder: optimized.stopIds, estimatedDuration: optimized.totalDuration };
+        return { routeId: route.id, originalOrder, newOrder: optimized.stopIds, estimatedDuration };
       }),
     );
 
+    const optimizedResults = results.filter(Boolean) as { routeId: string; originalOrder: string[]; newOrder: string[]; estimatedDuration: number }[];
     await db.update(plans).set({ status: 'optimized' }).where(eq(plans.id, planId));
-    return { planId, routes: results };
+    return { optimized: optimizedResults.length, routes: optimizedResults };
   });
 
   app.delete('/:planId', {

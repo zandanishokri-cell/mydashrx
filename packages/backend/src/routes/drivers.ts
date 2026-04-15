@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { drivers, stops, routes, plans } from '../db/schema.js';
-import { eq, and, isNull, sql } from 'drizzle-orm';
+import { eq, and, isNull, sql, gte, lte } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { hashPassword } from '../services/auth.js';
 
@@ -95,5 +95,112 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     const { driverId } = req.params as { orgId: string; driverId: string };
     await db.update(drivers).set({ deletedAt: new Date() }).where(eq(drivers.id, driverId));
     return reply.code(204).send();
+  });
+
+  app.get('/:driverId/performance', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, driverId } = req.params as { orgId: string; driverId: string };
+    const query = req.query as { from?: string; to?: string };
+
+    const to = query.to ?? new Date().toISOString().split('T')[0];
+    const from = query.from ?? new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+    const fromTs = new Date(from + 'T00:00:00Z');
+    const toTs = new Date(to + 'T23:59:59Z');
+
+    const [driver] = await db
+      .select({ id: drivers.id, name: drivers.name })
+      .from(drivers)
+      .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId), isNull(drivers.deletedAt)))
+      .limit(1);
+    if (!driver) return reply.code(404).send({ error: 'Not found' });
+
+    // All stops for this driver in the period
+    const driverStops = await db
+      .select({
+        id: stops.id,
+        status: stops.status,
+        failureReason: stops.failureReason,
+        completedAt: stops.completedAt,
+        createdAt: stops.createdAt,
+      })
+      .from(stops)
+      .innerJoin(routes, eq(stops.routeId, routes.id))
+      .where(and(
+        eq(stops.orgId, orgId),
+        eq(routes.driverId, driverId),
+        isNull(stops.deletedAt),
+        gte(stops.createdAt, fromTs),
+        lte(stops.createdAt, toTs),
+      ));
+
+    const total = driverStops.length;
+    const completed = driverStops.filter(s => s.status === 'completed').length;
+    const failed = driverStops.filter(s => s.status === 'failed').length;
+    const completionRate = total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
+
+    // Daily breakdown
+    const dailyMap = new Map<string, { total: number; completed: number; failed: number }>();
+    for (const s of driverStops) {
+      const date = s.createdAt.toISOString().split('T')[0];
+      const entry = dailyMap.get(date) ?? { total: 0, completed: 0, failed: 0 };
+      entry.total++;
+      if (s.status === 'completed') entry.completed++;
+      if (s.status === 'failed') entry.failed++;
+      dailyMap.set(date, entry);
+    }
+    const daily = Array.from(dailyMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, v]) => ({ date, ...v }));
+
+    const activeDays = dailyMap.size;
+    const avgStopsPerDay = activeDays > 0 ? Math.round((total / activeDays) * 10) / 10 : 0;
+
+    // Failure reasons
+    const reasonMap = new Map<string, number>();
+    for (const s of driverStops.filter(s => s.status === 'failed')) {
+      const r = s.failureReason ?? 'unknown';
+      reasonMap.set(r, (reasonMap.get(r) ?? 0) + 1);
+    }
+    const failureReasons = Array.from(reasonMap.entries())
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // Rank among all drivers in org for the period
+    const allDriverRows = await db
+      .select({
+        driverId: routes.driverId,
+        total: sql<number>`count(${stops.id})::int`,
+        completed: sql<number>`count(case when ${stops.status} = 'completed' then 1 end)::int`,
+      })
+      .from(stops)
+      .innerJoin(routes, eq(stops.routeId, routes.id))
+      .where(and(
+        eq(stops.orgId, orgId),
+        isNull(stops.deletedAt),
+        gte(stops.createdAt, fromTs),
+        lte(stops.createdAt, toTs),
+      ))
+      .groupBy(routes.driverId);
+
+    const allRates = allDriverRows.map(r => ({
+      driverId: r.driverId,
+      rate: r.total > 0 ? r.completed / r.total : 0,
+    })).sort((a, b) => b.rate - a.rate);
+
+    const rankIdx = allRates.findIndex(r => r.driverId === driverId);
+    const rank = rankIdx === -1 ? null : rankIdx + 1;
+    const totalDrivers = allRates.length;
+
+    return {
+      driverId,
+      driverName: driver.name,
+      period: { from, to },
+      summary: { totalStops: total, completed, failed, completionRate, avgStopsPerDay, activeDays },
+      daily,
+      failureReasons,
+      rank,
+      totalDrivers,
+    };
   });
 };

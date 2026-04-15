@@ -1,14 +1,25 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { findUserByEmail, findUserById, verifyPassword, signTokens } from '../services/auth.js';
+import { db } from '../db/connection.js';
+import { users, organizations, drivers } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
 
 const loginSchema = z.object({
   email: z.string().email(),
+  password: z.string().min(6),
+});
+
+const registerSchema = z.object({
+  name: z.string().min(1).max(100),
+  email: z.string().email(),
   password: z.string().min(8),
+  role: z.enum(['driver', 'pharmacist']),
+  depotId: z.string().uuid().optional(), // required for pharmacist
 });
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
-  app.post('/login', async (req, reply) => {
+  app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid request' });
     const { email, password } = parsed.data;
@@ -17,6 +28,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (!user || !(await verifyPassword(password, user.passwordHash))) {
       return reply.code(401).send({ error: 'Invalid credentials' });
     }
+    if (user.deletedAt) return reply.code(401).send({ error: 'Account deactivated' });
+
+    // For drivers, look up their drivers table record to include driverId in JWT
+    let driverId: string | undefined;
+    if (user.role === 'driver') {
+      const [driverRecord] = await db.select({ id: drivers.id }).from(drivers).where(eq(drivers.email, user.email)).limit(1);
+      driverId = driverRecord?.id;
+    }
 
     const payload = {
       sub: user.id,
@@ -24,11 +43,61 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       role: user.role,
       orgId: user.orgId,
       depotIds: user.depotIds as string[],
+      ...(driverId ? { driverId } : {}),
     };
     const tokens = signTokens(app, payload);
     return reply.send({
       ...tokens,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, ...(driverId ? { driverId } : {}) },
+    });
+  });
+
+  // Self-registration for drivers and pharmacy staff
+  app.post('/register', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const parsed = registerSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request' });
+    const { name, email, password, role, depotId } = parsed.data;
+
+    if (role === 'pharmacist' && !depotId) {
+      return reply.code(400).send({ error: 'depotId is required for pharmacy accounts' });
+    }
+
+    const existing = await findUserByEmail(email);
+    // Return 409 without confirming email existence (HIPAA: prevent enumeration)
+    if (existing) return reply.code(409).send({ error: 'Registration could not be completed' });
+
+    // Find the org — use the first org (single-tenant for now)
+    const [org] = await db.select().from(organizations).limit(1);
+    if (!org) return reply.code(500).send({ error: 'No organization configured' });
+
+    const passwordHash = await hashPassword(password);
+    const depotIds = depotId ? [depotId] : [];
+
+    const [user] = await db.insert(users).values({
+      orgId: org.id, email, passwordHash, name, role, depotIds,
+    }).returning();
+
+    // For drivers: also create a drivers record so they appear in dispatcher's driver list
+    let driverId: string | undefined;
+    if (role === 'driver') {
+      const [driverRecord] = await db.insert(drivers).values({
+        orgId: org.id, name, email, phone: '', passwordHash, vehicleType: 'car',
+      }).returning();
+      driverId = driverRecord.id;
+    }
+
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      orgId: user.orgId,
+      depotIds: user.depotIds as string[],
+      ...(driverId ? { driverId } : {}),
+    };
+    const tokens = signTokens(app, payload);
+    return reply.code(201).send({
+      ...tokens,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, ...(driverId ? { driverId } : {}) },
     });
   });
 
@@ -54,14 +123,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/me', async (req, reply) => {
-    try {
-      await req.jwtVerify();
-    } catch {
-      return reply.code(401).send({ error: 'Unauthorized' });
-    }
+    try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
     const payload = req.user as { sub: string };
     const user = await findUserById(payload.sub);
     if (!user) return reply.code(404).send({ error: 'User not found' });
-    return { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId };
+    return { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds };
   });
 };

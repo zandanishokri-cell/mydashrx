@@ -4,6 +4,7 @@ import { stops, routes } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification } from '../services/notifications.js';
+import { fireTrigger } from '../services/automation.js';
 import type { StopStatus } from '@mydash-rx/shared';
 
 export const stopRoutes: FastifyPluginAsync = async (app) => {
@@ -90,6 +91,20 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
 
     // Fire notification async — don't await
     sendStopNotification(updated, status).catch(console.error);
+
+    // Fire automation triggers — fire-and-forget
+    fireTrigger({
+      orgId: updated.orgId,
+      trigger: status === 'completed' ? 'stop_completed' : status === 'failed' ? 'stop_failed' : 'stop_status_changed',
+      resourceId: updated.id,
+      data: {
+        patientName: updated.recipientName,
+        address: updated.address,
+        patientPhone: updated.recipientPhone,
+        stopStatus: status,
+        driverName: '',
+      },
+    }).catch(console.error);
 
     return updated;
   });

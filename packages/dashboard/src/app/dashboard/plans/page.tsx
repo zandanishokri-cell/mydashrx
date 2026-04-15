@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
-import { Plus, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Calendar, ChevronLeft, ChevronRight, Zap } from 'lucide-react';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; }
@@ -35,10 +35,12 @@ export default function PlansPage() {
   const [plans, setPlans] = useState<PlanWithMeta[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
+  const [optimizingId, setOptimizingId] = useState<string | null>(null);
+  const [optimizeToast, setOptimizeToast] = useState('');
   const [depotId, setDepotId] = useState('');
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const user = getUser();
+  const [user] = useState(getUser);
 
   const weekDays = getWeekRange(weekOffset);
   const today = new Date().toISOString().split('T')[0];
@@ -67,6 +69,19 @@ export default function PlansPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const optimizePlan = async (planId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setOptimizingId(planId);
+    try {
+      const result = await api.post<{ optimized: number }>(`/orgs/${user!.orgId}/plans/${planId}/optimize`, {});
+      setOptimizeToast(`${result.optimized} route${result.optimized !== 1 ? 's' : ''} optimized`);
+      setTimeout(() => setOptimizeToast(''), 3000);
+      await load();
+    } catch { /* silently fail — user can retry from detail page */ }
+    finally { setOptimizingId(null); }
+  };
+
   const filtered = plans.filter(p => {
     if (depotId && p.depotId !== depotId) return false;
     return true;
@@ -88,6 +103,11 @@ export default function PlansPage() {
 
   return (
     <div className="p-6">
+      {optimizeToast && (
+        <div className="fixed bottom-4 right-4 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
+          <Zap size={14} className="text-[#00B8A9]" /> {optimizeToast}
+        </div>
+      )}
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>Routes</h1>
         <div className="flex items-center gap-2">
@@ -167,31 +187,43 @@ export default function PlansPage() {
         ) : (
           <div className="space-y-2">
             {forDate.map(plan => (
-              <Link
-                key={plan.id}
-                href={`/dashboard/plans/${plan.id}`}
-                className="block bg-white rounded-xl border border-gray-100 px-4 py-3 hover:shadow-sm transition-shadow"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-900">{plan.date}</span>
-                    <Badge status={plan.status} />
+              <div key={plan.id} className="relative bg-white rounded-xl border border-gray-100 hover:shadow-sm transition-shadow">
+                <Link
+                  href={`/dashboard/plans/${plan.id}`}
+                  className="block px-4 py-3"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-900">{plan.date}</span>
+                      <Badge status={plan.status} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {plan.status !== 'distributed' && plan.status !== 'completed' && plan.stopCount > 0 && (
+                        <button
+                          onClick={e => optimizePlan(plan.id, e)}
+                          disabled={optimizingId === plan.id}
+                          className="flex items-center gap-1 text-xs font-medium text-[#0F4C81] bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors disabled:opacity-50"
+                        >
+                          <Zap size={11} /> {optimizingId === plan.id ? 'Optimizing…' : 'Optimize'}
+                        </button>
+                      )}
+                      <span className="text-xs text-gray-400">{plan.stopCount} stops · {plan.routes.length} driver{plan.routes.length !== 1 ? 's' : ''}</span>
+                    </div>
                   </div>
-                  <span className="text-xs text-gray-400">{plan.stopCount} stops · {plan.routes.length} driver{plan.routes.length !== 1 ? 's' : ''}</span>
-                </div>
-                {plan.routes.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-1">
-                    {plan.routes.map(r => {
-                      const driver = drivers.find(d => d.id === r.driverId);
-                      return (
-                        <span key={r.id} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-                          {driver?.name ?? 'Driver'} · {r.stopOrder?.length ?? 0} stops
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-              </Link>
+                  {plan.routes.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {plan.routes.map(r => {
+                        const driver = drivers.find(d => d.id === r.driverId);
+                        return (
+                          <span key={r.id} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                            {driver?.name ?? 'Driver'} · {r.stopOrder?.length ?? 0} stops
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Link>
+              </div>
             ))}
           </div>
         )}
@@ -203,20 +235,30 @@ export default function PlansPage() {
           <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">All routes</h2>
           <div className="space-y-2">
             {filtered.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20).map(plan => (
-              <Link
-                key={plan.id}
-                href={`/dashboard/plans/${plan.id}`}
-                className="flex items-center justify-between bg-white rounded-xl border border-gray-100 px-4 py-3 hover:shadow-sm transition-shadow"
-              >
-                <div>
-                  <span className="text-sm font-medium text-gray-900">{plan.date}</span>
-                  <span className="text-xs text-gray-400 ml-2">{plan.stopCount} stops</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400">{plan.routes.length} driver{plan.routes.length !== 1 ? 's' : ''}</span>
-                  <Badge status={plan.status} />
-                </div>
-              </Link>
+              <div key={plan.id} className="bg-white rounded-xl border border-gray-100 hover:shadow-sm transition-shadow">
+                <Link
+                  href={`/dashboard/plans/${plan.id}`}
+                  className="flex items-center justify-between px-4 py-3"
+                >
+                  <div>
+                    <span className="text-sm font-medium text-gray-900">{plan.date}</span>
+                    <span className="text-xs text-gray-400 ml-2">{plan.stopCount} stops</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {plan.status !== 'distributed' && plan.status !== 'completed' && plan.stopCount > 0 && (
+                      <button
+                        onClick={e => optimizePlan(plan.id, e)}
+                        disabled={optimizingId === plan.id}
+                        className="flex items-center gap-1 text-xs font-medium text-[#0F4C81] bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors disabled:opacity-50"
+                      >
+                        <Zap size={11} /> {optimizingId === plan.id ? 'Optimizing…' : 'Optimize'}
+                      </button>
+                    )}
+                    <span className="text-xs text-gray-400">{plan.routes.length} driver{plan.routes.length !== 1 ? 's' : ''}</span>
+                    <Badge status={plan.status} />
+                  </div>
+                </Link>
+              </div>
             ))}
           </div>
         </div>

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
@@ -15,22 +16,48 @@ interface Driver {
   totalStops: number;
 }
 
+interface DriverPerf { completionRate: number; summary: { totalStops: number } }
+
+const STATUS_DOT: Record<string, string> = {
+  available: 'bg-emerald-500',
+  on_route: 'bg-blue-500',
+  offline: 'bg-gray-400',
+};
+
 export default function DriversPage() {
+  const router = useRouter();
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [filtered, setFiltered] = useState<Driver[]>([]);
+  const [perfMap, setPerfMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editDriver, setEditDriver] = useState<Driver | null>(null);
   const [search, setSearch] = useState('');
-  const user = getUser();
+  const [user] = useState(getUser);
 
   const load = useCallback(() => {
     if (!user) return;
     api.get<Driver[]>(`/orgs/${user.orgId}/drivers`)
-      .then(data => { setDrivers(data); setFiltered(data); })
+      .then(data => {
+        setDrivers(data);
+        setFiltered(data);
+        // Fetch completion rates for all drivers in parallel
+        Promise.allSettled(
+          data.map(d =>
+            api.get<DriverPerf>(`/orgs/${user.orgId}/drivers/${d.id}/performance`)
+              .then(p => ({ id: d.id, rate: p.summary.totalStops > 0 ? p.completionRate : -1 }))
+          )
+        ).then(results => {
+          const map: Record<string, number> = {};
+          for (const r of results) {
+            if (r.status === 'fulfilled') map[r.value.id] = r.value.rate;
+          }
+          setPerfMap(map);
+        });
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -44,13 +71,19 @@ export default function DriversPage() {
     ));
   }, [search, drivers]);
 
-  const deleteDriver = async (id: string) => {
+  const deleteDriver = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!confirm('Remove this driver?')) return;
     if (!user) return;
     try {
       await api.del(`/orgs/${user.orgId}/drivers/${id}`);
       load();
     } catch { alert('Failed to remove driver'); }
+  };
+
+  const openEdit = (driver: Driver, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditDriver(driver);
   };
 
   const exportCsv = () => {
@@ -71,6 +104,14 @@ export default function DriversPage() {
     return new Date(d.lastPingAt).toLocaleDateString();
   };
 
+  const completionDisplay = (id: string) => {
+    const r = perfMap[id];
+    if (r === undefined) return <span className="text-gray-300 text-xs">…</span>;
+    if (r === -1) return <span className="text-gray-400 text-xs">—</span>;
+    const color = r >= 95 ? 'text-emerald-600' : r >= 80 ? 'text-amber-600' : 'text-red-500';
+    return <span className={`font-semibold ${color}`}>{r}%</span>;
+  };
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
@@ -88,7 +129,6 @@ export default function DriversPage() {
         </div>
       </div>
 
-      {/* Search */}
       <div className="relative mb-4">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
         <input
@@ -118,13 +158,18 @@ export default function DriversPage() {
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Last seen</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden sm:table-cell">Total stops</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">30d rate</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Vehicle</th>
                 <th className="px-4 py-2.5" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {filtered.map(driver => (
-                <tr key={driver.id} className="hover:bg-gray-50 transition-colors">
+                <tr
+                  key={driver.id}
+                  className="hover:bg-gray-50 transition-colors cursor-pointer"
+                  onClick={() => router.push(`/dashboard/drivers/${driver.id}`)}
+                >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-[#0F4C81] font-semibold text-sm shrink-0">
@@ -142,15 +187,21 @@ export default function DriversPage() {
                   <td className="px-4 py-3 text-xs text-gray-500 hidden md:table-cell">
                     {lastSeen(driver) ?? 'Never'}
                   </td>
-                  <td className="px-4 py-3"><Badge status={driver.status} /></td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[driver.status] ?? 'bg-gray-400'}`} />
+                      <Badge status={driver.status} />
+                    </div>
+                  </td>
                   <td className="px-4 py-3 text-gray-600 hidden sm:table-cell">{driver.totalStops ?? 0} stops</td>
+                  <td className="px-4 py-3 hidden md:table-cell">{completionDisplay(driver.id)}</td>
                   <td className="px-4 py-3 text-gray-500 capitalize hidden lg:table-cell">{driver.vehicleType}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1 justify-end">
-                      <button onClick={() => setEditDriver(driver)} className="p-1.5 text-gray-400 hover:text-[#0F4C81] rounded-lg hover:bg-blue-50 transition-colors">
+                      <button onClick={e => openEdit(driver, e)} className="p-1.5 text-gray-400 hover:text-[#0F4C81] rounded-lg hover:bg-blue-50 transition-colors">
                         <Pencil size={13} />
                       </button>
-                      <button onClick={() => deleteDriver(driver.id)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors">
+                      <button onClick={e => deleteDriver(driver.id, e)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors">
                         <Trash2 size={13} />
                       </button>
                     </div>

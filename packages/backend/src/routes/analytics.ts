@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers } from '../db/schema.js';
-import { eq, and, isNull, gte, lte, sql, count } from 'drizzle-orm';
+import { eq, and, isNull, gte, lte, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
@@ -86,6 +86,47 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     const activeDriverCount = driverStats.filter(d => d.total > 0).length;
     const avgPerDriver = activeDriverCount > 0 ? Math.round(total / activeDriverCount) : 0;
 
+    // Top performers: top 3 by completion rate (min 1 delivery)
+    const topPerformers = driverStats
+      .filter(d => d.total > 0)
+      .map(d => ({ ...d, completionRate: Math.round((d.completed / d.total) * 100) }))
+      .sort((a, b) => b.completionRate - a.completionRate)
+      .slice(0, 3);
+
+    // Week-over-week change
+    const periodMs = toDate.getTime() - fromDate.getTime();
+    const prevFrom = new Date(fromDate.getTime() - periodMs);
+    const prevTo = new Date(fromDate.getTime() - 1);
+    const prevBase = and(eq(stops.orgId, orgId), isNull(stops.deletedAt), gte(stops.createdAt, prevFrom), lte(stops.createdAt, prevTo));
+    const [prevCount] = await db.select({ cnt: sql<number>`count(*)::int` }).from(stops).where(prevBase);
+    const prevTotal = prevCount?.cnt ?? 0;
+    const weekOverWeekChange = prevTotal > 0
+      ? Math.round(((total - prevTotal) / prevTotal) * 1000) / 10
+      : null;
+
+    // avgDeliveryTime: arrivedAt → completedAt in minutes (arrivedAt exists in schema)
+    const [deliveryTimeResult] = await db
+      .select({
+        avgMin: sql<number>`avg(extract(epoch from (${stops.completedAt} - ${stops.arrivedAt})) / 60)`,
+      })
+      .from(stops)
+      .where(and(base, eq(stops.status, 'completed'), sql`${stops.arrivedAt} is not null`, sql`${stops.completedAt} is not null`));
+    const avgDeliveryTime = deliveryTimeResult?.avgMin != null
+      ? Math.round(deliveryTimeResult.avgMin * 10) / 10
+      : null;
+
+    // onTimeRate: windowEnd exists in schema — completed before windowEnd
+    const [onTimeResult] = await db
+      .select({
+        onTime: sql<number>`sum(case when ${stops.completedAt} <= ${stops.windowEnd} then 1 else 0 end)::int`,
+        withWindow: sql<number>`sum(case when ${stops.windowEnd} is not null and ${stops.completedAt} is not null then 1 else 0 end)::int`,
+      })
+      .from(stops)
+      .where(and(base, eq(stops.status, 'completed')));
+    const onTimeRate = (onTimeResult?.withWindow ?? 0) > 0
+      ? Math.round(((onTimeResult!.onTime ?? 0) / onTimeResult!.withWindow) * 1000) / 10
+      : null;
+
     // Depot breakdown
     const depotStats = await db
       .select({
@@ -109,6 +150,10 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       failureReasons: failureReasons.map(r => ({ reason: r.reason ?? 'Unknown', count: r.cnt })),
       drivers: driverStats,
       depots: depotStats,
+      topPerformers,
+      weekOverWeekChange,
+      avgDeliveryTime,
+      onTimeRate,
     };
   });
 };

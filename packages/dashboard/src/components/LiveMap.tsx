@@ -24,16 +24,48 @@ interface Props {
   stops: StopMarker[];
   center?: [number, number];
   zoom?: number;
+  highlightedDriverId?: string | null;
+  onMarkerClick?: (driverId: string) => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
   pending: '#94a3b8',
+  en_route: '#3b82f6',
   arrived: '#f59e0b',
   completed: '#10b981',
   failed: '#ef4444',
 };
 
-export function LiveMap({ drivers, stops, center = [42.3314, -83.0458], zoom = 11 }: Props) {
+const DRIVER_COLORS: Record<string, string> = {
+  on_route: '#0F4C81',
+  available: '#10b981',
+  offline: '#94a3b8',
+};
+
+const driverMarkerHtml = (name: string, status: string, highlighted: boolean) => {
+  const bg = DRIVER_COLORS[status] ?? '#0F4C81';
+  const initials = name
+    .split(' ')
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase();
+  const size = highlighted ? 40 : 32;
+  const border = highlighted ? '3px solid #fbbf24' : '3px solid white';
+  const shadow = highlighted
+    ? '0 0 0 3px rgba(251,191,36,0.4),0 3px 10px rgba(0,0,0,0.4)'
+    : '0 2px 6px rgba(0,0,0,0.3)';
+  return `<div style="background:${bg};color:white;width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${highlighted ? 14 : 12}px;font-weight:700;border:${border};box-shadow:${shadow};cursor:pointer;transition:all .2s">${initials}</div>`;
+};
+
+export function LiveMap({
+  drivers,
+  stops,
+  center = [42.3314, -83.0458],
+  zoom = 11,
+  highlightedDriverId = null,
+  onMarkerClick,
+}: Props) {
   const mapRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<any[]>([]);
@@ -41,11 +73,9 @@ export function LiveMap({ drivers, stops, center = [42.3314, -83.0458], zoom = 1
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return;
 
-    // Dynamically import leaflet (client-only)
     import('leaflet').then((L) => {
-      if (mapRef.current) return; // already initialized
+      if (mapRef.current) return;
 
-      // Fix default icon paths for Next.js
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({
         iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -62,37 +92,34 @@ export function LiveMap({ drivers, stops, center = [42.3314, -83.0458], zoom = 1
     });
 
     return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Update markers when data changes
   useEffect(() => {
     if (!mapRef.current) return;
     import('leaflet').then((L) => {
-      // Clear existing markers
       markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
 
-      // Driver markers (blue truck icon)
       drivers.forEach((driver) => {
         if (!driver.lat || !driver.lng) return;
+        const highlighted = driver.id === highlightedDriverId;
         const icon = L.divIcon({
           className: '',
-          html: `<div style="background:#0F4C81;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3)">${driver.name[0]}</div>`,
-          iconSize: [32, 32],
-          iconAnchor: [16, 16],
+          html: driverMarkerHtml(driver.name, driver.status, highlighted),
+          iconSize: [highlighted ? 40 : 32, highlighted ? 40 : 32],
+          iconAnchor: [highlighted ? 20 : 16, highlighted ? 20 : 16],
         });
-        const marker = L.marker([driver.lat, driver.lng], { icon })
+        const marker = L.marker([driver.lat, driver.lng], { icon, zIndexOffset: highlighted ? 1000 : 0 })
           .addTo(mapRef.current)
           .bindPopup(`<strong>${driver.name}</strong><br>Status: ${driver.status}`);
+        if (onMarkerClick) {
+          marker.on('click', () => onMarkerClick(driver.id));
+        }
         markersRef.current.push(marker);
       });
 
-      // Stop markers (colored dots)
       stops.forEach((stop) => {
         if (!stop.lat || !stop.lng) return;
         const color = STATUS_COLORS[stop.status] ?? '#94a3b8';
@@ -102,22 +129,18 @@ export function LiveMap({ drivers, stops, center = [42.3314, -83.0458], zoom = 1
           iconSize: [24, 24],
           iconAnchor: [12, 12],
         });
-        const marker = L.marker([stop.lat, stop.lng], { icon })
+        L.marker([stop.lat, stop.lng], { icon })
           .addTo(mapRef.current)
           .bindPopup(`<strong>${stop.recipientName}</strong><br>${stop.address}<br>Status: ${stop.status}`);
-        markersRef.current.push(marker);
       });
 
-      // Fit bounds if we have markers
       const allPoints = [
         ...drivers.filter((d) => d.lat && d.lng).map((d) => [d.lat, d.lng] as [number, number]),
         ...stops.filter((s) => s.lat && s.lng).map((s) => [s.lat, s.lng] as [number, number]),
       ];
-      if (allPoints.length > 1) {
-        mapRef.current.fitBounds(allPoints, { padding: [40, 40] });
-      }
+      if (allPoints.length > 1) mapRef.current.fitBounds(allPoints, { padding: [40, 40] });
     });
-  }, [drivers, stops]);
+  }, [drivers, stops, highlightedDriverId, onMarkerClick]);
 
   return (
     <>

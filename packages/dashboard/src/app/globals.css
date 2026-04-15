@@ -15,3 +15,25 @@
 body {
   font-family: var(--font-inter), sans-serif;
 }
+
+@layer components {
+  .card {
+    @apply bg-white rounded-xl border border-gray-100 shadow-sm;
+  }
+
+  .section-header {
+    @apply text-lg font-semibold text-gray-900;
+    font-family: var(--font-sora);
+  }
+
+  .stat-value {
+    @apply text-3xl font-bold text-gray-900;
+    font-family: var(--font-sora);
+  }
+}
+
+/* Slim scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { @apply bg-gray-200 rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-gray-300; }

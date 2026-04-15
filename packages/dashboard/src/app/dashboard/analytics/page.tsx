@@ -2,12 +2,15 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell, BarChart, Bar,
 } from 'recharts';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { DepotFilter } from '@/components/ui/DepotFilter';
-import { TrendingUp, TrendingDown, Download } from 'lucide-react';
+import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
+import { TrendingUp, TrendingDown, Download, Award, Lightbulb } from 'lucide-react';
+
+interface DriverStat { driverId: string; driverName: string; total: number; completed: number; failed: number; completionRate?: number; }
 
 interface AnalyticsData {
   summary: {
@@ -16,15 +19,19 @@ interface AnalyticsData {
   };
   daily: { date: string; total: number; completed: number; failed: number }[];
   failureReasons: { reason: string; count: number }[];
-  drivers: { driverId: string; driverName: string; total: number; completed: number; failed: number }[];
+  drivers: DriverStat[];
   depots: { depotId: string; depotName: string; total: number; completed: number }[];
+  topPerformers: DriverStat[];
+  weekOverWeekChange: number | null;
+  avgDeliveryTime: number | null;
+  onTimeRate: number | null;
 }
 
-const PRESET_RANGES = [
-  { label: 'Last 7 days', days: 7 },
-  { label: 'Last 30 days', days: 30 },
-  { label: 'Last 90 days', days: 90 },
-];
+const defaultRange = (): DateRange => {
+  const to = new Date().toISOString().split('T')[0];
+  const from = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+  return { from, to };
+};
 
 const PIE_COLORS = ['#0F4C81', '#00B8A9', '#F6A623', '#ef4444', '#8b5cf6', '#6b7280'];
 
@@ -45,25 +52,25 @@ function StatCard({ label, value, sub, up }: { label: string; value: string | nu
 }
 
 export default function AnalyticsPage() {
-  const user = getUser();
+  const [user] = useState(getUser);
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [depotId, setDepotId] = useState('');
-  const [range, setRange] = useState('Last 7 days');
+  const [dateRange, setDateRange] = useState<DateRange>(defaultRange);
 
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
-      const preset = PRESET_RANGES.find(r => r.label === range)!;
-      const from = new Date(Date.now() - preset.days * 86400000).toISOString().split('T')[0];
-      const params = new URLSearchParams({ from });
+      const params = new URLSearchParams();
+      if (dateRange.from) params.set('from', dateRange.from);
+      if (dateRange.to) params.set('to', dateRange.to);
       if (depotId) params.set('depotId', depotId);
       const result = await api.get<AnalyticsData>(`/orgs/${user.orgId}/analytics?${params}`);
       setData(result);
     } catch { setData(null); }
     finally { setLoading(false); }
-  }, [user, depotId, range]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user, depotId, dateRange]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
@@ -84,13 +91,11 @@ export default function AnalyticsPage() {
         <h1 className="text-xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>Analytics</h1>
         <div className="flex items-center gap-2">
           <DepotFilter value={depotId} onChange={setDepotId} />
-          <select
-            value={range}
-            onChange={e => setRange(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700"
-          >
-            {PRESET_RANGES.map(r => <option key={r.label}>{r.label}</option>)}
-          </select>
+          <DateRangePicker
+            value={dateRange}
+            onChange={setDateRange}
+            presets={['7d', '30d', '90d', 'custom']}
+          />
           <button onClick={exportCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600">
             <Download size={14} /> Export data
           </button>
@@ -105,7 +110,20 @@ export default function AnalyticsPage() {
         <>
           {/* KPI Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Attempts today" value={data.summary.total} />
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              <p className="text-xs text-gray-500 mb-1">Total stops</p>
+              <div className="flex items-end gap-2">
+                <span className="text-2xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>{data.summary.total}</span>
+                {data.weekOverWeekChange !== null && (
+                  <span className={`text-xs mb-0.5 flex items-center gap-0.5 font-medium px-1.5 py-0.5 rounded-full ${
+                    data.weekOverWeekChange >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'
+                  }`}>
+                    {data.weekOverWeekChange >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                    {data.weekOverWeekChange >= 0 ? '+' : ''}{data.weekOverWeekChange}% vs prior period
+                  </span>
+                )}
+              </div>
+            </div>
             <StatCard label="Success rate" value={`${data.summary.successRate}%`} up={data.summary.successRate >= 95} sub={data.summary.successRate >= 95 ? 'Good' : 'Needs attention'} />
             <StatCard label="Failed attempts" value={data.summary.failed} up={false} />
             <StatCard label="Avg per driver" value={data.summary.avgPerDriver} />
@@ -224,6 +242,104 @@ export default function AnalyticsPage() {
               </div>
             )}
           </div>
+
+          {/* Driver completion rate bar chart */}
+          {data.drivers.length > 0 && (() => {
+            const chartData = data.drivers
+              .filter(d => d.total > 0)
+              .map(d => ({ driverName: d.driverName ?? 'Unknown', completionRate: Math.round((d.completed / d.total) * 100) }))
+              .sort((a, b) => b.completionRate - a.completionRate)
+              .slice(0, 10);
+            return (
+              <div className="bg-white rounded-xl border border-gray-100 p-6">
+                <h2 className="text-sm font-semibold text-gray-700 mb-4">Completion rate by driver (top 10)</h2>
+                <ResponsiveContainer width="100%" height={Math.max(chartData.length * 36, 120)}>
+                  <BarChart layout="vertical" data={chartData} margin={{ left: 100 }}>
+                    <XAxis type="number" domain={[0, 100]} tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} />
+                    <YAxis dataKey="driverName" type="category" width={100} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v) => [`${Number(v)}%`, 'Completion rate']} />
+                    <Bar dataKey="completionRate" fill="#0F4C81" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            );
+          })()}
+
+          {/* Top Performing Drivers */}
+          {data.topPerformers?.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-100 p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Award size={16} className="text-[#F6A623]" />
+                <h2 className="text-sm font-semibold text-gray-700">Top Performing Drivers</h2>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {data.topPerformers.map((d, i) => {
+                  const rate = d.completionRate ?? (d.total > 0 ? Math.round((d.completed / d.total) * 100) : 0);
+                  const medals = ['#F6A623', '#9CA3AF', '#CD7F32'];
+                  return (
+                    <div key={d.driverId ?? d.driverName} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: medals[i] }}>
+                        {i + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{d.driverName ?? 'Unknown'}</p>
+                        <p className="text-xs text-gray-500">{d.total} deliveries</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className={`text-sm font-bold ${rate >= 95 ? 'text-emerald-600' : rate >= 80 ? 'text-[#F6A623]' : 'text-red-500'}`}>
+                          {rate}%
+                        </span>
+                        <div className="flex items-center justify-end gap-0.5 mt-0.5">
+                          {rate >= 95 ? <TrendingUp size={11} className="text-emerald-500" /> : <TrendingDown size={11} className="text-red-400" />}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Performance Insights */}
+          {(() => {
+            const bestDay = data.daily.length > 0
+              ? data.daily.reduce((best, d) => d.completed > best.completed ? d : best)
+              : null;
+            const mostReliable = data.drivers.filter(d => d.total > 0)
+              .sort((a, b) => (b.completed / b.total) - (a.completed / a.total))[0];
+            const topFailure = data.failureReasons.length > 0
+              ? data.failureReasons.reduce((top, r) => r.count > top.count ? r : top)
+              : null;
+            if (!bestDay && !mostReliable && !topFailure) return null;
+            return (
+              <div className="bg-white rounded-xl border border-gray-100 p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Lightbulb size={16} className="text-[#00B8A9]" />
+                  <h2 className="text-sm font-semibold text-gray-700">Performance Insights</h2>
+                </div>
+                <div className="space-y-2">
+                  {bestDay && (
+                    <div className="flex items-start gap-2 text-sm">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#0F4C81] mt-2 shrink-0" />
+                      <span className="text-gray-700"><strong>Best day:</strong> {new Date(bestDay.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })} with {bestDay.completed} completed deliveries</span>
+                    </div>
+                  )}
+                  {mostReliable && (
+                    <div className="flex items-start gap-2 text-sm">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#00B8A9] mt-2 shrink-0" />
+                      <span className="text-gray-700"><strong>Most reliable driver:</strong> {mostReliable.driverName ?? 'Unknown'} ({Math.round((mostReliable.completed / mostReliable.total) * 100)}% completion rate)</span>
+                    </div>
+                  )}
+                  {topFailure && (
+                    <div className="flex items-start gap-2 text-sm">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#F6A623] mt-2 shrink-0" />
+                      <span className="text-gray-700"><strong>Most common failure reason:</strong> <span className="capitalize">{topFailure.reason}</span> ({topFailure.count} occurrence{topFailure.count !== 1 ? 's' : ''})</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </>
       )}
     </div>

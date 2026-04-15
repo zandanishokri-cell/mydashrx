@@ -1,14 +1,23 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, drivers } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { stops, routes, drivers, plans } from '../db/schema.js';
+import { eq, and, isNull, inArray } from 'drizzle-orm';
+import { requireRole } from '../middleware/requireRole.js';
 
+// HIPAA-safe: "Smith, J." format
+const hipaaName = (full: string) => {
+  const parts = full.trim().split(' ');
+  if (parts.length < 2) return parts[0];
+  return `${parts[parts.length - 1]}, ${parts[0][0]}.`;
+};
+
+const ETA_PER_STOP_MS = 8 * 60 * 1000;
+
+// ─── Public patient-facing tracking ──────────────────────────────────────────
 export const trackingRoutes: FastifyPluginAsync = async (app) => {
-  // Public — no auth. Returns only patient-safe data. No PHI.
   app.get('/:token', async (req, reply) => {
     const { token } = req.params as { token: string };
 
-    // Explicit column select — never expose PHI if schema grows
     const [stop] = await db
       .select({
         id: stops.id,
@@ -29,15 +38,11 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
       ? await db.select().from(routes).where(eq(routes.id, stop.routeId)).limit(1)
       : [null];
 
-    const driverInfo = route
+    const driverInfo = route?.driverId
       ? await db
-          .select({
-            currentLat: drivers.currentLat,
-            currentLng: drivers.currentLng,
-            lastPingAt: drivers.lastPingAt,
-          })
+          .select({ currentLat: drivers.currentLat, currentLng: drivers.currentLng, lastPingAt: drivers.lastPingAt })
           .from(drivers)
-          .where(eq(drivers.id, route.driverId))
+          .where(eq(drivers.id, route.driverId as string))
           .limit(1)
           .then((r) => r[0] ?? null)
       : null;
@@ -48,21 +53,224 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
     return {
       stopId: stop.id,
       status: stop.status,
-      // First name only — no last name, no address, no Rx numbers
       recipientName: stop.recipientName.split(' ')[0],
       stopsAhead,
       windowStart: stop.windowStart,
       windowEnd: stop.windowEnd,
       completedAt: stop.completedAt,
-      // Driver location only revealed when ≤2 stops away
       driverLocation:
         stopsAhead <= 2 && driverInfo
-          ? {
-              lat: driverInfo.currentLat,
-              lng: driverInfo.currentLng,
-              lastPingAt: driverInfo.lastPingAt,
-            }
+          ? { lat: driverInfo.currentLat, lng: driverInfo.currentLng, lastPingAt: driverInfo.lastPingAt }
           : null,
     };
+  });
+};
+
+// ─── Internal dispatcher/admin live tracking ──────────────────────────────────
+// Registered at prefix /api/v1/orgs/:orgId/tracking
+export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
+
+  // GET /orgs/:orgId/tracking/live
+  app.get('/live', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+
+    const activeRoutes = await db
+      .select({
+        routeId: routes.id,
+        routeStatus: routes.status,
+        stopOrder: routes.stopOrder,
+        driverId: drivers.id,
+        driverName: drivers.name,
+        driverPhone: drivers.phone,
+        driverStatus: drivers.status,
+        currentLat: drivers.currentLat,
+        currentLng: drivers.currentLng,
+        lastPingAt: drivers.lastPingAt,
+      })
+      .from(routes)
+      .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .innerJoin(drivers, and(eq(routes.driverId, drivers.id), eq(drivers.orgId, orgId)))
+      .where(and(eq(routes.status, 'active'), eq(drivers.status, 'on_route'), isNull(routes.deletedAt)));
+
+    if (activeRoutes.length === 0) {
+      return { activeRoutes: [], summary: { activeDrivers: 0, totalStopsRemaining: 0, completedToday: 0 } };
+    }
+
+    const routeIds = activeRoutes.map((r) => r.routeId);
+
+    const allStops = await db
+      .select({
+        id: stops.id,
+        routeId: stops.routeId,
+        status: stops.status,
+        address: stops.address,
+        recipientName: stops.recipientName,
+        sequenceNumber: stops.sequenceNumber,
+      })
+      .from(stops)
+      .where(and(inArray(stops.routeId, routeIds), isNull(stops.deletedAt)));
+
+    // Count completed stops across all of today's org routes
+    const today = new Date().toISOString().split('T')[0];
+    const todayPlanRows = await db
+      .select({ id: plans.id })
+      .from(plans)
+      .where(and(eq(plans.orgId, orgId), eq(plans.date, today), isNull(plans.deletedAt)));
+
+    let completedToday = 0;
+    if (todayPlanRows.length > 0) {
+      const todayRouteRows = await db.select({ id: routes.id })
+        .from(routes)
+        .where(and(inArray(routes.planId, todayPlanRows.map((p) => p.id)), isNull(routes.deletedAt)));
+      if (todayRouteRows.length > 0) {
+        const doneStops = await db.select({ id: stops.id })
+          .from(stops)
+          .where(and(
+            inArray(stops.routeId, todayRouteRows.map((r) => r.id)),
+            eq(stops.status, 'completed'),
+            isNull(stops.deletedAt),
+          ));
+        completedToday = doneStops.length;
+      }
+    }
+
+    const stopsByRoute = allStops.reduce<Record<string, typeof allStops>>((acc, s) => {
+      (acc[s.routeId] ??= []).push(s);
+      return acc;
+    }, {});
+
+    let totalStopsRemaining = 0;
+
+    const result = activeRoutes.map((r) => {
+      const rs = stopsByRoute[r.routeId] ?? [];
+      const completed = rs.filter((s) => s.status === 'completed' || s.status === 'failed').length;
+      const pending = rs.filter((s) => s.status !== 'completed' && s.status !== 'failed').length;
+      totalStopsRemaining += pending;
+
+      const nextStop = rs
+        .filter((s) => s.status !== 'completed' && s.status !== 'failed')
+        .sort((a, b) => (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0))[0] ?? null;
+
+      const base = r.lastPingAt ? new Date(r.lastPingAt) : new Date();
+      return {
+        routeId: r.routeId,
+        driverId: r.driverId,
+        driverName: r.driverName,
+        driverPhone: r.driverPhone,
+        status: r.routeStatus,
+        currentLat: r.currentLat,
+        currentLng: r.currentLng,
+        lastPingAt: r.lastPingAt,
+        stopsTotal: rs.length,
+        stopsCompleted: completed,
+        stopsPending: pending,
+        nextStop: nextStop
+          ? { stopId: nextStop.id, address: nextStop.address, recipientName: hipaaName(nextStop.recipientName), status: nextStop.status }
+          : null,
+        estimatedCompletion: new Date(base.getTime() + pending * ETA_PER_STOP_MS).toISOString(),
+      };
+    });
+
+    return { activeRoutes: result, summary: { activeDrivers: result.length, totalStopsRemaining, completedToday } };
+  });
+
+  // GET /orgs/:orgId/tracking/route/:routeId
+  app.get('/route/:routeId', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, routeId } = req.params as { orgId: string; routeId: string };
+
+    const [route] = await db
+      .select({
+        id: routes.id,
+        status: routes.status,
+        driverId: drivers.id,
+        driverName: drivers.name,
+        driverPhone: drivers.phone,
+        driverStatus: drivers.status,
+        currentLat: drivers.currentLat,
+        currentLng: drivers.currentLng,
+        lastPingAt: drivers.lastPingAt,
+      })
+      .from(routes)
+      .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .innerJoin(drivers, and(eq(routes.driverId, drivers.id), eq(drivers.orgId, orgId)))
+      .where(and(eq(routes.id, routeId), isNull(routes.deletedAt)))
+      .limit(1);
+
+    if (!route) return reply.code(404).send({ error: 'Route not found' });
+
+    const routeStops = await db
+      .select({
+        id: stops.id,
+        status: stops.status,
+        address: stops.address,
+        recipientName: stops.recipientName,
+        sequenceNumber: stops.sequenceNumber,
+        lat: stops.lat,
+        lng: stops.lng,
+        arrivedAt: stops.arrivedAt,
+        completedAt: stops.completedAt,
+      })
+      .from(stops)
+      .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+      .orderBy(stops.sequenceNumber);
+
+    const pending = routeStops.filter((s) => s.status !== 'completed' && s.status !== 'failed');
+    const base = route.lastPingAt ? new Date(route.lastPingAt) : new Date();
+
+    return {
+      routeId: route.id,
+      status: route.status,
+      driver: {
+        id: route.driverId,
+        name: route.driverName,
+        phone: route.driverPhone,
+        status: route.driverStatus,
+        currentLat: route.currentLat,
+        currentLng: route.currentLng,
+        lastPingAt: route.lastPingAt,
+      },
+      stops: routeStops.map((s, i) => ({
+        stopId: s.id,
+        sequenceNumber: s.sequenceNumber ?? i,
+        status: s.status,
+        address: s.address,
+        recipientName: hipaaName(s.recipientName),
+        lat: s.lat,
+        lng: s.lng,
+        arrivedAt: s.arrivedAt,
+        completedAt: s.completedAt,
+        estimatedArrival: (() => {
+          const pos = pending.findIndex((p) => p.id === s.id);
+          return pos < 0 ? null : new Date(base.getTime() + (pos + 1) * ETA_PER_STOP_MS).toISOString();
+        })(),
+      })),
+      summary: {
+        stopsTotal: routeStops.length,
+        stopsCompleted: routeStops.filter((s) => s.status === 'completed').length,
+        stopsFailed: routeStops.filter((s) => s.status === 'failed').length,
+        stopsPending: pending.length,
+        estimatedCompletion: new Date(base.getTime() + pending.length * ETA_PER_STOP_MS).toISOString(),
+      },
+    };
+  });
+
+  // POST /orgs/:orgId/tracking/ping — driver location ping
+  app.post('/ping', {
+    preHandler: requireRole('driver'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { driverId, lat, lng } = req.body as { driverId: string; lat: number; lng: number };
+    if (!lat || !lng) return reply.code(400).send({ error: 'lat/lng required' });
+
+    const now = new Date();
+    await db.update(drivers)
+      .set({ currentLat: lat, currentLng: lng, lastPingAt: now })
+      .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId)));
+
+    return { ok: true, recordedAt: now.toISOString() };
   });
 };

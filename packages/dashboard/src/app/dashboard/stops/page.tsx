@@ -1,11 +1,13 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
-import { StopDetailModal } from '@/components/StopDetailModal';
-import { Plus, Search, X, RefreshCw, Download } from 'lucide-react';
+import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
+import { CsvImportModal } from '@/components/CsvImportModal';
+import { Plus, Search, X, RefreshCw, Download, Upload } from 'lucide-react';
 import Link from 'next/link';
 
 interface Stop {
@@ -28,38 +30,33 @@ const STATUS_TABS = [
   { key: 'failed', label: 'Failed' },
 ];
 
-const DATE_PRESETS = [
-  { label: 'Today', days: 0 },
-  { label: 'This week', days: 7 },
-  { label: 'This month', days: 30 },
-  { label: 'Last 3 months', days: 90 },
-  { label: 'All time', days: 0, all: true },
-];
+// Date range presets
+const TODAY_RANGE = (): DateRange => {
+  const t = new Date().toISOString().split('T')[0];
+  return { from: t, to: t };
+};
+
+const defaultRange = (): DateRange => {
+  const to = new Date().toISOString().split('T')[0];
+  const from = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0];
+  return { from, to };
+};
 
 export default function StopsPage() {
-  const user = getUser();
+  const router = useRouter();
+  const [user] = useState(getUser);
   const [stops, setStops] = useState<Stop[]>([]);
+  const [todayOnly, setTodayOnly] = useState(true);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [selectedStop, setSelectedStop] = useState<Stop | null>(null);
   const [statusTab, setStatusTab] = useState('all');
   const [depotId, setDepotId] = useState('');
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
-  const [datePreset, setDatePreset] = useState('Last 3 months');
+  const [dateRange, setDateRange] = useState<DateRange>(() => TODAY_RANGE());
   const [page, setPage] = useState(1);
+  const [importOpen, setImportOpen] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const getDateRange = () => {
-    const preset = DATE_PRESETS.find(p => p.label === datePreset);
-    if (!preset || preset.all) return {};
-    if (preset.days === 0) {
-      const today = new Date().toISOString().split('T')[0];
-      return { from: today, to: today };
-    }
-    const from = new Date(Date.now() - preset.days * 86400000).toISOString().split('T')[0];
-    return { from };
-  };
 
   const load = useCallback(async (resetPage = false) => {
     if (!user) return;
@@ -67,20 +64,20 @@ export default function StopsPage() {
     const p = resetPage ? 1 : page;
     if (resetPage) setPage(1);
     try {
-      const range = getDateRange();
       const params = new URLSearchParams({ page: String(p), limit: '50' });
       if (search) params.set('q', search);
       if (depotId) params.set('depotId', depotId);
       if (statusTab !== 'all') params.set('status', statusTab);
-      if (range.from) params.set('from', range.from);
+      if (dateRange.from) params.set('from', dateRange.from);
+      if (dateRange.to) params.set('to', dateRange.to);
       const data = await api.get<{ stops: Stop[]; total: number }>(`/orgs/${user.orgId}/stops?${params}`);
       setStops(data.stops);
       setTotal(data.total);
     } catch { setStops([]); }
     finally { setLoading(false); }
-  }, [user, search, depotId, statusTab, datePreset, page]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user, search, depotId, statusTab, dateRange, page]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { load(true); }, [statusTab, depotId, datePreset, search]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(true); }, [statusTab, depotId, dateRange, search]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSearchInput = (v: string) => {
@@ -114,8 +111,11 @@ export default function StopsPage() {
             <button onClick={exportCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
               <Download size={14} /> Export
             </button>
+            <button onClick={() => setImportOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+              <Upload size={14} /> Import CSV
+            </button>
             <Link href="/dashboard/plans/new" className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[#0F4C81] text-white rounded-lg hover:bg-[#0a3860] transition-colors">
-              <Plus size={14} /> Add or import stops
+              <Plus size={14} /> Add stops
             </Link>
           </div>
         </div>
@@ -139,14 +139,29 @@ export default function StopsPage() {
             ))}
           </div>
 
-          {/* Date preset */}
-          <select
-            value={datePreset}
-            onChange={e => setDatePreset(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700"
-          >
-            {DATE_PRESETS.map(p => <option key={p.label}>{p.label}</option>)}
-          </select>
+          {/* Today / All time toggle */}
+          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 gap-0.5">
+            {[{ label: 'Today', val: true }, { label: 'All time', val: false }].map(({ label, val }) => (
+              <button
+                key={label}
+                onClick={() => {
+                  setTodayOnly(val);
+                  setDateRange(val ? TODAY_RANGE() : defaultRange());
+                }}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                  todayOnly === val ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <DateRangePicker
+            value={dateRange}
+            onChange={r => { setDateRange(r); setTodayOnly(false); }}
+            presets={['today', 'week', 'month', '30d', '90d', 'custom']}
+          />
 
           {/* Search */}
           <div className="relative ml-auto">
@@ -206,11 +221,16 @@ export default function StopsPage() {
                 {stops.map(stop => (
                   <tr
                     key={stop.id}
-                    onClick={() => setSelectedStop(stop)}
+                    onClick={() => router.push(`/dashboard/stops/${stop.id}`)}
                     className="hover:bg-blue-50/30 cursor-pointer transition-colors"
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
+                        {/* Route assignment dot */}
+                        <span
+                          title={stop.routeId ? 'Assigned to route' : 'Unassigned'}
+                          className={`w-2 h-2 rounded-full shrink-0 ${stop.routeId ? 'bg-blue-400' : 'bg-gray-300'}`}
+                        />
                         {stop.requiresRefrigeration && <span className="text-xs bg-blue-50 text-blue-600 px-1.5 rounded shrink-0">❄</span>}
                         {stop.controlledSubstance && <span className="text-xs bg-orange-50 text-orange-600 px-1.5 rounded shrink-0">⚠</span>}
                         <span className="font-medium text-gray-900 truncate max-w-[200px]">{stop.address}</span>
@@ -246,11 +266,11 @@ export default function StopsPage() {
         )}
       </div>
 
-      {selectedStop && (
-        <StopDetailModal
-          stop={selectedStop}
-          onClose={() => setSelectedStop(null)}
-          onUpdated={() => { setSelectedStop(null); load(); }}
+      {importOpen && user && (
+        <CsvImportModal
+          orgId={user.orgId}
+          onClose={() => setImportOpen(false)}
+          onSuccess={() => { setImportOpen(false); load(true); }}
         />
       )}
     </div>

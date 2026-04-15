@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, plans, depots, drivers } from '../db/schema.js';
+import { stops, routes, plans, depots, drivers, leadProspects, proofOfDeliveries } from '../db/schema.js';
 import { eq, and, isNull, ilike, or, gte, lte, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
@@ -96,5 +96,169 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       .where(and(...conditions));
 
     return { stops: driverFiltered, total: count, page: pageNum, limit: limitNum };
+  });
+
+  // GET /orgs/:orgId/stops/:stopId — full stop detail with POD and route context
+  app.get('/stops/:stopId', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'pharmacist'),
+  }, async (req, reply) => {
+    const { orgId, stopId } = req.params as { orgId: string; stopId: string };
+
+    const [row] = await db
+      .select({
+        id: stops.id,
+        recipientName: stops.recipientName,
+        recipientPhone: stops.recipientPhone,
+        address: stops.address,
+        unit: stops.unit,
+        status: stops.status,
+        rxNumbers: stops.rxNumbers,
+        packageCount: stops.packageCount,
+        requiresRefrigeration: stops.requiresRefrigeration,
+        controlledSubstance: stops.controlledSubstance,
+        requiresSignature: stops.requiresSignature,
+        requiresPhoto: stops.requiresPhoto,
+        requiresAgeVerification: stops.requiresAgeVerification,
+        codAmount: stops.codAmount,
+        deliveryNotes: stops.deliveryNotes,
+        failureReason: stops.failureReason,
+        failureNote: stops.failureNote,
+        windowStart: stops.windowStart,
+        windowEnd: stops.windowEnd,
+        arrivedAt: stops.arrivedAt,
+        completedAt: stops.completedAt,
+        createdAt: stops.createdAt,
+        trackingToken: stops.trackingToken,
+        sequenceNumber: stops.sequenceNumber,
+        lat: stops.lat,
+        lng: stops.lng,
+        routeId: stops.routeId,
+        routeStatus: routes.status,
+        routeStartedAt: routes.startedAt,
+        routeCompletedAt: routes.completedAt,
+        planId: routes.planId,
+        planDate: plans.date,
+        planStatus: plans.status,
+        depotId: plans.depotId,
+        depotName: depots.name,
+        driverId: routes.driverId,
+        driverName: drivers.name,
+        driverPhone: drivers.phone,
+      })
+      .from(stops)
+      .leftJoin(routes, eq(stops.routeId, routes.id))
+      .leftJoin(plans, eq(routes.planId, plans.id))
+      .leftJoin(depots, eq(plans.depotId, depots.id))
+      .leftJoin(drivers, eq(routes.driverId, drivers.id))
+      .where(and(eq(stops.id, stopId), eq(stops.orgId, orgId), isNull(stops.deletedAt)))
+      .limit(1);
+
+    if (!row) return reply.code(404).send({ error: 'Not found' });
+
+    const [pod] = await db.select().from(proofOfDeliveries)
+      .where(eq(proofOfDeliveries.stopId, stopId)).limit(1);
+
+    // Build timeline from known timestamps
+    const timeline: Array<{ event: string; timestamp: string | null; meta?: string }> = [
+      { event: 'Created', timestamp: row.createdAt?.toISOString() ?? null },
+      { event: 'Assigned to route', timestamp: row.routeStartedAt ? null : row.planDate ? `${row.planDate}T00:00:00Z` : null, meta: row.planId ?? undefined },
+      { event: 'Driver picked up', timestamp: row.routeStartedAt?.toISOString() ?? null, meta: row.driverName ?? undefined },
+      { event: 'Arrived', timestamp: row.arrivedAt?.toISOString() ?? null },
+      ...(row.status === 'completed'
+        ? [{ event: 'Completed', timestamp: row.completedAt?.toISOString() ?? null }]
+        : row.status === 'failed'
+        ? [{ event: 'Failed', timestamp: row.completedAt?.toISOString() ?? null, meta: row.failureReason ?? undefined }]
+        : []),
+    ].filter(e => e.timestamp);
+
+    return { ...row, pod: pod ?? null, timeline };
+  });
+
+  // GET /orgs/:orgId/search — global search across stops, drivers, leads
+  app.get('/search', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { q = '', type = 'all' } = req.query as { q?: string; type?: string };
+    if (!q.trim()) return { stops: [], drivers: [], leads: [], total: 0, query: q, took: 0 };
+
+    const start = Date.now();
+    const like = `%${q.trim()}%`;
+
+    const [stopsRes, driversRes, leadsRes] = await Promise.all([
+      (type === 'all' || type === 'stops') ? db
+        .select({
+          id: stops.id,
+          recipientName: stops.recipientName,
+          address: stops.address,
+          status: stops.status,
+          routeId: stops.routeId,
+          driverName: drivers.name,
+          planDate: plans.date,
+          createdAt: stops.createdAt,
+        })
+        .from(stops)
+        .leftJoin(routes, eq(stops.routeId, routes.id))
+        .leftJoin(plans, eq(routes.planId, plans.id))
+        .leftJoin(drivers, eq(routes.driverId, drivers.id))
+        .where(and(
+          eq(stops.orgId, orgId),
+          isNull(stops.deletedAt),
+          or(
+            ilike(stops.recipientName, like),
+            ilike(stops.address, like),
+            ilike(stops.recipientPhone, like),
+          )!,
+        ))
+        .orderBy(sql`${stops.createdAt} DESC`)
+        .limit(20) : Promise.resolve([]),
+
+      (type === 'all' || type === 'drivers') ? db
+        .select({
+          id: drivers.id,
+          name: drivers.name,
+          email: drivers.email,
+          phone: drivers.phone,
+          status: drivers.status,
+          vehicleType: drivers.vehicleType,
+        })
+        .from(drivers)
+        .where(and(
+          eq(drivers.orgId, orgId),
+          isNull(drivers.deletedAt),
+          or(
+            ilike(drivers.name, like),
+            ilike(drivers.email, like),
+            ilike(drivers.phone, like),
+          )!,
+        ))
+        .limit(10) : Promise.resolve([]),
+
+      (type === 'all' || type === 'leads') ? db
+        .select({
+          id: leadProspects.id,
+          name: leadProspects.name,
+          city: leadProspects.city,
+          state: leadProspects.state,
+          score: leadProspects.score,
+          status: leadProspects.status,
+          ownerName: leadProspects.ownerName,
+          phone: leadProspects.phone,
+        })
+        .from(leadProspects)
+        .where(and(
+          eq(leadProspects.orgId, orgId),
+          isNull(leadProspects.deletedAt),
+          or(
+            ilike(leadProspects.name, like),
+            ilike(leadProspects.city, like),
+            ilike(leadProspects.ownerName, like),
+          )!,
+        ))
+        .limit(10) : Promise.resolve([]),
+    ]);
+
+    const total = stopsRes.length + driversRes.length + leadsRes.length;
+    return { stops: stopsRes, drivers: driversRes, leads: leadsRes, total, query: q.trim(), took: Date.now() - start };
   });
 };

@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  typecheck:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx tsc --noEmit -p packages/backend/tsconfig.json
+      - run: npx tsc --noEmit -p packages/dashboard/tsconfig.json
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx turbo run lint --filter=dashboard --if-present
+      - run: npx turbo run lint --filter=backend --if-present
+
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build backend
+        run: cd packages/backend && npm run build
+        env:
+          DATABASE_URL: postgresql://fake:fake@localhost:5432/fake
+          JWT_SECRET: ci-test-secret
+      - name: Build frontend
+        run: cd packages/dashboard && npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://mydashrx-backend.onrender.com/api/v1
