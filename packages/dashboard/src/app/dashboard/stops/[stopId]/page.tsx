@@ -439,7 +439,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
               )}
             </div>
           )}
-          {stop.routeId && stop.planId && !['completed', 'failed'].includes(stop.status) &&
+          {stop.routeId && stop.planId && !['completed', 'failed', 'rescheduled'].includes(stop.status) &&
            user && user.role !== 'driver' && user.role !== 'pharmacist' && (
             <button
               onClick={openReassign}
