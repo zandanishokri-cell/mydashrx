@@ -34,6 +34,15 @@ interface QueueData {
 const initials = (name: string) =>
   name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
 
+function getWindowUrgency(windowEnd?: string): 'overdue' | 'due-soon' | 'normal' {
+  if (!windowEnd) return 'normal';
+  const end = new Date(windowEnd).getTime();
+  const now = Date.now();
+  if (end < now) return 'overdue';
+  if (end - now < 60 * 60 * 1000) return 'due-soon';
+  return 'normal';
+}
+
 function StopCard({
   stop,
   onApprove,
@@ -62,8 +71,17 @@ function StopCard({
     setFlagOpen(false);
   };
 
+  const urgency = getWindowUrgency(stop.windowEnd);
+  const cardBorder = stop.controlledSubstance
+    ? 'border-amber-200'
+    : urgency === 'overdue'
+    ? 'border-red-300 bg-red-50/40'
+    : urgency === 'due-soon'
+    ? 'border-amber-200 bg-amber-50/20'
+    : 'border-gray-100';
+
   return (
-    <div className={`bg-white rounded-xl border p-4 space-y-3 ${stop.controlledSubstance ? 'border-amber-200' : 'border-gray-100'}`}>
+    <div className={`bg-white rounded-xl border p-4 space-y-3 ${cardBorder}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold text-emerald-700 shrink-0">
@@ -93,12 +111,20 @@ function StopCard({
       )}
 
       {(stop.windowStart || stop.windowEnd) && (
-        <p className="text-xs text-gray-400 flex items-center gap-1">
-          <Clock size={11} />
-          Window: {stop.windowStart ? new Date(stop.windowStart).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}
-          {' – '}
-          {stop.windowEnd ? new Date(stop.windowEnd).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="text-xs text-gray-400 flex items-center gap-1">
+            <Clock size={11} />
+            {stop.windowStart ? new Date(stop.windowStart).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}
+            {' – '}
+            {stop.windowEnd ? new Date(stop.windowEnd).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}
+          </p>
+          {urgency === 'overdue' && (
+            <span className="text-[10px] font-bold bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded">OVERDUE</span>
+          )}
+          {urgency === 'due-soon' && (
+            <span className="text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded">Due soon</span>
+          )}
+        </div>
       )}
 
       <div className="flex items-center gap-2 pt-1">

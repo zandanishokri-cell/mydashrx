@@ -321,9 +321,20 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const user = req.user as { sub: string; driverId?: string };
     const driverId = user.driverId ?? user.sub;
     const { routeId } = req.params as { routeId: string };
-    const [route] = await db.select().from(routes).where(eq(routes.id, routeId)).limit(1);
+    const [route] = await db.select().from(routes).where(and(eq(routes.id, routeId), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     const [updated] = await db.update(routes).set({ status: 'active', startedAt: new Date() }).where(eq(routes.id, routeId)).returning();
+
+    // Fire-and-forget: notify all patients on this route that delivery is en route
+    db.select().from(stops)
+      .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+      .then(routeStops => {
+        for (const stop of routeStops) {
+          sendStopNotification(stop, 'route_dispatched').catch(console.error);
+        }
+      })
+      .catch(console.error);
+
     return updated;
   });
 };

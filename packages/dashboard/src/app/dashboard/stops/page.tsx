@@ -20,7 +20,29 @@ interface Stop {
   deliveryNotes?: string; createdAt: string; routeId: string;
   planDate?: string; planStatus?: string; depotId?: string; depotName?: string;
   driverId?: string; driverName?: string; planId?: string;
+  windowStart?: string; windowEnd?: string;
 }
+
+type Urgency = 'overdue' | 'due-soon' | 'normal';
+function getUrgency(stop: Stop): Urgency {
+  if (stop.status === 'completed' || stop.status === 'failed') return 'normal';
+  if (!stop.windowEnd) return 'normal';
+  const end = new Date(stop.windowEnd).getTime();
+  const now = Date.now();
+  if (end < now) return 'overdue';
+  if (end - now < 60 * 60 * 1000) return 'due-soon';
+  return 'normal';
+}
+const URGENCY_ROW: Record<Urgency, string> = {
+  overdue: 'bg-red-50/60 hover:bg-red-100/40',
+  'due-soon': 'bg-amber-50/60 hover:bg-amber-100/40',
+  normal: 'hover:bg-blue-50/30',
+};
+const URGENCY_BADGE: Record<Urgency, string | null> = {
+  overdue: 'text-red-600 bg-red-100 border-red-200',
+  'due-soon': 'text-amber-700 bg-amber-50 border-amber-200',
+  normal: null,
+};
 
 const STATUS_TABS = [
   { key: 'all', label: 'All stops' },
@@ -225,11 +247,14 @@ export default function StopsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 bg-white">
-                {stops.map(stop => (
+                {stops.map(stop => {
+                  const urgency = getUrgency(stop);
+                  const badgeCls = URGENCY_BADGE[urgency];
+                  return (
                   <tr
                     key={stop.id}
                     onClick={() => router.push(`/dashboard/stops/${stop.id}`)}
-                    className="hover:bg-blue-50/30 cursor-pointer transition-colors"
+                    className={`cursor-pointer transition-colors ${URGENCY_ROW[urgency]}`}
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -240,7 +265,12 @@ export default function StopsPage() {
                         />
                         {stop.requiresRefrigeration && <span className="text-xs bg-blue-50 text-blue-600 px-1.5 rounded shrink-0">❄</span>}
                         {stop.controlledSubstance && <span className="text-xs bg-orange-50 text-orange-600 px-1.5 rounded shrink-0">⚠</span>}
-                        <span className="font-medium text-gray-900 truncate max-w-[200px]">{stop.address}</span>
+                        <span className="font-medium text-gray-900 truncate max-w-[160px]">{stop.address}</span>
+                        {badgeCls && stop.windowEnd && (
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${badgeCls}`}>
+                            {urgency === 'overdue' ? 'OVERDUE' : `Due ${new Date(stop.windowEnd).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
@@ -254,7 +284,8 @@ export default function StopsPage() {
                       {stop.rxNumbers?.length > 0 ? `×${stop.rxNumbers.length}` : '—'}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
 
