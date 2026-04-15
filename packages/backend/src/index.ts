@@ -7,6 +7,7 @@ import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import staticFiles from '@fastify/static';
 import { join } from 'path';
+import { mkdirSync } from 'fs';
 import { authRoutes } from './routes/auth.js';
 import { organizationRoutes } from './routes/organizations.js';
 import { depotRoutes } from './routes/depots.js';
@@ -70,6 +71,7 @@ app.addHook('preValidation', async (request, reply) => {
 
 // Serve locally uploaded photos
 const uploadDir = process.env.UPLOAD_DIR ?? join(process.cwd(), 'uploads');
+mkdirSync(uploadDir, { recursive: true });
 await app.register(staticFiles, { root: uploadDir, prefix: '/uploads/', decorateReply: false });
 
 // Routes
