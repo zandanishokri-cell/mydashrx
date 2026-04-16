@@ -303,9 +303,19 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
     if (toUpdate.length === 0) return { updated: 0, skipped };
 
-    await db.update(stops)
-      .set({ routeId: targetRouteId })
-      .where(inArray(stops.id, toUpdate.map(s => s.id)));
+    // Find max sequenceNumber in target route to append at the end
+    const [{ maxSeq }] = await db
+      .select({ maxSeq: sql<number>`coalesce(max(${stops.sequenceNumber}), -1)` })
+      .from(stops)
+      .where(and(eq(stops.routeId, targetRouteId), isNull(stops.deletedAt)));
+
+    await Promise.all(
+      toUpdate.map((s, i) =>
+        db.update(stops)
+          .set({ routeId: targetRouteId, sequenceNumber: maxSeq + 1 + i })
+          .where(eq(stops.id, s.id))
+      )
+    );
 
     return { updated: toUpdate.length, skipped };
   });
