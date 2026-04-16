@@ -21,12 +21,14 @@ export async function fireTrigger(ctx: TriggerContext): Promise<void> {
   for (const rule of rules) {
     try {
       await executeRule(rule, ctx);
-      await db.update(automationRules)
-        .set({ runCount: sql`${automationRules.runCount} + 1`, lastRunAt: new Date() })
-        .where(eq(automationRules.id, rule.id));
-      await db.insert(automationLog).values({
-        orgId: ctx.orgId, ruleId: rule.id, trigger: ctx.trigger,
-        resourceId: ctx.resourceId, status: 'success',
+      await db.transaction(async (tx) => {
+        await tx.update(automationRules)
+          .set({ runCount: sql`${automationRules.runCount} + 1`, lastRunAt: new Date() })
+          .where(eq(automationRules.id, rule.id));
+        await tx.insert(automationLog).values({
+          orgId: ctx.orgId, ruleId: rule.id, trigger: ctx.trigger,
+          resourceId: ctx.resourceId, status: 'fired',
+        });
       });
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
@@ -44,30 +46,35 @@ export async function executeRule(
 ): Promise<void> {
   const actions = rule.actions as Array<{ type: string; to: string }>;
   for (const action of actions) {
-    if (action.type === 'sms' && rule.smsTemplate) {
-      const msg = interpolate(rule.smsTemplate, ctx.data);
-      const toPhone = ctx.data[action.to + 'Phone'] as string | undefined;
-      if (toPhone && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
-        await sendTwilioSms(toPhone, msg);
-      }
-    }
-    if (action.type === 'email' && rule.emailTemplate && rule.emailSubject) {
-      const body = interpolate(rule.emailTemplate, ctx.data);
-      const subject = interpolate(rule.emailSubject, ctx.data);
-      if (!process.env.RESEND_API_KEY) continue;
-      if (action.to === 'patient') {
-        const toEmail = ctx.data.patientEmail as string | undefined;
-        if (toEmail) await sendResendEmail(toEmail, subject, body);
-      } else {
-        // Resolve org users with matching role (dispatcher, pharmacy_admin, etc.)
-        const orgUsers = await db
-          .select({ email: users.email })
-          .from(users)
-          .where(and(eq(users.orgId, ctx.orgId), eq(users.role as any, action.to), isNull(users.deletedAt)));
-        for (const u of orgUsers) {
-          await sendResendEmail(u.email, subject, body).catch(console.error);
+    if (action.type === 'sms') {
+      if (rule.smsTemplate) {
+        const msg = interpolate(rule.smsTemplate, ctx.data);
+        const toPhone = ctx.data[action.to + 'Phone'] as string | undefined;
+        if (toPhone && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
+          await sendTwilioSms(toPhone, msg);
         }
       }
+    } else if (action.type === 'email') {
+      if (rule.emailTemplate && rule.emailSubject) {
+        const body = interpolate(rule.emailTemplate, ctx.data);
+        const subject = interpolate(rule.emailSubject, ctx.data);
+        if (!process.env.RESEND_API_KEY) continue;
+        if (action.to === 'patient') {
+          const toEmail = ctx.data.patientEmail as string | undefined;
+          if (toEmail) await sendResendEmail(toEmail, subject, body);
+        } else {
+          // Resolve org users with matching role (dispatcher, pharmacy_admin, etc.)
+          const orgUsers = await db
+            .select({ email: users.email })
+            .from(users)
+            .where(and(eq(users.orgId, ctx.orgId), eq(users.role as any, action.to), isNull(users.deletedAt)));
+          for (const u of orgUsers) {
+            await sendResendEmail(u.email, subject, body).catch(console.error);
+          }
+        }
+      }
+    } else {
+      throw new Error(`Unknown action type: ${action.type}`);
     }
   }
 }
@@ -86,7 +93,10 @@ async function sendTwilioSms(to: string, body: string): Promise<void> {
       body: new URLSearchParams({ To: to, From: process.env.TWILIO_PHONE_NUMBER!, Body: body }).toString(),
     }
   );
-  if (!res.ok) throw new Error(`Twilio error: ${res.status}`);
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({})) as { message?: string };
+    throw new Error(`Twilio error: ${res.status} — ${errBody?.message ?? 'unknown'}`);
+  }
 }
 
 async function sendResendEmail(to: string, subject: string, html: string): Promise<void> {

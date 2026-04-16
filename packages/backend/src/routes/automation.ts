@@ -76,6 +76,22 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
     if (!Array.isArray(body.actions) || body.actions.length === 0) {
       return reply.code(400).send({ error: 'At least one action is required' });
     }
+    const VALID_ACTION_TYPES = ['sms', 'email'] as const;
+    const VALID_TO_VALUES = ['patient', 'dispatcher', 'pharmacy_admin', 'super_admin'] as const;
+    for (const action of body.actions ?? []) {
+      if (!VALID_ACTION_TYPES.includes(action.type as any)) {
+        return reply.code(400).send({ error: `Invalid action type: ${action.type}` });
+      }
+      if (!VALID_TO_VALUES.includes(action.to as any)) {
+        return reply.code(400).send({ error: `Invalid action.to value: ${action.to}` });
+      }
+      if (action.type === 'sms' && !(body as any).smsTemplate?.trim()) {
+        return reply.code(400).send({ error: 'smsTemplate is required for sms actions' });
+      }
+      if (action.type === 'email' && !(body as any).emailTemplate?.trim()) {
+        return reply.code(400).send({ error: 'emailTemplate is required for email actions' });
+      }
+    }
     const [rule] = await db.insert(automationRules).values({
       orgId,
       name: body.name,
@@ -115,6 +131,22 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
     }>;
     if (body.trigger !== undefined && !VALID_TRIGGERS.includes(body.trigger as any)) {
       return reply.code(400).send({ error: `Invalid trigger. Must be one of: ${VALID_TRIGGERS.join(', ')}` });
+    }
+    const VALID_ACTION_TYPES = ['sms', 'email'] as const;
+    const VALID_TO_VALUES = ['patient', 'dispatcher', 'pharmacy_admin', 'super_admin'] as const;
+    for (const action of body.actions ?? []) {
+      if (!VALID_ACTION_TYPES.includes(action.type as any)) {
+        return reply.code(400).send({ error: `Invalid action type: ${action.type}` });
+      }
+      if (!VALID_TO_VALUES.includes(action.to as any)) {
+        return reply.code(400).send({ error: `Invalid action.to value: ${action.to}` });
+      }
+      if (action.type === 'sms' && !(body as any).smsTemplate?.trim()) {
+        return reply.code(400).send({ error: 'smsTemplate is required for sms actions' });
+      }
+      if (action.type === 'email' && !(body as any).emailTemplate?.trim()) {
+        return reply.code(400).send({ error: 'emailTemplate is required for email actions' });
+      }
     }
     const allowed = ['name', 'trigger', 'enabled', 'conditions', 'actions', 'smsTemplate', 'emailSubject', 'emailTemplate'];
     const updates: Record<string, unknown> = { updatedAt: new Date() };

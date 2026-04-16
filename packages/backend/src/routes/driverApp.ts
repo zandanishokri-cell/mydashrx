@@ -243,7 +243,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const driverId = user.driverId ?? user.sub;
 
     // Verify driver owns this stop's route
-    const [stopCheck] = await db.select({ id: stops.id, routeId: stops.routeId })
+    const [stopCheck] = await db.select({ id: stops.id, routeId: stops.routeId, orgId: stops.orgId, recipientName: stops.recipientName, address: stops.address })
       .from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stopCheck) return reply.code(404).send({ error: 'Not found' });
     const [routeCheck] = await db.select({ driverId: routes.driverId })
@@ -276,6 +276,17 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
         driverNote: body.driverNote,
       }).where(eq(proofOfDeliveries.stopId, stopId)).returning();
       await db.update(stops).set({ status: 'completed', completedAt: new Date() }).where(eq(stops.id, stopId));
+      fireTrigger({
+        orgId: stopCheck.orgId,
+        trigger: 'stop_completed',
+        resourceId: stopId,
+        data: {
+          patientName: stopCheck.recipientName ?? '',
+          address: stopCheck.address ?? '',
+          stopStatus: 'completed',
+          driverName: '',
+        },
+      }).catch(console.error);
       if (body.isControlledSubstance && !body.idVerified) {
         logCsAudit(stopId, driverId).catch(console.error);
       }
@@ -301,6 +312,17 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     }).returning();
 
     await db.update(stops).set({ status: 'completed', completedAt: new Date() }).where(eq(stops.id, stopId));
+    fireTrigger({
+      orgId: stopCheck.orgId,
+      trigger: 'stop_completed',
+      resourceId: stopId,
+      data: {
+        patientName: stopCheck.recipientName ?? '',
+        address: stopCheck.address ?? '',
+        stopStatus: 'completed',
+        driverName: '',
+      },
+    }).catch(console.error);
 
     if (body.isControlledSubstance && !body.idVerified) {
       logCsAudit(stopId, driverId).catch(console.error);
@@ -394,7 +416,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const { stopId } = req.params as { stopId: string };
 
     const [stop] = await db
-      .select({ id: stops.id, status: stops.status, returnedAt: stops.returnedAt, routeId: stops.routeId, orgId: stops.orgId, controlledSubstance: stops.controlledSubstance })
+      .select({ id: stops.id, status: stops.status, returnedAt: stops.returnedAt, routeId: stops.routeId, orgId: stops.orgId, controlledSubstance: stops.controlledSubstance, recipientName: stops.recipientName, address: stops.address })
       .from(stops)
       .where(and(eq(stops.id, stopId), eq(stops.orgId, jwtUser.orgId), isNull(stops.deletedAt)))
       .limit(1);
@@ -425,7 +447,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       orgId: jwtUser.orgId,
       trigger: 'stop_failed',
       resourceId: stopId,
-      data: { patientName: '', address: '', stopStatus: 'failed', controlledSubstance: String(stop.controlledSubstance ?? false) },
+      data: { patientName: stop.recipientName ?? '', address: stop.address ?? '', stopStatus: 'failed', controlledSubstance: String(stop.controlledSubstance ?? false) },
     }).catch(console.error);
 
     return { ok: true, returnedAt: updated.returnedAt };
