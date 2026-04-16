@@ -174,6 +174,7 @@ export const stops = pgTable(
       .references(() => organizations.id),
     recipientName: text('recipient_name').notNull(),
     recipientPhone: varchar('recipient_phone', { length: 20 }).notNull(),
+    recipientEmail: text('recipient_email'),
     address: text('address').notNull(),
     unit: text('unit'),
     deliveryNotes: text('delivery_notes'),

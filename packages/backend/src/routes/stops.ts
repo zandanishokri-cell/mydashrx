@@ -77,6 +77,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       orgId: string;
       recipientName: string;
       recipientPhone: string;
+      recipientEmail?: string;
       address: string;
       lat: number;
       lng: number;
@@ -99,6 +100,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       orgId: body.orgId,
       recipientName: body.recipientName,
       recipientPhone: body.recipientPhone,
+      recipientEmail: body.recipientEmail,
       address: body.address,
       lat: body.lat,
       lng: body.lng,
@@ -188,7 +190,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
         data: {
           patientName: updated.recipientName,
           patientPhone: updated.recipientPhone,
-          patientEmail: (updated as any).recipientEmail ?? '',
+          patientEmail: updated.recipientEmail ?? '',
           address: updated.address,
           stopStatus: status,
           driverName,
