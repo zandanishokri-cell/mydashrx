@@ -61,6 +61,9 @@ export const organizations = pgTable('organizations', {
   timezone: varchar('timezone', { length: 64 }).notNull().default('America/New_York'),
   hipaaBaaStatus: text('hipaa_baa_status').notNull().default('pending'),
   billingPlan: billingPlanEnum('billing_plan').notNull().default('starter'),
+  stripeCustomerId: text('stripe_customer_id'),
+  stripeSubscriptionId: text('stripe_subscription_id'),
+  stripeSubscriptionStatus: text('stripe_subscription_status').default('inactive'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

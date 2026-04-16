@@ -72,8 +72,8 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
         driverLimit,
         stopsPercent: stopLimit ? Math.round((stopsThisMonth / stopLimit) * 100) : 0,
       },
-      stripeCustomerId: (org as any).stripeCustomerId ?? null,
-      subscriptionStatus: 'active',
+      stripeCustomerId: org.stripeCustomerId ?? null,
+      subscriptionStatus: org.stripeSubscriptionStatus ?? 'inactive',
     };
   });
 
@@ -107,16 +107,25 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
       pro: process.env.STRIPE_PRICE_PRO ?? '',
     };
 
-    const session = await stripePost('/checkout/sessions', {
+    const priceId = PRICE_IDS[body.plan];
+    if (!priceId) return reply.code(400).send({ error: `No Stripe price configured for plan: ${body.plan}. Set STRIPE_PRICE_${body.plan.toUpperCase()} env var.` });
+
+    const checkoutParams: Record<string, string> = {
       mode: 'subscription',
-      'line_items[0][price]': PRICE_IDS[body.plan] ?? '',
+      'line_items[0][price]': priceId,
       'line_items[0][quantity]': '1',
       success_url: body.successUrl,
       cancel_url: body.cancelUrl,
       'metadata[orgId]': orgId,
       'metadata[plan]': body.plan,
-      ...(org.name ? { 'customer_email': '' } : {}),
-    });
+    };
+
+    // Re-use existing Stripe customer if available to prevent duplicate customers
+    if (org.stripeCustomerId) {
+      checkoutParams.customer = org.stripeCustomerId;
+    }
+
+    const session = await stripePost('/checkout/sessions', checkoutParams);
 
     return { url: session.url };
   });
@@ -134,7 +143,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
     const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Not found' });
 
-    const stripeCustomerId = (org as any).stripeCustomerId;
+    const stripeCustomerId = org.stripeCustomerId;
     if (!stripeCustomerId) return reply.code(400).send({ error: 'No Stripe customer found. Please subscribe first.' });
 
     const body = req.body as { returnUrl: string };
@@ -194,17 +203,36 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
       const session = event.data.object;
       const orgId = (session.metadata as Record<string, string>)?.orgId;
       const plan = (session.metadata as Record<string, string>)?.plan as PlanKey;
+      const customerId = session.customer as string | null;
+      const subscriptionId = session.subscription as string | null;
       if (orgId && plan && PLANS[plan]) {
-        await db.update(organizations).set({ billingPlan: plan }).where(eq(organizations.id, orgId));
+        await db.update(organizations).set({
+          billingPlan: plan,
+          ...(customerId ? { stripeCustomerId: customerId } : {}),
+          ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
+          stripeSubscriptionStatus: 'active',
+        }).where(eq(organizations.id, orgId));
+      }
+    }
+
+    if (event.type === 'customer.subscription.updated') {
+      const subscription = event.data.object;
+      const customerId = (subscription as any).customer as string;
+      const status = (subscription as any).status as string;
+      if (customerId && status) {
+        await db.update(organizations)
+          .set({ stripeSubscriptionStatus: status })
+          .where(eq(organizations.stripeCustomerId, customerId));
       }
     }
 
     if (event.type === 'customer.subscription.deleted') {
       const subscription = event.data.object;
-      const metadata = (subscription as any).metadata as Record<string, string>;
-      const orgId = metadata?.orgId;
-      if (orgId) {
-        await db.update(organizations).set({ billingPlan: 'starter' }).where(eq(organizations.id, orgId));
+      const customerId = (subscription as any).customer as string;
+      if (customerId) {
+        await db.update(organizations)
+          .set({ billingPlan: 'starter', stripeSubscriptionStatus: 'canceled' })
+          .where(eq(organizations.stripeCustomerId, customerId));
       }
     }
 

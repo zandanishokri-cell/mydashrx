@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { CreditCard, CheckCircle2, Zap, Building2, TrendingUp } from 'lucide-react';
+import { CreditCard, CheckCircle2, Zap, Building2, TrendingUp, AlertCircle } from 'lucide-react';
 
 interface PlanDetails {
   name: string;
@@ -104,11 +104,13 @@ export default function BillingPage() {
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
+  const [loadError, setLoadError] = useState(false);
   const user = getUser();
   const orgId = user?.orgId;
 
   useEffect(() => {
     if (!orgId) return;
+    setLoadError(false);
     Promise.all([
       api.get<BillingData>(`/orgs/${orgId}/billing/plan`),
       api.get<PlanOption[]>(`/orgs/${orgId}/billing/plans`),
@@ -117,7 +119,7 @@ export default function BillingPage() {
         setBilling(b);
         setPlans(p.sort((a, b) => PLAN_ORDER.indexOf(a.key) - PLAN_ORDER.indexOf(b.key)));
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, [orgId]);
 
@@ -154,6 +156,16 @@ export default function BillingPage() {
   if (loading) return (
     <div className="p-6 space-y-4">
       {[1, 2, 3].map(i => <div key={i} className="h-32 bg-white rounded-2xl animate-pulse" />)}
+    </div>
+  );
+
+  if (loadError) return (
+    <div className="p-6">
+      <div className="flex items-center gap-3 px-4 py-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+        <AlertCircle size={16} className="shrink-0" />
+        <div className="flex-1">Failed to load billing information. Please refresh the page.</div>
+        <button onClick={() => window.location.reload()} className="text-red-600 font-medium hover:underline text-xs">Refresh</button>
+      </div>
     </div>
   );
 
@@ -208,12 +220,14 @@ export default function BillingPage() {
                     : 'Custom pricing'}
                 </p>
               </div>
-              <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                billing.subscriptionStatus === 'active'
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'bg-gray-100 text-gray-500'
+              <span className={`px-2.5 py-1 rounded-full text-xs font-semibold capitalize ${
+                billing.subscriptionStatus === 'active' ? 'bg-emerald-50 text-emerald-700'
+                : billing.subscriptionStatus === 'past_due' ? 'bg-red-50 text-red-700'
+                : billing.subscriptionStatus === 'canceled' ? 'bg-gray-100 text-gray-500'
+                : billing.subscriptionStatus === 'trialing' ? 'bg-blue-50 text-blue-700'
+                : 'bg-gray-100 text-gray-400'
               }`}>
-                {billing.subscriptionStatus}
+                {billing.subscriptionStatus === 'inactive' && billing.currentPlan === 'starter' ? 'Free' : billing.subscriptionStatus}
               </span>
             </div>
             <div className="space-y-4">
