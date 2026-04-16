@@ -123,7 +123,8 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
       .where(and(inArray(stops.routeId, routeIds), isNull(stops.deletedAt)));
 
     // Count completed stops across all of today's org routes
-    const today = new Date().toISOString().split('T')[0];
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const todayPlanRows = await db
       .select({ id: plans.id })
       .from(plans)
@@ -156,12 +157,12 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
 
     const result = activeRoutes.map((r) => {
       const rs = stopsByRoute[r.routeId] ?? [];
-      const completed = rs.filter((s) => s.status === 'completed' || s.status === 'failed').length;
-      const pending = rs.filter((s) => s.status !== 'completed' && s.status !== 'failed').length;
+      const completed = rs.filter((s) => s.status === 'completed' || s.status === 'failed' || s.status === 'rescheduled').length;
+      const pending = rs.filter((s) => s.status !== 'completed' && s.status !== 'failed' && s.status !== 'rescheduled').length;
       totalStopsRemaining += pending;
 
       const nextStop = rs
-        .filter((s) => s.status !== 'completed' && s.status !== 'failed')
+        .filter((s) => s.status !== 'completed' && s.status !== 'failed' && s.status !== 'rescheduled')
         .sort((a, b) => (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0))[0] ?? null;
 
       const base = r.lastPingAt ? new Date(r.lastPingAt) : new Date();
@@ -229,7 +230,7 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
 
-    const pending = routeStops.filter((s) => s.status !== 'completed' && s.status !== 'failed');
+    const pending = routeStops.filter((s) => s.status !== 'completed' && s.status !== 'failed' && s.status !== 'rescheduled');
     const base = route.lastPingAt ? new Date(route.lastPingAt) : new Date();
 
     return {

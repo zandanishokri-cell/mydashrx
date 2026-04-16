@@ -106,9 +106,22 @@ export default function MapPage() {
     load();
     intervalRef.current = setInterval(load, 15000);
     tickRef.current = setInterval(() => setSecondsAgo((s) => s + 1), 1000);
+
+    // Pause polling when tab is hidden — resume + refresh immediately on return
+    const handleVisibility = () => {
+      if (document.hidden) {
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      } else {
+        load();
+        intervalRef.current = setInterval(load, 15000);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (tickRef.current) clearInterval(tickRef.current);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [load]);
 
