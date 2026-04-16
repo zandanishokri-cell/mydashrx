@@ -7,6 +7,25 @@ import { api } from '@/lib/api';
 import { LayoutDashboard, Route, Map, Users, LogOut, Search, BarChart2, Target, Shield, Scale, Menu, X, Zap, CreditCard, Settings2, ChevronDown, Crown, RefreshCw, TrendingUp } from 'lucide-react';
 import NotificationPanel from '@/components/NotificationPanel';
 
+// Which roles can see each nav item. '*' = all authenticated roles.
+const NAV_ROLE_MAP: Record<string, string[]> = {
+  '/dashboard':           ['*'],
+  '/dashboard/search':    ['*'],
+  '/dashboard/stops':     ['super_admin', 'pharmacy_admin', 'dispatcher'],
+  '/dashboard/recurring': ['super_admin', 'pharmacy_admin', 'dispatcher'],
+  '/dashboard/plans':     ['super_admin', 'pharmacy_admin', 'dispatcher'],
+  '/dashboard/map':       ['super_admin', 'pharmacy_admin', 'dispatcher'],
+  '/dashboard/drivers':   ['super_admin', 'pharmacy_admin', 'dispatcher'],
+  '/dashboard/analytics': ['super_admin', 'pharmacy_admin', 'dispatcher'],
+  '/dashboard/leads':     ['super_admin', 'pharmacy_admin'],
+  '/dashboard/compliance':    ['super_admin', 'pharmacy_admin', 'pharmacist'],
+  '/dashboard/mi-compliance': ['super_admin', 'pharmacy_admin', 'pharmacist'],
+  '/dashboard/automation': ['super_admin', 'pharmacy_admin'],
+  '/dashboard/intel':     ['super_admin', 'pharmacy_admin'],
+  '/dashboard/billing':   ['super_admin', 'pharmacy_admin'],
+  '/dashboard/settings':  ['*'],
+};
+
 const baseNavItems = [
   { href: '/dashboard', label: 'Command Center', icon: LayoutDashboard, exact: true },
   { href: '/dashboard/search', label: 'Search', icon: Search },
@@ -39,13 +58,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const user = getUser();
 
   const navItems = [
-    ...baseNavItems,
+    ...baseNavItems.filter(item => {
+      const allowed = NAV_ROLE_MAP[item.href];
+      if (!allowed || !user?.role) return true;
+      return allowed.includes('*') || allowed.includes(user.role);
+    }),
     ...(user?.role === 'super_admin' ? [{ href: '/dashboard/admin', label: 'Platform Admin', icon: Crown }] : []),
   ];
 
   useEffect(() => {
     if (!isAuthenticated()) router.replace('/login');
   }, [router]);
+
+  // Role-based portal redirects — drivers and pharmacists have dedicated portals
+  useEffect(() => {
+    if (!user) return;
+    if (user.role === 'driver' && !pathname.startsWith('/dashboard/driver')) {
+      router.replace('/dashboard/driver/me/routes');
+    } else if (user.role === 'pharmacist' && !pathname.startsWith('/dashboard/pharmacy') && !pathname.startsWith('/dashboard/compliance') && !pathname.startsWith('/dashboard/mi-compliance') && !pathname.startsWith('/dashboard/settings')) {
+      router.replace('/dashboard/pharmacy');
+    }
+  }, [user, pathname, router]);
 
   useEffect(() => { setDrawerOpen(false); }, [pathname]);
 

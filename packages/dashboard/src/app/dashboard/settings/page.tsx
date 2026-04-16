@@ -232,6 +232,9 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
   const [invite, setInvite] = useState({ name: '', email: '', role: 'dispatcher' as Role, depotIds: [] as string[] });
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState('');
+  const [editingRoleFor, setEditingRoleFor] = useState<string | null>(null);
+  const [editRoleValue, setEditRoleValue] = useState<Role>('dispatcher');
+  const [savingRole, setSavingRole] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -263,6 +266,18 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
       setMembers(prev => prev.filter(m => m.id !== removeTarget.id));
     } catch { /* ignore */ }
     setRemoveTarget(null);
+  };
+
+  const startEditRole = (m: OrgUser) => { setEditingRoleFor(m.id); setEditRoleValue(m.role); };
+  const cancelEditRole = () => { setEditingRoleFor(null); setSavingRole(false); };
+  const saveEditRole = async (userId: string) => {
+    setSavingRole(true);
+    try {
+      const updated = await api.patch<OrgUser>(`/orgs/${orgId}/users/${userId}`, { role: editRoleValue });
+      setMembers(prev => prev.map(m => m.id === userId ? { ...m, role: updated.role } : m));
+      setEditingRoleFor(null);
+    } catch { /* ignore */ }
+    finally { setSavingRole(false); }
   };
 
   const copyPass = () => {
@@ -302,10 +317,40 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
                   {m.id === currentUserId && <span className="ml-2 text-xs text-gray-400">(you)</span>}
                 </td>
                 <td className="px-4 py-3 text-gray-500">{m.email}</td>
-                <td className="px-4 py-3"><Badge role={m.role} /></td>
+                <td className="px-4 py-3">
+                  {editingRoleFor === m.id ? (
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={editRoleValue}
+                        onChange={e => setEditRoleValue(e.target.value as Role)}
+                        className="rounded border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0F4C81]/30"
+                        disabled={savingRole}
+                      >
+                        {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                      </select>
+                      <button onClick={() => saveEditRole(m.id)} disabled={savingRole}
+                        className="p-1 rounded text-[#0F4C81] hover:bg-blue-50 disabled:opacity-50">
+                        {savingRole ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      </button>
+                      <button onClick={cancelEditRole} className="p-1 rounded text-gray-400 hover:bg-gray-100">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <Badge role={m.role} />
+                      {m.id !== currentUserId && m.role !== 'super_admin' && (
+                        <button onClick={() => startEditRole(m)}
+                          className="p-1 rounded text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors">
+                          <Pencil size={11} />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-gray-400 text-xs">{new Date(m.createdAt).toLocaleDateString()}</td>
                 <td className="px-4 py-3 text-right">
-                  {m.id !== currentUserId && (
+                  {m.id !== currentUserId && m.role !== 'super_admin' && editingRoleFor !== m.id && (
                     <button
                       onClick={() => setRemoveTarget(m)}
                       className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
