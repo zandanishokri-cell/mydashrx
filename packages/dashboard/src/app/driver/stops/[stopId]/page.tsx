@@ -158,7 +158,7 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
     </div>
   );
 
-  const isDone = stop.status === 'completed' || stop.status === 'failed';
+  const isDone = stop.status === 'completed' || stop.status === 'failed' || stop.status === 'rescheduled';
 
   return (
     <div className="min-h-screen bg-gray-50 pb-32">
