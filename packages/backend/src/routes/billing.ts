@@ -97,7 +97,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
     if (!body.successUrl || !body.cancelUrl) return reply.code(400).send({ error: 'successUrl and cancelUrl required' });
 
     const plan = PLANS[body.plan];
-    if (!plan.price) return reply.code(400).send({ error: 'Enterprise plan requires contacting sales' });
+    if (plan.price === null) return reply.code(400).send({ error: 'Enterprise plan requires contacting sales' });
 
     const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Not found' });
@@ -170,6 +170,13 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/webhook', async (req, reply) => {
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[billing-webhook] STRIPE_WEBHOOK_SECRET not set in production — rejecting webhook');
+        return reply.code(500).send({ error: 'Webhook not configured' });
+      }
+      console.warn('[billing-webhook] STRIPE_WEBHOOK_SECRET not set — skipping verification (dev mode only)');
+    }
     if (webhookSecret) {
       const sig = (req.headers['stripe-signature'] as string) ?? '';
       const rawBody = (req as any).rawBody as string ?? '';
@@ -201,6 +208,11 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
 
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
+      // Only upgrade plan when payment was actually collected
+      if (session.payment_status !== 'paid') {
+        console.warn('[billing-webhook] checkout.session.completed with non-paid status:', session.payment_status);
+        return reply.code(200).send({ received: true });
+      }
       const orgId = (session.metadata as Record<string, string>)?.orgId;
       const plan = (session.metadata as Record<string, string>)?.plan as PlanKey;
       const customerId = session.customer as string | null;
@@ -210,7 +222,7 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
           billingPlan: plan,
           ...(customerId ? { stripeCustomerId: customerId } : {}),
           ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
-          stripeSubscriptionStatus: 'active',
+          // stripeSubscriptionStatus intentionally omitted — set by customer.subscription.updated
         }).where(eq(organizations.id, orgId));
       }
     }
@@ -220,8 +232,18 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
       const customerId = (subscription as any).customer as string;
       const status = (subscription as any).status as string;
       if (customerId && status) {
+        // Reverse-map price ID to plan key
+        const PRICE_TO_PLAN: Record<string, string> = {
+          [process.env.STRIPE_PRICE_GROWTH ?? '']: 'growth',
+          [process.env.STRIPE_PRICE_PRO ?? '']: 'pro',
+        };
+        const priceId = (subscription as any).items?.data?.[0]?.price?.id;
+        const newPlan = priceId ? PRICE_TO_PLAN[priceId] as PlanKey : undefined;
         await db.update(organizations)
-          .set({ stripeSubscriptionStatus: status })
+          .set({
+            stripeSubscriptionStatus: status,
+            ...(newPlan ? { billingPlan: newPlan } : {}),
+          })
           .where(eq(organizations.stripeCustomerId, customerId));
       }
     }
@@ -231,7 +253,7 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
       const customerId = (subscription as any).customer as string;
       if (customerId) {
         await db.update(organizations)
-          .set({ billingPlan: 'starter', stripeSubscriptionStatus: 'canceled' })
+          .set({ billingPlan: 'starter', stripeSubscriptionStatus: 'cancelled', stripeSubscriptionId: null })
           .where(eq(organizations.stripeCustomerId, customerId));
       }
     }

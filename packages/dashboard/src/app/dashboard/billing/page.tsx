@@ -388,7 +388,7 @@ export default function BillingPage() {
               </button>
             );
             if (isEnterprise) return (
-              <a key={plan.key} href="mailto:sales@mydashtrx.com"
+              <a key={plan.key} href="mailto:sales@mydash-rx.com"
                 className="w-full py-2 rounded-xl text-xs font-bold text-center block text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 transition-colors">
                 Contact Sales
               </a>

@@ -337,15 +337,16 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { routeId, stopId } = req.params as { routeId: string; stopId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
     const body = req.body as Record<string, unknown>;
     const allowed = ['deliveryNotes', 'packageCount', 'requiresRefrigeration', 'controlledSubstance', 'requiresSignature', 'requiresPhoto', 'codAmount'];
     const updates: Record<string, unknown> = {};
     for (const k of allowed) if (k in body) updates[k] = body[k];
     if (Object.keys(updates).length === 0) return reply.code(400).send({ error: 'No valid fields' });
-    // Scope to route to prevent cross-org edits
+    // Scope to route AND org to prevent cross-org edits
     const [updated] = await db.update(stops)
       .set(updates)
-      .where(and(eq(stops.id, stopId), eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+      .where(and(eq(stops.id, stopId), eq(stops.routeId, routeId), eq(stops.orgId, userOrgId), isNull(stops.deletedAt)))
       .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     return updated;
