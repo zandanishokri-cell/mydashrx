@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { FormField, SelectField } from '@/components/ui/FormField';
-import { Truck, Plus, Search, Pencil, Trash2, Download, Users } from 'lucide-react';
+import { Truck, Plus, Search, Pencil, Trash2, Download, Users, AlertTriangle } from 'lucide-react';
 
 interface Driver {
   id: string; orgId: string; name: string; email: string; phone: string;
@@ -33,6 +33,7 @@ export default function DriversPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [editDriver, setEditDriver] = useState<Driver | null>(null);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [deleteError, setDeleteError] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [user] = useState(getUser);
@@ -64,14 +65,18 @@ export default function DriversPage() {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    if (!search) { setFiltered(drivers); return; }
-    const q = search.toLowerCase();
-    setFiltered(drivers.filter(d =>
-      d.name.toLowerCase().includes(q) ||
-      d.email.toLowerCase().includes(q) ||
-      d.phone.includes(q)
-    ));
-  }, [search, drivers]);
+    let result = drivers;
+    if (statusFilter) result = result.filter(d => d.status === statusFilter);
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(d =>
+        d.name.toLowerCase().includes(q) ||
+        d.email.toLowerCase().includes(q) ||
+        d.phone.includes(q)
+      );
+    }
+    setFiltered(result);
+  }, [search, statusFilter, drivers]);
 
   const requestDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -112,6 +117,11 @@ export default function DriversPage() {
     const hrs = Math.floor(mins / 60);
     if (hrs < 24) return `${hrs}h ago`;
     return new Date(d.lastPingAt).toLocaleDateString();
+  };
+
+  const isStale48h = (d: Driver) => {
+    if (!d.lastPingAt) return d.status === 'offline';
+    return (Date.now() - new Date(d.lastPingAt).getTime()) > 48 * 3600000;
   };
 
   const completionDisplay = (id: string) => {
@@ -159,7 +169,7 @@ export default function DriversPage() {
         </div>
       )}
 
-      <div className="relative mb-4">
+      <div className="relative mb-3">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
         <input
           value={search}
@@ -167,6 +177,33 @@ export default function DriversPage() {
           placeholder="Search by name, vehicle, phone…"
           className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100"
         />
+      </div>
+
+      {/* Status filter tabs */}
+      <div className="flex items-center gap-1 mb-4">
+        {([
+          { key: '', label: 'All', count: drivers.length },
+          { key: 'available', label: 'Available', count: drivers.filter(d => d.status === 'available').length },
+          { key: 'on_route', label: 'On Route', count: drivers.filter(d => d.status === 'on_route').length },
+          { key: 'offline', label: 'Offline', count: drivers.filter(d => d.status === 'offline').length },
+        ] as const).map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setStatusFilter(tab.key)}
+            className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
+              statusFilter === tab.key
+                ? 'bg-[#0F4C81] text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {tab.label}
+            {tab.count > 0 && (
+              <span className={`ml-1.5 text-[10px] ${statusFilter === tab.key ? 'text-blue-200' : 'text-gray-400'}`}>
+                {tab.count}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
 
       {loading ? (
@@ -220,6 +257,11 @@ export default function DriversPage() {
                       </div>
                       {driver.drugCapable && (
                         <span className="text-xs bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full hidden sm:inline">Rx</span>
+                      )}
+                      {isStale48h(driver) && (
+                        <span className="flex items-center gap-0.5 text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded-full hidden sm:inline-flex" title="No GPS ping in 48+ hours">
+                          <AlertTriangle size={10} />48h+
+                        </span>
                       )}
                     </div>
                   </td>

@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { FormField, SelectField } from '@/components/ui/FormField';
-import { ArrowLeft, Award, CheckCircle2, XCircle, TrendingUp, Pencil } from 'lucide-react';
+import { ArrowLeft, Award, CheckCircle2, XCircle, TrendingUp, Pencil, ExternalLink } from 'lucide-react';
 
 interface PerformanceData {
   driverId: string;
@@ -244,7 +244,15 @@ export default function DriverDetailPage() {
 
         {/* Recent activity */}
         <div className="bg-white rounded-xl border border-gray-100 p-5">
-          <h3 className="text-sm font-semibold text-gray-700 mb-4">Recent Activity</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-gray-700">Recent Activity</h3>
+            <button
+              onClick={() => router.push(`/dashboard/stops?driverId=${driverId}`)}
+              className="flex items-center gap-1 text-xs text-[#0F4C81] hover:underline"
+            >
+              View all stops <ExternalLink size={11} />
+            </button>
+          </div>
           {recentStops.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-8">No recent stops found.</p>
           ) : (
