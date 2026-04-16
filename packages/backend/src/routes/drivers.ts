@@ -33,6 +33,11 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin', 'driver'),
   }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
+    // Drivers may only view their own profile
+    const jwtUser = (req as any).user;
+    if (jwtUser?.role === 'driver' && jwtUser?.driverId !== driverId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
     const [driver] = await db
       .select({
         id: drivers.id, orgId: drivers.orgId, name: drivers.name,
@@ -54,7 +59,10 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
       name: string; email: string; phone: string; password: string;
       drugCapable?: boolean; vehicleType?: 'car' | 'van' | 'bicycle';
     };
-    if (body.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
+    if (!body.name?.trim()) return reply.code(400).send({ error: 'Name is required' });
+    if (!body.email?.trim()) return reply.code(400).send({ error: 'Email is required' });
+    if (!body.password || body.password.length < 8) return reply.code(400).send({ error: 'Password must be at least 8 characters' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
       return reply.code(400).send({ error: 'Invalid email address' });
     }
     const passwordHash = await hashPassword(body.password);
@@ -99,8 +107,15 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
 
   app.patch('/:driverId', { preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin') }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
-    const body = req.body as { name?: string; phone?: string; vehicleType?: 'car' | 'van' | 'bicycle'; drugCapable?: boolean };
-    const [updated] = await db.update(drivers).set(body)
+    const raw = req.body as Record<string, unknown>;
+    // Whitelist: only allow safe, non-credential fields to prevent injection of passwordHash/email/status/deletedAt
+    const updates: { name?: string; phone?: string; vehicleType?: 'car' | 'van' | 'bicycle'; drugCapable?: boolean } = {};
+    if (typeof raw.name === 'string' && raw.name.trim()) updates.name = raw.name.trim();
+    if (typeof raw.phone === 'string') updates.phone = raw.phone.trim();
+    if (['car', 'van', 'bicycle'].includes(raw.vehicleType as string)) updates.vehicleType = raw.vehicleType as 'car' | 'van' | 'bicycle';
+    if (typeof raw.drugCapable === 'boolean') updates.drugCapable = raw.drugCapable;
+    if (Object.keys(updates).length === 0) return reply.code(400).send({ error: 'No valid fields to update' });
+    const [updated] = await db.update(drivers).set(updates)
       .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId)))
       .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
