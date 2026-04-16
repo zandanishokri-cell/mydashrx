@@ -94,11 +94,12 @@ function Badge({ role }: { role: Role }) {
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${checked ? 'bg-[#0F4C81]' : 'bg-gray-200'}`}
+      disabled={disabled}
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${checked ? 'bg-[#0F4C81]' : 'bg-gray-200'}`}
     >
       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
     </button>
@@ -261,7 +262,7 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
       setInvite({ name: '', email: '', role: 'dispatcher', depotIds: [] });
     } catch (e: any) {
       setInviteError(
-        e.message?.toLowerCase().includes('already exists')
+        e.status === 409
           ? 'A user with this email already exists in this organization'
           : 'Failed to invite user. Please try again.'
       );
@@ -743,8 +744,12 @@ function NotificationsTab({ orgId }: { orgId: string }) {
 
   useEffect(() => { load(); }, [load]);
 
+  const [savingKeys, setSavingKeys] = useState<Set<ServerNotifKey>>(new Set());
+
   const toggle = async (key: ServerNotifKey) => {
+    if (savingKeys.has(key)) return; // prevent concurrent in-flight for same key
     const prev = prefs[key];
+    setSavingKeys(s => new Set([...s, key]));
     setPrefs(p => ({ ...p, [key]: !prev })); // optimistic
     setSaveError('');
     try {
@@ -752,6 +757,8 @@ function NotificationsTab({ orgId }: { orgId: string }) {
     } catch {
       setPrefs(p => ({ ...p, [key]: prev })); // rollback
       setSaveError('Failed to save preference — please try again');
+    } finally {
+      setSavingKeys(s => { const n = new Set(s); n.delete(key); return n; });
     }
   };
 
@@ -779,7 +786,7 @@ function NotificationsTab({ orgId }: { orgId: string }) {
               <p className="text-sm text-gray-700 font-medium">{label}</p>
               <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
             </div>
-            <Toggle checked={prefs[key]} onChange={() => toggle(key)} />
+            <Toggle checked={prefs[key]} onChange={() => toggle(key)} disabled={savingKeys.has(key)} />
           </div>
         ))}
       </div>

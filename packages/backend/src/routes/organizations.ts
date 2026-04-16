@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import crypto from 'crypto';
 import { db } from '../db/connection.js';
 import { organizations, users, drivers } from '../db/schema.js';
 import { eq, isNull, and } from 'drizzle-orm';
@@ -86,9 +87,13 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
   // PATCH /orgs/:orgId/users/:userId
   app.patch('/:orgId/users/:userId', { preHandler: requireRole('super_admin', 'pharmacy_admin') }, async (req, reply) => {
     const { orgId, userId } = req.params as { orgId: string; userId: string };
-    const user = req.user as { orgId: string; role: string };
-    if (user.role !== 'super_admin' && user.orgId !== orgId) {
+    const caller = req.user as { id: string; orgId: string; role: string };
+    if (caller.role !== 'super_admin' && caller.orgId !== orgId) {
       return reply.code(403).send({ error: 'Forbidden' });
+    }
+    // Prevent self-role-change via API (UI hides pencil but API must enforce too)
+    if (caller.id === userId) {
+      return reply.code(403).send({ error: 'Cannot change your own role' });
     }
     const body = req.body as Partial<{ name: string; role: string; depotIds: string[] }>;
     const updates: Record<string, unknown> = {};
@@ -99,8 +104,20 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ error: `Invalid role. Must be one of: ${ASSIGNABLE_ROLES.join(', ')}` });
       }
       // pharmacy_admin cannot assign pharmacy_admin role (only super_admin can promote to admin)
-      if (user.role === 'pharmacy_admin' && body.role === 'pharmacy_admin') {
+      if (caller.role === 'pharmacy_admin' && body.role === 'pharmacy_admin') {
         return reply.code(403).send({ error: 'Insufficient permissions to assign this role' });
+      }
+      // Enforce driver limit when promoting to driver role
+      if (body.role === 'driver') {
+        const driverLimitCheck = await checkDriverLimit(orgId);
+        if (!driverLimitCheck.allowed) {
+          return reply.code(402).send({
+            error: 'Driver limit reached',
+            message: `Your plan allows ${driverLimitCheck.limit} active drivers. You have ${driverLimitCheck.current}. Upgrade to add more drivers.`,
+            current: driverLimitCheck.current,
+            limit: driverLimitCheck.limit,
+          });
+        }
       }
       updates.role = body.role;
     }
@@ -161,7 +178,20 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       .limit(1);
     if (existing) return reply.code(409).send({ error: 'User with this email already exists in the organization' });
 
-    const tempPassword = Math.random().toString(36).slice(2, 10);
+    // Check driver limit BEFORE creating user row to prevent split-brain state
+    if (body.role === 'driver') {
+      const driverLimitCheck = await checkDriverLimit(orgId);
+      if (!driverLimitCheck.allowed) {
+        return reply.code(402).send({
+          error: 'Driver limit reached',
+          message: `Your plan allows ${driverLimitCheck.limit} active drivers. You have ${driverLimitCheck.current}. Upgrade to add more drivers.`,
+          current: driverLimitCheck.current,
+          limit: driverLimitCheck.limit,
+        });
+      }
+    }
+
+    const tempPassword = crypto.randomBytes(6).toString('base64url');
     const passwordHash = await bcrypt.hash(tempPassword, 10);
 
     const [newUser] = await db
@@ -179,15 +209,6 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
 
     let driverId: string | undefined;
     if (body.role === 'driver') {
-      const driverLimitCheck = await checkDriverLimit(orgId);
-      if (!driverLimitCheck.allowed) {
-        return reply.code(402).send({
-          error: 'Driver limit reached',
-          message: `Your plan allows ${driverLimitCheck.limit} active drivers. You have ${driverLimitCheck.current}. Upgrade to add more drivers.`,
-          current: driverLimitCheck.current,
-          limit: driverLimitCheck.limit,
-        });
-      }
       const [driverRecord] = await db.insert(drivers).values({
         orgId,
         name: body.name,
