@@ -45,7 +45,11 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     }
     const body = req.body as Partial<{ name: string; timezone: string }>;
     const updates: Partial<{ name: string; timezone: string }> = {};
-    if (body.name !== undefined) updates.name = body.name;
+    if (body.name !== undefined) {
+      const trimmed = body.name.trim();
+      if (!trimmed) return reply.code(400).send({ error: 'Organization name cannot be empty' });
+      updates.name = trimmed;
+    }
     if (body.timezone !== undefined) updates.timezone = body.timezone;
     const [updated] = await db
       .update(organizations)

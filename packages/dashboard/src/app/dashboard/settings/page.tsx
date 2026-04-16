@@ -61,21 +61,14 @@ const ROLE_COLORS: Record<Role, string> = {
   pharmacist: 'bg-green-100 text-green-700',
 };
 
-const NOTIF_KEYS = [
-  { key: 'failedDeliveries', label: 'Email alerts for failed deliveries' },
-  { key: 'dailySummary', label: 'Daily summary report' },
-  { key: 'newOrders', label: 'New pharmacy order notifications' },
+const SERVER_NOTIF_KEYS = [
+  { key: 'route_completed', label: 'Route completed emails', desc: 'When all stops on a route are finished' },
+  { key: 'stop_failed',     label: 'Failed delivery alerts', desc: 'When a stop is marked failed' },
+  { key: 'stop_assigned',   label: 'New stop assignments',   desc: 'When a stop is assigned to a route' },
 ] as const;
 
-type NotifKey = typeof NOTIF_KEYS[number]['key'];
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-const loadNotifPrefs = (): Record<NotifKey, boolean> => {
-  try {
-    const raw = localStorage.getItem('notifPrefs');
-    return raw ? JSON.parse(raw) : { failedDeliveries: true, dailySummary: false, newOrders: true };
-  } catch { return { failedDeliveries: true, dailySummary: false, newOrders: true }; }
-};
+type ServerNotifKey = typeof SERVER_NOTIF_KEYS[number]['key'];
+type ServerPrefs = Record<ServerNotifKey, boolean>;
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
@@ -724,29 +717,66 @@ function DepotsTab({ orgId }: { orgId: string }) {
 }
 
 // ─── Tab: Notifications ───────────────────────────────────────────────────────
-function NotificationsTab() {
-  const [prefs, setPrefs] = useState<Record<NotifKey, boolean>>(loadNotifPrefs);
+const DEFAULT_SERVER_PREFS: ServerPrefs = { route_completed: true, stop_failed: true, stop_assigned: true };
 
-  const toggle = (key: NotifKey) => {
-    setPrefs(prev => {
-      const next = { ...prev, [key]: !prev[key] };
-      localStorage.setItem('notifPrefs', JSON.stringify(next));
-      return next;
-    });
+function NotificationsTab({ orgId }: { orgId: string }) {
+  const [prefs, setPrefs] = useState<ServerPrefs>(DEFAULT_SERVER_PREFS);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [saveError, setSaveError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true); setLoadError(false);
+    api.get<ServerPrefs>(`/orgs/${orgId}/users/me/preferences`)
+      .then(data => setPrefs({ ...DEFAULT_SERVER_PREFS, ...data }))
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false));
+  }, [orgId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = async (key: ServerNotifKey) => {
+    const prev = prefs[key];
+    setPrefs(p => ({ ...p, [key]: !prev })); // optimistic
+    setSaveError('');
+    try {
+      await api.patch<ServerPrefs>(`/orgs/${orgId}/users/me/preferences`, { [key]: !prev });
+    } catch {
+      setPrefs(p => ({ ...p, [key]: prev })); // rollback
+      setSaveError('Failed to save preference — please try again');
+    }
   };
+
+  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-gray-400" size={24} /></div>;
+
+  if (loadError) return (
+    <div className="flex flex-col items-center justify-center py-20 gap-3">
+      <AlertCircle className="text-red-400" size={24} />
+      <p className="text-sm text-gray-500">Failed to load notification preferences</p>
+      <button onClick={load} className="text-sm text-[#0F4C81] hover:underline">Retry</button>
+    </div>
+  );
 
   return (
     <div className="max-w-xl">
+      {saveError && (
+        <div className="flex items-center gap-2 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <AlertCircle size={14} />{saveError}
+        </div>
+      )}
       <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
-        {NOTIF_KEYS.map(({ key, label }) => (
-          <div key={key} className="flex items-center justify-between px-5 py-4">
-            <span className="text-sm text-gray-700">{label}</span>
+        {SERVER_NOTIF_KEYS.map(({ key, label, desc }) => (
+          <div key={key} className="flex items-center justify-between px-5 py-4 gap-4">
+            <div>
+              <p className="text-sm text-gray-700 font-medium">{label}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
+            </div>
             <Toggle checked={prefs[key]} onChange={() => toggle(key)} />
           </div>
         ))}
       </div>
       <p className="mt-4 text-xs text-gray-400">
-        Configure automation rules in the <a href="/dashboard/automation" className="text-[#0F4C81] hover:underline">Automation</a> section for SMS/email triggers.
+        These control email notifications sent to your account. Configure SMS/automation triggers in the <a href="/dashboard/automation" className="text-[#0F4C81] hover:underline">Automation</a> section.
       </p>
     </div>
   );
@@ -786,7 +816,7 @@ export default function SettingsPage() {
       {tab === 'org' && <OrgTab orgId={orgId} />}
       {tab === 'team' && <TeamTab orgId={orgId} currentUserId={userId} />}
       {tab === 'depots' && <DepotsTab orgId={orgId} />}
-      {tab === 'notifications' && <NotificationsTab />}
+      {tab === 'notifications' && <NotificationsTab orgId={orgId} />}
     </div>
   );
 }
