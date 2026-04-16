@@ -210,6 +210,7 @@ export default function MapPage() {
               drivers={driverMarkers}
               stops={routeStops}
               highlightedDriverId={highlightedDriverId}
+              depotLatLng={null}
               onMarkerClick={(id) => setHighlightedDriverId((prev) => (prev === id ? null : id))}
             />
           )}

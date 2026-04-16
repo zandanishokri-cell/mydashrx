@@ -26,6 +26,7 @@ interface Props {
   center?: [number, number];
   zoom?: number;
   highlightedDriverId?: string | null;
+  depotLatLng?: [number, number] | null;
   onMarkerClick?: (driverId: string) => void;
 }
 
@@ -65,12 +66,14 @@ export function LiveMap({
   center = [42.3314, -83.0458],
   zoom = 11,
   highlightedDriverId = null,
+  depotLatLng = null,
   onMarkerClick,
 }: Props) {
   const mapRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<any[]>([]);
   const hasFitRef = useRef(false);
+  const polylineRef = useRef<any>(null);
   const [mapReady, setMapReady] = useState(false); // signals map init complete
 
   useEffect(() => {
@@ -98,12 +101,15 @@ export function LiveMap({
     return () => {
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
       markersRef.current = []; // prevent stale refs on remount
+      if (polylineRef.current) { polylineRef.current = null; } // map removed, ref cleanup only
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!mapRef.current) return;
     import('leaflet').then((L) => {
+      // Clear previous polyline
+      if (polylineRef.current) { polylineRef.current.remove(); polylineRef.current = null; }
       markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
 
@@ -139,6 +145,20 @@ export function LiveMap({
           .bindPopup(`<strong>${stop.recipientName}</strong><br>${stop.address}<br>Status: ${stop.status}`);
       });
 
+      // Draw route polyline connecting stops in sequence order
+      if (stops.length > 1) {
+        const sortedStops = [...stops].sort((a, b) => (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0));
+        const points: [number, number][] = depotLatLng
+          ? [depotLatLng, ...sortedStops.map((s) => [s.lat, s.lng] as [number, number])]
+          : sortedStops.map((s) => [s.lat, s.lng] as [number, number]);
+        polylineRef.current = L.polyline(points, {
+          color: '#0F4C81',
+          weight: 2,
+          opacity: 0.5,
+          dashArray: '6, 6',
+        }).addTo(mapRef.current);
+      }
+
       // Initial fit — only once when the first batch of data arrives; subsequent
       // data refreshes must NOT re-fit (would reset zoom/pan on every 15s poll)
       const allPoints = [
@@ -150,7 +170,7 @@ export function LiveMap({
         hasFitRef.current = true;
       }
     });
-  }, [mapReady, drivers, stops, highlightedDriverId, onMarkerClick]);
+  }, [mapReady, drivers, stops, highlightedDriverId, depotLatLng, onMarkerClick]);
 
   // When a driver is selected, pan to them so the user sees their route
   useEffect(() => {
