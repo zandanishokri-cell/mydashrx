@@ -1,13 +1,13 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, CheckCircle, XCircle, Plus, Settings } from 'lucide-react';
+import { Bell, CheckCircle, XCircle, Plus, Settings, AlertTriangle } from 'lucide-react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 
 type NotifEvent = {
   id: string;
-  type: 'route_completed' | 'stop_failed' | 'stop_assigned';
+  type: 'route_completed' | 'stop_failed' | 'stop_assigned' | 'usage_alert';
   title: string;
   body: string;
   timestamp: string;
@@ -17,6 +17,11 @@ type NotifEvent = {
 const eventIcon = (type: NotifEvent['type']) => {
   if (type === 'route_completed') return <CheckCircle size={14} className="text-emerald-500 shrink-0 mt-0.5" />;
   if (type === 'stop_failed') return <XCircle size={14} className="text-red-500 shrink-0 mt-0.5" />;
+  if (type === 'usage_alert') return (
+    <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+      <AlertTriangle size={14} className="text-amber-600" />
+    </div>
+  );
   return <Plus size={14} className="text-blue-500 shrink-0 mt-0.5" />;
 };
 

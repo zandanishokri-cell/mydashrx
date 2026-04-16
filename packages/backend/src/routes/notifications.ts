@@ -3,15 +3,61 @@ import { db } from '../db/connection.js';
 import { stops, routes, plans, drivers, users } from '../db/schema.js';
 import { eq, and, isNull, isNotNull, gte, inArray, or, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { checkStopLimit, checkDriverLimit } from '../utils/usageLimits.js';
 
 type NotifEvent = {
   id: string;
-  type: 'route_completed' | 'stop_failed' | 'stop_assigned';
+  type: 'route_completed' | 'stop_failed' | 'stop_assigned' | 'usage_alert';
   title: string;
   body: string;
   timestamp: string;
   link: string | null;
 };
+
+async function getUsageAlert(orgId: string): Promise<NotifEvent | null> {
+  const [stopUsage, driverUsage] = await Promise.all([
+    checkStopLimit(orgId),
+    checkDriverLimit(orgId),
+  ]);
+
+  const stopPct = stopUsage.limit ? stopUsage.current / stopUsage.limit : 0;
+  const driverPct = driverUsage.limit ? driverUsage.current / driverUsage.limit : 0;
+  const ts = new Date().toISOString();
+
+  if (stopPct >= 1.0) return {
+    id: `usage_alert_stops_${orgId}`,
+    type: 'usage_alert',
+    title: 'Monthly stop limit reached',
+    body: `You've used all ${stopUsage.limit} stops for this month. Upgrade to add more.`,
+    timestamp: ts,
+    link: '/dashboard/billing',
+  };
+  if (driverPct >= 1.0) return {
+    id: `usage_alert_drivers_${orgId}`,
+    type: 'usage_alert',
+    title: 'Driver limit reached',
+    body: `You have ${driverUsage.current} of ${driverUsage.limit} drivers. Upgrade to add more.`,
+    timestamp: ts,
+    link: '/dashboard/billing',
+  };
+  if (stopPct >= 0.8) return {
+    id: `usage_alert_stops_${orgId}`,
+    type: 'usage_alert',
+    title: 'Approaching stop limit',
+    body: `You've used ${stopUsage.current} of ${stopUsage.limit} monthly stops (${Math.round(stopPct * 100)}%). Consider upgrading.`,
+    timestamp: ts,
+    link: '/dashboard/billing',
+  };
+  if (driverPct >= 0.8) return {
+    id: `usage_alert_drivers_${orgId}`,
+    type: 'usage_alert',
+    title: 'Approaching driver limit',
+    body: `You have ${driverUsage.current} of ${driverUsage.limit} drivers (${Math.round(driverPct * 100)}%). Consider upgrading.`,
+    timestamp: ts,
+    link: '/dashboard/billing',
+  };
+  return null;
+}
 
 export const notificationRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/notifications
@@ -134,7 +180,11 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const filtered = events.filter(e => prefs[e.type] !== false);
+    // Usage alert — fire once per check if org is at 80%+ of plan limit
+    const usageAlert = await getUsageAlert(orgId);
+    if (usageAlert) events.push(usageAlert);
+
+    const filtered = events.filter(e => e.type === 'usage_alert' || prefs[e.type as keyof typeof prefs] !== false);
     const sorted = filtered
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       .slice(0, 20);

@@ -471,13 +471,6 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       status: 'pending',
     }).returning();
 
-    // Proactive usage alert at 80% threshold (fire-and-forget, needs wiring to in-app notification system)
-    checkStopLimit(orgId).then(usage => {
-      if (usage.limit && usage.current / usage.limit >= 0.8 && usage.current / usage.limit < 1.0) {
-        console.info(`[usage-alert] Org ${orgId}: ${usage.current}/${usage.limit} stops this month (${Math.round(usage.current / usage.limit * 100)}%)`);
-      }
-    }).catch(() => {});
-
     return reply.code(201).send(stop);
   });
 };
