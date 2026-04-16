@@ -187,8 +187,11 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/orders/:stopId', {
     preHandler: requireRole('pharmacist'),
   }, async (req, reply) => {
+    const user = req.user as { sub: string; orgId: string };
     const { stopId } = req.params as { stopId: string };
-    const [stop] = await db.select().from(stops).where(eq(stops.id, stopId)).limit(1);
+    const [stop] = await db.select().from(stops)
+      .where(and(eq(stops.id, stopId), eq(stops.orgId, user.orgId), isNull(stops.deletedAt)))
+      .limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
     if (stop.status !== 'pending') return reply.code(400).send({ error: 'Can only cancel pending stops' });
     await db.update(stops).set({ deletedAt: new Date() }).where(eq(stops.id, stopId));

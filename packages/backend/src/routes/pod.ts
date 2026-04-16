@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { proofOfDeliveries, stops, automationLog } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { proofOfDeliveries, stops, routes } from '../db/schema.js';
+import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { uploadBuffer } from '../services/storage.js';
 
@@ -10,9 +10,14 @@ const CS_PATTERNS = /controlled|schedule|c[2-5]\b|cs\b/i;
 export const podRoutes: FastifyPluginAsync = async (app) => {
   // GET /stops/:stopId/pod/cs-required
   app.get('/cs-required', { preHandler: requireRole('driver') }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
     const { stopId } = req.params as { stopId: string };
     const [stop] = await db.select().from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Stop not found' });
+    const [route] = await db.select({ driverId: routes.driverId })
+      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+    if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
     const schedules: string[] = [];
     // Check dedicated column first
@@ -34,6 +39,14 @@ export const podRoutes: FastifyPluginAsync = async (app) => {
     const { stopId } = req.params as { stopId: string };
     const user = req.user as { sub: string; driverId?: string };
     const driverId = user.driverId ?? user.sub;
+
+    // Verify driver owns this stop's route
+    const [stopCheck] = await db.select({ id: stops.id, routeId: stops.routeId })
+      .from(stops).where(eq(stops.id, stopId)).limit(1);
+    if (!stopCheck) return reply.code(404).send({ error: 'Stop not found' });
+    const [routeCheck] = await db.select({ driverId: routes.driverId })
+      .from(routes).where(and(eq(routes.id, stopCheck.routeId), isNull(routes.deletedAt))).limit(1);
+    if (!routeCheck || routeCheck.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
     const body = req.body as {
       packageCount: number;
@@ -94,7 +107,15 @@ export const podRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /stops/:stopId/pod/photo — upload photo to existing POD
   app.post('/photo', { preHandler: requireRole('driver') }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
     const { stopId } = req.params as { stopId: string };
+    const [stopCheck] = await db.select({ id: stops.id, routeId: stops.routeId })
+      .from(stops).where(eq(stops.id, stopId)).limit(1);
+    if (!stopCheck) return reply.code(404).send({ error: 'Not found' });
+    const [routeCheck] = await db.select({ driverId: routes.driverId })
+      .from(routes).where(and(eq(routes.id, stopCheck.routeId), isNull(routes.deletedAt))).limit(1);
+    if (!routeCheck || routeCheck.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     const data = await req.file();
     if (!data) return reply.code(400).send({ error: 'No file uploaded' });
 
@@ -119,7 +140,12 @@ export const podRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
+    const user = req.user as { orgId: string };
     const { stopId } = req.params as { stopId: string };
+    // Verify stop belongs to this user's org before serving PHI
+    const [stop] = await db.select({ orgId: stops.orgId })
+      .from(stops).where(eq(stops.id, stopId)).limit(1);
+    if (!stop || stop.orgId !== user.orgId) return reply.code(404).send({ error: 'No POD found for this stop' });
     const [pod] = await db.select().from(proofOfDeliveries).where(eq(proofOfDeliveries.stopId, stopId)).limit(1);
     if (!pod) return reply.code(404).send({ error: 'No POD found for this stop' });
     return pod;
