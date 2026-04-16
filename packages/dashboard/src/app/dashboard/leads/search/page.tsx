@@ -87,26 +87,16 @@ export default function LeadSearchPage() {
     if (!user || selected.size === 0) return;
     setImporting(true);
     const toImport = results.filter(r => selected.has(r.googlePlaceId) && !r.alreadyImported);
-    let count = 0;
-    for (const place of toImport) {
-      try {
-        await api.post(`/orgs/${user.orgId}/leads`, {
-          name: place.name,
-          address: place.address,
-          city: place.city,
-          state: place.state,
-          zip: place.zip,
-          phone: place.phone,
-          website: place.website,
-          googlePlaceId: place.googlePlaceId,
-          rating: place.rating,
-          reviewCount: place.reviewCount,
-          score: place.score,
-          sourceData: place,
-        });
-        count++;
-      } catch { /* skip individual failures */ }
-    }
+    const results2 = await Promise.allSettled(
+      toImport.map(place => api.post(`/orgs/${user.orgId}/leads`, {
+        name: place.name, address: place.address, city: place.city,
+        state: place.state, zip: place.zip, phone: place.phone,
+        website: place.website, googlePlaceId: place.googlePlaceId,
+        rating: place.rating, reviewCount: place.reviewCount,
+        score: place.score, sourceData: place,
+      }))
+    );
+    const count = results2.filter(r => r.status === 'fulfilled').length;
     setImporting(false);
     // Mark imported
     setResults(prev => prev.map(r => selected.has(r.googlePlaceId) ? { ...r, alreadyImported: true } : r));

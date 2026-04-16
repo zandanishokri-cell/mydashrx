@@ -47,6 +47,7 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
   const [lead, setLead] = useState<Lead | null>(null);
   const [outreach, setOutreach] = useState<OutreachEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState('');
@@ -75,7 +76,15 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
       setStatus(data.lead.status);
       setTags(data.lead.tags ?? []);
       setFollowUp(data.lead.nextFollowUp ? data.lead.nextFollowUp.split('T')[0] : '');
-    } catch { router.push('/dashboard/leads'); }
+      setLoadError(false);
+    } catch (err: any) {
+      // Only redirect on a true 404; show retry card for network/server errors
+      if (err?.message?.includes('404') || err?.status === 404 || err?.statusCode === 404) {
+        router.push('/dashboard/leads');
+      } else {
+        setLoadError(true);
+      }
+    }
     finally { setLoading(false); }
   }, [user, leadId, router]);
 
@@ -88,13 +97,16 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
       const updated = await api.patch<Lead>(`/orgs/${user.orgId}/leads/${lead.id}`, updates);
       setLead(updated);
       showToast('Saved');
-    } catch { showToast('Save failed'); }
-    finally { setSaving(false); }
+    } catch (err) {
+      showToast('Save failed');
+      throw err; // re-throw so callers can rollback optimistic UI
+    } finally { setSaving(false); }
   };
 
   const handleStatusChange = (s: string) => {
+    const prev = status;
     setStatus(s);
-    save({ status: s });
+    save({ status: s }).catch(() => setStatus(prev)); // rollback on failure
   };
 
   const handleNotesSave = () => save({ notes });
@@ -144,6 +156,14 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
       </div>
     );
   }
+
+  if (loadError) return (
+    <div className="p-6 text-center">
+      <p className="text-gray-700 font-medium mb-1">Failed to load lead profile</p>
+      <p className="text-gray-400 text-sm mb-4">Check your connection and try again.</p>
+      <button onClick={load} className="text-sm bg-[#0F4C81] text-white px-4 py-2 rounded-lg hover:bg-[#0a3d6b]">Retry</button>
+    </div>
+  );
 
   if (!lead) return null;
 

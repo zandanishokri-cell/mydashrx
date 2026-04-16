@@ -97,9 +97,12 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     const conditions = [eq(leadProspects.orgId, orgId), isNull(leadProspects.deletedAt)];
     if (status) conditions.push(eq(leadProspects.status, status as any));
     if (city) conditions.push(ilike(leadProspects.city, `%${city}%`));
-    if (search) conditions.push(
-      or(ilike(leadProspects.name, `%${search}%`), ilike(leadProspects.city, `%${search}%`))!
-    );
+    if (search) {
+      const safe = search.replace(/[%_\\]/g, '\\$&');
+      conditions.push(
+        or(ilike(leadProspects.name, `%${safe}%`), ilike(leadProspects.city, `%${safe}%`))!
+      );
+    }
 
     const where = and(...conditions);
 
