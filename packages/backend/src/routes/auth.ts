@@ -15,8 +15,9 @@ const registerSchema = z.object({
   name: z.string().min(1).max(100),
   email: z.string().email(),
   password: z.string().min(8),
-  role: z.enum(['driver', 'pharmacist']),
-  depotId: z.string().uuid().optional(), // required for pharmacist
+  // Only drivers may self-register. Pharmacists must be invited via Settings → Team.
+  role: z.literal('driver'),
+  depotId: z.string().uuid().optional(),
 });
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
@@ -59,10 +60,6 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request' });
     const { name, email, password, role, depotId } = parsed.data;
-
-    if (role === 'pharmacist' && !depotId) {
-      return reply.code(400).send({ error: 'depotId is required for pharmacy accounts' });
-    }
 
     const existing = await findUserByEmail(email);
     // Return 409 without confirming email existence (HIPAA: prevent enumeration)
