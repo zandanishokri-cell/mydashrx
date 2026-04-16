@@ -63,7 +63,8 @@ export default function LeadSearchPage() {
       setResults(data.results);
       setSearched(true);
     } catch (err: any) {
-      setError(err.message ?? 'Search failed');
+      const msg: string = err.message ?? 'Search failed';
+      setError(msg.includes('503') ? '__unavailable__' : msg);
     } finally {
       setLoading(false);
     }
@@ -174,9 +175,17 @@ export default function LeadSearchPage() {
       </form>
 
       {/* Error */}
-      {error && (
+      {error === '__unavailable__' ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+          <p className="font-semibold text-amber-800 text-sm mb-1">Lead Search Not Available</p>
+          <p className="text-amber-700 text-sm">Google Places API key is not configured on this server. Add leads manually from the pipeline view.</p>
+          <Link href="/dashboard/leads" className="mt-3 inline-block text-[#0F4C81] text-sm font-medium hover:underline">
+            ← Go to Leads Pipeline
+          </Link>
+        </div>
+      ) : error ? (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm">{error}</div>
-      )}
+      ) : null}
 
       {/* Results */}
       {searched && (

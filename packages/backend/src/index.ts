@@ -159,6 +159,19 @@ try {
   process.exit(1);
 }
 
+// Startup config warnings — log which optional features are unconfigured
+const optionalEnvs: [string, string][] = [
+  ['GOOGLE_PLACES_API_KEY', 'Lead Finder search'],
+  ['RESEND_API_KEY', 'Email outreach'],
+  ['SENDER_DOMAIN', 'Email outreach sender'],
+  ['STRIPE_WEBHOOK_SECRET', 'Billing webhooks'],
+  ['TWILIO_ACCOUNT_SID', 'SMS/IVR'],
+  ['TWILIO_AUTH_TOKEN', 'SMS/IVR'],
+];
+for (const [key, feature] of optionalEnvs) {
+  if (!process.env[key]) console.warn(`[CONFIG] ${key} not set — ${feature} will be unavailable`);
+}
+
 // Auto-seed in background after server is live (non-blocking)
 setImmediate(async () => {
   try {

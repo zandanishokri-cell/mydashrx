@@ -212,7 +212,7 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     if (!city) return reply.code(400).send({ error: 'city is required' });
 
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
-    if (!apiKey) return reply.code(500).send({ error: 'Google Places API key not configured' });
+    if (!apiKey) return reply.code(503).send({ error: 'Google Places API key not configured' });
 
     const searchQuery = encodeURIComponent(query ?? `pharmacy in ${city}, ${state}`);
     const radiusMeters = (radius ?? 10) * 1609;
@@ -282,7 +282,7 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
 
     const resendKey = process.env.RESEND_API_KEY;
     const senderDomain = process.env.SENDER_DOMAIN;
-    if (!resendKey || !senderDomain) return reply.code(500).send({ error: 'Email service not configured' });
+    if (!resendKey || !senderDomain) return reply.code(503).send({ error: 'Email service not configured' });
 
     const payload = req.user as { sub?: string };
     const sentBy = payload?.sub ?? null;
