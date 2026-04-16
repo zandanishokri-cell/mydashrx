@@ -427,6 +427,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       controlledSubstance?: boolean;
       requiresSignature?: boolean;
       requiresAgeVerification?: boolean;
+      requiresPhoto?: boolean;
       windowStart?: string;
       windowEnd?: string;
       deliveryNotes?: string;
@@ -450,6 +451,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       controlledSubstance: body.controlledSubstance ?? false,
       requiresSignature: body.requiresSignature ?? true,
       requiresAgeVerification: body.requiresAgeVerification ?? false,
+      requiresPhoto: body.requiresPhoto ?? false,
       windowStart: body.windowStart ? new Date(body.windowStart) : undefined,
       windowEnd: body.windowEnd ? new Date(body.windowEnd) : undefined,
       deliveryNotes: body.deliveryNotes?.trim() || undefined,

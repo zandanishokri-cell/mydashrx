@@ -24,13 +24,14 @@ interface FormState {
   controlledSubstance: boolean;
   requiresSignature: boolean;
   requiresAgeVerification: boolean;
+  requiresPhoto: boolean;
 }
 
 const DEFAULTS: FormState = {
   recipientName: '', recipientPhone: '', recipientEmail: '', address: '', unit: '',
   rxNumbers: '', packageCount: '1', windowStart: '', windowEnd: '',
   deliveryNotes: '', requiresRefrigeration: false, controlledSubstance: false,
-  requiresSignature: true, requiresAgeVerification: false,
+  requiresSignature: true, requiresAgeVerification: false, requiresPhoto: false,
 };
 
 export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
@@ -62,10 +63,11 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
         controlledSubstance: form.controlledSubstance,
         requiresSignature: form.requiresSignature,
         requiresAgeVerification: form.requiresAgeVerification,
+        requiresPhoto: form.requiresPhoto,
       });
       onSuccess();
-    } catch (err: any) {
-      setError(err?.message?.replace(/^API \d+: /, '') || 'Failed to create stop. Please try again.');
+    } catch {
+      setError('Failed to create stop. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -179,6 +181,7 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
                 ['controlledSubstance', 'Controlled substance'],
                 ['requiresSignature', 'Signature required'],
                 ['requiresAgeVerification', 'Age verification (18+)'],
+                ['requiresPhoto', 'Delivery photo required'],
               ] as [keyof FormState, string][]).map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 cursor-pointer group">
                   <input
