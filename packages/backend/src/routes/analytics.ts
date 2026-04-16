@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers } from '../db/schema.js';
-import { eq, and, isNull, gte, lte, sql } from 'drizzle-orm';
+import { eq, and, isNull, gte, lte, sql, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
@@ -15,11 +15,20 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     const fromDate = from ? new Date(from) : new Date(Date.now() - 7 * 86400000);
     const toDate = to ? new Date(to + 'T23:59:59') : new Date();
 
+    // Depot filter: scope stops to routes belonging to the requested depot
+    const depotCondition = depotId
+      ? inArray(stops.routeId,
+          db.select({ id: routes.id }).from(routes)
+            .innerJoin(plans, and(eq(plans.id, routes.planId), eq(plans.depotId, depotId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+        )
+      : undefined;
+
     const base = and(
       eq(stops.orgId, orgId),
       isNull(stops.deletedAt),
       gte(stops.createdAt, fromDate),
       lte(stops.createdAt, toDate),
+      depotCondition,
     );
 
     // Status breakdown
@@ -97,7 +106,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     const periodMs = toDate.getTime() - fromDate.getTime();
     const prevFrom = new Date(fromDate.getTime() - periodMs);
     const prevTo = new Date(fromDate.getTime() - 1);
-    const prevBase = and(eq(stops.orgId, orgId), isNull(stops.deletedAt), gte(stops.createdAt, prevFrom), lte(stops.createdAt, prevTo));
+    const prevBase = and(eq(stops.orgId, orgId), isNull(stops.deletedAt), gte(stops.createdAt, prevFrom), lte(stops.createdAt, prevTo), depotCondition);
     const [prevCount] = await db.select({ cnt: sql<number>`count(*)::int` }).from(stops).where(prevBase);
     const prevTotal = prevCount?.cnt ?? 0;
     const weekOverWeekChange = prevTotal > 0
