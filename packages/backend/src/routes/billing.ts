@@ -99,8 +99,18 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
     const plan = PLANS[body.plan];
     if (plan.price === null) return reply.code(400).send({ error: 'Enterprise plan requires contacting sales' });
 
-    const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    const [org] = await db
+      .select({ stripeCustomerId: organizations.stripeCustomerId, stripeSubscriptionStatus: organizations.stripeSubscriptionStatus })
+      .from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Not found' });
+
+    // Prevent duplicate subscriptions — direct to portal for plan changes
+    if (org.stripeSubscriptionStatus === 'active' || org.stripeSubscriptionStatus === 'trialing') {
+      return reply.code(409).send({
+        error: 'Already subscribed',
+        message: 'You already have an active subscription. Use the billing portal to change your plan.',
+      });
+    }
 
     const PRICE_IDS: Record<string, string> = {
       growth: process.env.STRIPE_PRICE_GROWTH ?? '',
