@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { automationRules, automationLog } from '../db/schema.js';
 import { eq, and, desc, lte } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { executeRule } from '../services/automation.js';
 
 const authRoles = ['dispatcher', 'pharmacy_admin', 'super_admin'] as const;
 
@@ -36,6 +37,15 @@ const VALID_TRIGGERS = [
   'stop_completed', 'stop_failed', 'stop_status_changed',
   'driver_started_route', 'route_completed', 'stop_approaching',
 ] as const;
+
+const SAMPLE_DATA: Record<string, Record<string, string>> = {
+  stop_completed:       { patientName: 'Jane Smith', patientPhone: '+15005550006', patientEmail: 'patient@example.com', address: '123 Main St, Detroit, MI', stopStatus: 'completed', driverName: 'Marcus J.' },
+  stop_failed:          { patientName: 'Jane Smith', patientPhone: '+15005550006', patientEmail: 'patient@example.com', address: '456 Oak Ave, Ann Arbor, MI', stopStatus: 'failed', driverName: 'Marcus J.' },
+  stop_status_changed:  { patientName: 'Jane Smith', patientPhone: '+15005550006', patientEmail: 'patient@example.com', address: '789 Elm St, Dearborn, MI', stopStatus: 'arrived', driverName: 'Marcus J.' },
+  driver_started_route: { patientName: 'Jane Smith', patientPhone: '+15005550006', patientEmail: 'patient@example.com', address: '321 Pine Rd, Lansing, MI', stopStatus: 'pending', driverName: 'Marcus J.', routeId: 'test-route', driverId: 'test-driver' },
+  route_completed:      { patientName: '', patientPhone: '', patientEmail: '', address: '', driverName: 'Marcus J.', routeId: 'test-route', completedCount: '8', totalStops: '10', failedCount: '2' },
+  stop_approaching:     { patientName: 'Jane Smith', patientPhone: '+15005550006', patientEmail: 'patient@example.com', address: '654 Birch Ln, Flint, MI', stopStatus: 'pending', driverName: 'Marcus J.', stopsAway: '2', etaMin: '16' },
+};
 
 export const automationRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/automation/rules
@@ -124,6 +134,22 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
       .returning();
     if (!deleted) return reply.code(404).send({ error: 'Not found' });
     return reply.code(204).send();
+  });
+
+  // POST /orgs/:orgId/automation/rules/:ruleId/test — fire with sample data, no side effects
+  app.post('/rules/:ruleId/test', { preHandler: requireRole(...authRoles) }, async (req, reply) => {
+    const { orgId, ruleId } = req.params as { orgId: string; ruleId: string };
+    const [rule] = await db.select().from(automationRules)
+      .where(and(eq(automationRules.id, ruleId), eq(automationRules.orgId, orgId)))
+      .limit(1);
+    if (!rule) return reply.code(404).send({ error: 'Rule not found' });
+    const sampleData = SAMPLE_DATA[rule.trigger] ?? {};
+    try {
+      await executeRule(rule, { orgId, trigger: rule.trigger, resourceId: 'test-fire', data: sampleData });
+      return { ok: true, message: 'Test fired. Check SMS/email for delivery confirmation.' };
+    } catch (err) {
+      return reply.code(422).send({ ok: false, message: `Test failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
   });
 
   // GET /orgs/:orgId/automation/log

@@ -38,7 +38,7 @@ export async function fireTrigger(ctx: TriggerContext): Promise<void> {
   }
 }
 
-async function executeRule(
+export async function executeRule(
   rule: typeof automationRules.$inferSelect,
   ctx: TriggerContext,
 ): Promise<void> {

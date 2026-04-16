@@ -4,7 +4,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import {
   Zap, Plus, CheckCircle2, XCircle, Clock, RefreshCw,
-  X, ToggleLeft, ToggleRight, Loader2, Trash2, AlertCircle,
+  X, ToggleLeft, ToggleRight, Loader2, Trash2, AlertCircle, FlaskConical,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -251,6 +251,8 @@ export default function AutomationPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState('');
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
 
   const load = useCallback(async () => {
     if (!orgId) return;
@@ -309,6 +311,19 @@ export default function AutomationPage() {
       setRules(rs => rs.filter(r => r.id !== id));
     } catch { setDeleteError('Failed to delete rule. Please try again.'); }
     finally { setDeleting(null); }
+  };
+
+  const testFire = async (ruleId: string) => {
+    setTestingId(ruleId);
+    try {
+      const result = await api.post<{ ok: boolean; message: string }>(`/orgs/${orgId}/automation/rules/${ruleId}/test`, {});
+      setTestResults(r => ({ ...r, [ruleId]: result }));
+    } catch {
+      setTestResults(r => ({ ...r, [ruleId]: { ok: false, message: 'Test failed. Check credentials.' } }));
+    } finally {
+      setTestingId(null);
+      setTimeout(() => setTestResults(r => { const n = { ...r }; delete n[ruleId]; return n; }), 6000);
+    }
   };
 
   const activeCount = rules.filter(r => r.enabled).length;
@@ -410,7 +425,8 @@ export default function AutomationPage() {
         ) : (
           <div className="divide-y divide-gray-50">
             {rules.map(rule => (
-              <div key={rule.id} className="px-5 py-4 flex items-start gap-4 hover:bg-gray-50/50 transition-colors">
+              <div key={rule.id}>
+              <div className="px-5 py-4 flex items-start gap-4 hover:bg-gray-50/50 transition-colors">
                 <button
                   onClick={() => toggleRule(rule)}
                   disabled={toggling === rule.id}
@@ -445,6 +461,14 @@ export default function AutomationPage() {
                     )}
                   </div>
                   <button
+                    onClick={() => testFire(rule.id)}
+                    disabled={testingId === rule.id || !rule.enabled}
+                    title={rule.enabled ? 'Test fire with sample data' : 'Enable rule to test'}
+                    className="p-1.5 text-gray-300 hover:text-purple-500 hover:bg-purple-50 rounded-lg transition-colors disabled:opacity-40"
+                  >
+                    {testingId === rule.id ? <Loader2 size={13} className="animate-spin" /> : <FlaskConical size={13} />}
+                  </button>
+                  <button
                     onClick={() => setConfirmDeleteId(rule.id)}
                     disabled={deleting === rule.id}
                     className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
@@ -453,6 +477,15 @@ export default function AutomationPage() {
                     {deleting === rule.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                   </button>
                 </div>
+              </div>
+              {testResults[rule.id] && (
+                <div className={`mx-5 mb-3 px-3 py-2 rounded-lg text-xs flex items-center gap-2 ${
+                  testResults[rule.id].ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
+                }`}>
+                  {testResults[rule.id].ok ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                  {testResults[rule.id].message}
+                </div>
+              )}
               </div>
             ))}
           </div>
