@@ -49,67 +49,63 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     if (to) conditions.push(lte(plans.date, to));
 
     // Join to get depot/driver/plan context
-    const rows = await db
-      .select({
-        id: stops.id,
-        recipientName: stops.recipientName,
-        recipientPhone: stops.recipientPhone,
-        address: stops.address,
-        status: stops.status,
-        rxNumbers: stops.rxNumbers,
-        packageCount: stops.packageCount,
-        requiresRefrigeration: stops.requiresRefrigeration,
-        controlledSubstance: stops.controlledSubstance,
-        requiresSignature: stops.requiresSignature,
-        requiresPhoto: stops.requiresPhoto,
-        codAmount: stops.codAmount,
-        sequenceNumber: stops.sequenceNumber,
-        arrivedAt: stops.arrivedAt,
-        completedAt: stops.completedAt,
-        failureReason: stops.failureReason,
-        failureNote: stops.failureNote,
-        trackingToken: stops.trackingToken,
-        deliveryNotes: stops.deliveryNotes,
-        createdAt: stops.createdAt,
-        routeId: stops.routeId,
-        planId: routes.planId,
-        planDate: plans.date,
-        planStatus: plans.status,
-        depotId: plans.depotId,
-        depotName: depots.name,
-        driverId: routes.driverId,
-        driverName: drivers.name,
-      })
-      .from(stops)
-      .leftJoin(routes, eq(stops.routeId, routes.id))
-      .leftJoin(plans, eq(routes.planId, plans.id))
-      .leftJoin(depots, eq(plans.depotId, depots.id))
-      .leftJoin(drivers, eq(routes.driverId, drivers.id))
-      .where(and(...conditions))
-      .orderBy(sql`${stops.createdAt} DESC`)
-      .limit(limitNum)
-      .offset(offset);
+    // Add depot/driver conditions directly to SQL — post-filtering after LIMIT breaks pagination
+    if (depotId) conditions.push(sql`${depots.id} = ${depotId}`);
+    if (driverId) conditions.push(sql`${drivers.id} = ${driverId}`);
 
-    // Filter by depotId/driverId after join (drizzle doesn't support nullable join conditions easily)
-    const filtered = depotId ? rows.filter(r => r.depotId === depotId) : rows;
-    const driverFiltered = driverId ? filtered.filter(r => r.driverId === driverId) : filtered;
+    const [rows, [{ count }]] = await Promise.all([
+      db
+        .select({
+          id: stops.id,
+          recipientName: stops.recipientName,
+          recipientPhone: stops.recipientPhone,
+          address: stops.address,
+          status: stops.status,
+          rxNumbers: stops.rxNumbers,
+          packageCount: stops.packageCount,
+          requiresRefrigeration: stops.requiresRefrigeration,
+          controlledSubstance: stops.controlledSubstance,
+          requiresSignature: stops.requiresSignature,
+          requiresPhoto: stops.requiresPhoto,
+          codAmount: stops.codAmount,
+          sequenceNumber: stops.sequenceNumber,
+          arrivedAt: stops.arrivedAt,
+          completedAt: stops.completedAt,
+          failureReason: stops.failureReason,
+          failureNote: stops.failureNote,
+          trackingToken: stops.trackingToken,
+          deliveryNotes: stops.deliveryNotes,
+          createdAt: stops.createdAt,
+          routeId: stops.routeId,
+          planId: routes.planId,
+          planDate: plans.date,
+          planStatus: plans.status,
+          depotId: plans.depotId,
+          depotName: depots.name,
+          driverId: routes.driverId,
+          driverName: drivers.name,
+        })
+        .from(stops)
+        .leftJoin(routes, eq(stops.routeId, routes.id))
+        .leftJoin(plans, eq(routes.planId, plans.id))
+        .leftJoin(depots, eq(plans.depotId, depots.id))
+        .leftJoin(drivers, eq(routes.driverId, drivers.id))
+        .where(and(...conditions))
+        .orderBy(sql`${stops.createdAt} DESC`)
+        .limit(limitNum)
+        .offset(offset),
 
-    // Count total — must use the same join + conditions to get an accurate total,
-    // especially when date filters reference plans.date or depot/driver filters are active.
-    const [{ count }] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(stops)
-      .leftJoin(routes, eq(stops.routeId, routes.id))
-      .leftJoin(plans, eq(routes.planId, plans.id))
-      .leftJoin(depots, eq(plans.depotId, depots.id))
-      .leftJoin(drivers, eq(routes.driverId, drivers.id))
-      .where(and(
-        ...conditions,
-        ...(depotId ? [sql`${depots.id} = ${depotId}`] : []),
-        ...(driverId ? [sql`${drivers.id} = ${driverId}`] : []),
-      ));
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(stops)
+        .leftJoin(routes, eq(stops.routeId, routes.id))
+        .leftJoin(plans, eq(routes.planId, plans.id))
+        .leftJoin(depots, eq(plans.depotId, depots.id))
+        .leftJoin(drivers, eq(routes.driverId, drivers.id))
+        .where(and(...conditions)),
+    ]);
 
-    return { stops: driverFiltered, total: count, page: pageNum, limit: limitNum };
+    return { stops: rows, total: count, page: pageNum, limit: limitNum };
   });
 
   // GET /orgs/:orgId/stops/:stopId — full stop detail with POD and route context
