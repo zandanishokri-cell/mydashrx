@@ -120,6 +120,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
   const [showPod, setShowPod] = useState(false);
   const [showReassign, setShowReassign] = useState(false);
+  const [priorityError, setPriorityError] = useState('');
   const [planRoutes, setPlanRoutes] = useState<{ id: string; driverId: string; driverName: string }[]>([]);
   const [reassignTargetId, setReassignTargetId] = useState('');
   const [reassigning, setReassigning] = useState(false);
@@ -423,11 +424,12 @@ function StopDetailContent({ stopId }: { stopId: string }) {
                   value={stop.priority}
                   onChange={async e => {
                     const newPriority = e.target.value;
+                    setPriorityError('');
                     try {
                       await api.patch(`/orgs/${user!.orgId}/stops/${stopId}`, { priority: newPriority });
                       setStop(prev => prev ? { ...prev, priority: newPriority } : prev);
                     } catch {
-                      // non-blocking — UI will show old value if this fails
+                      setPriorityError('Failed to save priority');
                     }
                   }}
                   className="text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#0F4C81]/30"
@@ -437,6 +439,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
                   <option value="urgent">Urgent</option>
                 </select>
               </div>
+              {priorityError && <p className="text-xs text-red-500 mt-1">{priorityError}</p>}
 
           {/* Notes */}
           <div>
