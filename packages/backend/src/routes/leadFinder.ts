@@ -279,6 +279,9 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
 
     if (!lead) return reply.code(404).send({ error: 'Lead not found' });
     if (!lead.email) return reply.code(400).send({ error: 'No email on file for this lead' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email)) {
+      return reply.code(400).send({ error: 'Invalid email address on file for this lead' });
+    }
 
     const resendKey = process.env.RESEND_API_KEY;
     const senderDomain = process.env.SENDER_DOMAIN;

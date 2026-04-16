@@ -54,6 +54,9 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
       name: string; email: string; phone: string; password: string;
       drugCapable?: boolean; vehicleType?: 'car' | 'van' | 'bicycle';
     };
+    if (body.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
+      return reply.code(400).send({ error: 'Invalid email address' });
+    }
     const passwordHash = await hashPassword(body.password);
     const [driver] = await db.insert(drivers).values({
       orgId, name: body.name, email: body.email, phone: body.phone,

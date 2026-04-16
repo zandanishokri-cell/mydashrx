@@ -127,6 +127,9 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     if (!body.name || !body.email || !body.role) {
       return reply.code(400).send({ error: 'name, email, and role are required' });
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
+      return reply.code(400).send({ error: 'Invalid email address' });
+    }
 
     // Check if user already exists in org
     const [existing] = await db
