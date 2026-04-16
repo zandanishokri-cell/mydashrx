@@ -6,7 +6,7 @@ import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { SkeletonCard } from '@/components/ui/Skeleton';
-import { Package, Truck, CheckCircle, Calendar, RefreshCw, Plus, Map, Activity } from 'lucide-react';
+import { Package, Truck, CheckCircle, Calendar, RefreshCw, Plus, Map, Activity, AlertCircle } from 'lucide-react';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string | null; status: string; stopOrder: string[]; estimatedDuration: number | null; stops: Stop[]; }
@@ -38,8 +38,10 @@ export default function CommandCenter() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [driversList, setDriversList] = useState<DriverStatus[]>([]);
   const [driversLoading, setDriversLoading] = useState(true);
+  const [driversError, setDriversError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [depotId, setDepotId] = useState('');
@@ -47,18 +49,22 @@ export default function CommandCenter() {
   const today = new Date().toISOString().split('T')[0];
   const summaryTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const driversTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const plansTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadSummary = useCallback(async () => {
     if (!user) return;
     try {
-      const data = await api.get<DashboardSummary>(`/orgs/${user.orgId}/dashboard/summary`);
+      const params = new URLSearchParams();
+      if (depotId) params.set('depotId', depotId);
+      const data = await api.get<DashboardSummary>(`/orgs/${user.orgId}/dashboard/summary?${params}`);
       setSummary(data);
+      setSummaryError(false);
     } catch {
-      // non-fatal — summary cards will show fallback
+      setSummaryError(true);
     } finally {
       setSummaryLoading(false);
     }
-  }, [user]);
+  }, [user, depotId]);
 
   useEffect(() => {
     loadSummary();
@@ -70,8 +76,8 @@ export default function CommandCenter() {
     if (!user) return;
     let cancelled = false;
     api.get<{ drivers: DriverStatus[] }>(`/orgs/${user.orgId}/dashboard/drivers`)
-      .then(res => { if (!cancelled) { setDriversList(res.drivers); setDriversLoading(false); } })
-      .catch(() => { if (!cancelled) setDriversLoading(false); });
+      .then(res => { if (!cancelled) { setDriversList(res.drivers); setDriversLoading(false); setDriversError(false); } })
+      .catch(() => { if (!cancelled) { setDriversLoading(false); setDriversError(true); } });
     return () => { cancelled = true; };
   }, [user]);
 
@@ -100,7 +106,11 @@ export default function CommandCenter() {
     }
   }, [user, today, depotId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    plansTimer.current = setInterval(() => load(), 60_000);
+    return () => { if (plansTimer.current) clearInterval(plansTimer.current); };
+  }, [load]);
 
   const handleRefresh = () => { load(true); loadSummary(); loadDrivers(); };
 
@@ -180,6 +190,13 @@ export default function CommandCenter() {
       </div>
 
       {/* KPI cards */}
+      {summaryError && !summaryLoading && (
+        <div className="flex items-center gap-2 px-4 py-2 mb-3 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-700">
+          <AlertCircle size={12} />
+          <span>KPI data unavailable</span>
+          <button onClick={loadSummary} className="ml-auto underline hover:no-underline">Retry</button>
+        </div>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         {summaryLoading ? (
           Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
@@ -197,11 +214,18 @@ export default function CommandCenter() {
       </div>
 
       {/* Fleet status */}
-      {!driversLoading && driversList.length > 0 && (
+      {!driversLoading && (driversList.length > 0 || driversError) && (
         <div className="mb-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5">
             <Truck size={14} className="text-gray-400" /> Fleet Status
           </h2>
+          {driversError && (
+            <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600">
+              <AlertCircle size={14} />
+              <span>Fleet data unavailable</span>
+              <button onClick={loadDrivers} className="ml-auto text-xs underline hover:no-underline">Retry</button>
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
             {driversList.map(d => {
               const dotColor = d.status === 'on_route' ? 'bg-emerald-400' : d.status === 'available' ? 'bg-amber-400' : 'bg-gray-300';

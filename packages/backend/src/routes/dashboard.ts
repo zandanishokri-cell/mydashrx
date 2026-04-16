@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, drivers } from '../db/schema.js';
-import { eq, and, isNull, isNotNull, gte, lte, sql, inArray, desc } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, sql, inArray, desc } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
@@ -10,10 +10,9 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
+    const q = req.query as { depotId?: string };
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
 
     // Today's plans → routes → stops in a single joined query
     const todayPlans = await db
@@ -23,6 +22,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         eq(plans.orgId, orgId),
         isNull(plans.deletedAt),
         eq(plans.date, todayStart.toISOString().split('T')[0]),
+        q.depotId ? eq(plans.depotId, q.depotId) : undefined,
       ));
 
     const planIds = todayPlans.map(p => p.id);
