@@ -89,12 +89,16 @@ function PatientModal({ initial, onSave, onClose }: {
   const handleSave = async () => {
     if (!form.recipientName.trim()) { setError('Patient name is required'); return; }
     if (!form.address.trim()) { setError('Address is required'); return; }
-    if (form.schedule === 'custom' && form.customIntervalDays) {
+    if (form.schedule === 'custom') {
+      if (!form.customIntervalDays) { setError('Interval (days) is required for custom schedule'); return; }
       const n = parseInt(form.customIntervalDays);
       if (isNaN(n) || n < 1) { setError('Custom interval must be a positive number of days'); return; }
     }
     if (form.endDate && form.nextDeliveryDate && form.endDate < form.nextDeliveryDate) {
       setError('End date must be on or after the first delivery date'); return;
+    }
+    if (form.windowStartTime && form.windowEndTime && form.windowEndTime <= form.windowStartTime) {
+      setError('Window end time must be after window start time'); return;
     }
     setSaving(true);
     try { await onSave(form); } catch { setError('Save failed. Please try again.'); }

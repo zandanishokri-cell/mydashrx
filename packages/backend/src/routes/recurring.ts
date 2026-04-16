@@ -135,9 +135,20 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
       if (k in body) {
         if ((k === 'nextDeliveryDate' || k === 'endDate') && body[k]) {
           updates[k] = new Date(body[k] as string);
+        } else if ((k === 'nextDeliveryDate' || k === 'endDate') && !body[k]) {
+          // Explicit null/empty — allow clearing the date field
+          updates[k] = null;
         } else {
           updates[k] = body[k];
         }
+      }
+    }
+
+    // Validate customIntervalDays on update too
+    if ('customIntervalDays' in updates && updates.customIntervalDays != null) {
+      const days = updates.customIntervalDays as number;
+      if (days < 1 || !Number.isInteger(days)) {
+        return reply.code(400).send({ error: 'customIntervalDays must be a positive integer' });
       }
     }
 
@@ -170,7 +181,9 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     const { date, planId } = req.body as { date: string; planId?: string };
     if (!date) return reply.code(400).send({ error: 'date required' });
 
+    // Normalize to end-of-day UTC so any nextDeliveryDate time component on the same date is captured.
     const targetDate = new Date(date);
+    targetDate.setUTCHours(23, 59, 59, 999);
 
     // Find all enabled, non-deleted recurring deliveries due by targetDate
     const allDue = await db.select().from(recurringDeliveries)
@@ -181,8 +194,14 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
         lte(recurringDeliveries.nextDeliveryDate, targetDate),
       ));
 
-    // Filter out schedules that have passed their endDate
-    const due = allDue.filter(rec => !rec.endDate || rec.endDate >= targetDate);
+    // Filter out schedules that have passed their endDate.
+    // Compare date-only (start-of-day UTC) so time components don't cause off-by-one exclusions.
+    const targetDayStart = new Date(date); targetDayStart.setUTCHours(0, 0, 0, 0);
+    const due = allDue.filter(rec => {
+      if (!rec.endDate) return true;
+      const endDay = new Date(rec.endDate); endDay.setUTCHours(0, 0, 0, 0);
+      return endDay >= targetDayStart;
+    });
 
     if (due.length === 0) return { generated: 0, stops: [] };
 
@@ -245,12 +264,13 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
 
     const inserted = await db.insert(stops).values(stopValues).returning({ id: stops.id });
 
-    // Update lastDeliveryDate and nextDeliveryDate for each.
+    // Update lastDeliveryDate and nextDeliveryDate for each using start-of-day so
+    // calcNextDate arithmetic always begins from a clean midnight-UTC boundary.
     // WHERE includes orgId + deletedAt guard to prevent cross-org mutation and race with soft-delete.
     await Promise.all(due.map(rec =>
       db.update(recurringDeliveries).set({
-        lastDeliveryDate: targetDate,
-        nextDeliveryDate: calcNextDate(targetDate, rec.schedule, rec.customIntervalDays),
+        lastDeliveryDate: targetDayStart,
+        nextDeliveryDate: calcNextDate(targetDayStart, rec.schedule, rec.customIntervalDays),
       }).where(and(eq(recurringDeliveries.id, rec.id), eq(recurringDeliveries.orgId, orgId), isNull(recurringDeliveries.deletedAt)))
     ));
 
