@@ -74,8 +74,8 @@ export default function RegulatoryUpdatesPage() {
     try {
       const updated = await api.patch<RegulatoryUpdate>(`/orgs/${user.orgId}/mi-compliance/regulatory/${id}`, {});
       setUpdates(prev => prev.map(u => u.id === id ? updated : u));
-    } catch (err: any) {
-      setAckError(err?.message ?? 'Failed to acknowledge. Please try again.');
+    } catch {
+      setAckError('Failed to acknowledge. Please try again.');
     } finally { setAcknowledging(''); }
   };
 

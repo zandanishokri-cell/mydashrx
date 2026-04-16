@@ -114,9 +114,13 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Update item
+  const VALID_MI_ITEM_STATUSES = ['compliant', 'warning', 'non_compliant', 'pending'];
   app.patch('/items/:id', { preHandler: requireRole(...ADMIN_ROLES) }, async (req, reply) => {
     const { orgId, id } = req.params as { orgId: string; id: string };
     const body = req.body as { status?: string; notes?: string; dueDate?: string };
+    if (body.status !== undefined && !VALID_MI_ITEM_STATUSES.includes(body.status)) {
+      return reply.code(400).send({ error: `Invalid status. Must be one of: ${VALID_MI_ITEM_STATUSES.join(', ')}` });
+    }
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (body.status !== undefined) updates.status = body.status;
     if (body.notes !== undefined) updates.notes = body.notes;
@@ -160,9 +164,13 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Add regulatory update
+  const VALID_IMPACT_LEVELS = ['critical', 'high', 'medium', 'low'];
   app.post('/regulatory', { preHandler: requireRole(...ADMIN_ROLES) }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as { title: string; summary: string; source: string; impactLevel?: string; effectiveDate?: string; url?: string };
+    if (body.impactLevel !== undefined && !VALID_IMPACT_LEVELS.includes(body.impactLevel)) {
+      return reply.code(400).send({ error: `Invalid impactLevel. Must be one of: ${VALID_IMPACT_LEVELS.join(', ')}` });
+    }
     const [update] = await db.insert(regulatoryUpdates).values({
       orgId,
       title: body.title,

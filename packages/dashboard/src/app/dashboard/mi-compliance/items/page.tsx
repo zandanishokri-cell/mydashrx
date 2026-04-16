@@ -82,8 +82,8 @@ function ComplianceItemsContent() {
     try {
       const updated = await api.patch<ComplianceItem>(`/orgs/${user.orgId}/mi-compliance/items/${id}`, { status });
       setItems(prev => prev.map(i => i.id === id ? updated : i));
-    } catch (err: any) {
-      setActionError(err?.message ?? 'Update failed. Please try again.');
+    } catch {
+      setActionError('Update failed. Please try again.');
     } finally { setSaving(''); }
   };
 
@@ -95,8 +95,8 @@ function ComplianceItemsContent() {
       const updated = await api.patch<ComplianceItem>(`/orgs/${user.orgId}/mi-compliance/items/${id}`, { notes: editing.notes });
       setItems(prev => prev.map(i => i.id === id ? updated : i));
       setEditing(null);
-    } catch (err: any) {
-      setActionError(err?.message ?? 'Save failed. Please try again.');
+    } catch {
+      setActionError('Save failed. Please try again.');
     } finally { setSaving(''); }
   };
 
@@ -109,8 +109,8 @@ function ComplianceItemsContent() {
       setItems(prev => [...prev, created]);
       setNewItem({ category: 'maps_reporting', itemName: '', legalRef: '', notes: '' });
       setShowAdd(false);
-    } catch (err: any) {
-      setActionError(err?.message ?? 'Failed to add item. Please try again.');
+    } catch {
+      setActionError('Failed to add item. Please try again.');
     } finally { setSaving(''); }
   };
 
