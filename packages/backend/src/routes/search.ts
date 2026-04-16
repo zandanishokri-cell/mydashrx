@@ -178,7 +178,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     // Build timeline from known timestamps
     const timeline: Array<{ event: string; timestamp: string | null; meta?: string }> = [
       { event: 'Created', timestamp: row.createdAt?.toISOString() ?? null },
-      { event: 'Assigned to route', timestamp: row.routeStartedAt ? null : row.planDate ? `${row.planDate}T00:00:00Z` : null, meta: row.planId ?? undefined },
+      { event: 'Assigned to route', timestamp: row.routeStartedAt ? null : row.planDate ? `${row.planDate}T00:00:00` : null, meta: row.planId ?? undefined },
       { event: 'Driver picked up', timestamp: row.routeStartedAt?.toISOString() ?? null, meta: row.driverName ?? undefined },
       { event: 'Arrived', timestamp: row.arrivedAt?.toISOString() ?? null },
       ...(row.status === 'completed'
