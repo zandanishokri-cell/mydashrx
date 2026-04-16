@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
-import { RefreshCw, AlertTriangle, Clock } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Clock, WifiOff } from 'lucide-react';
 
 const LiveMap = dynamic(() => import('@/components/LiveMap').then((m) => m.LiveMap), { ssr: false });
 
@@ -75,10 +75,12 @@ export default function MapPage() {
   const [user] = useState(getUser);
   const [liveData, setLiveData] = useState<LiveData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [secondsAgo, setSecondsAgo] = useState(0);
   const [highlightedDriverId, setHighlightedDriverId] = useState<string | null>(null);
   const [routeStops, setRouteStops] = useState<StopMarker[]>([]);
+  const [stopsLoading, setStopsLoading] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -87,10 +89,12 @@ export default function MapPage() {
     try {
       const data = await api.get<LiveData>(`/orgs/${user.orgId}/tracking/live`);
       setLiveData(data);
+      setError(false);
       setLastRefresh(new Date());
       setSecondsAgo(0);
     } catch (err) {
       console.error(err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -111,13 +115,15 @@ export default function MapPage() {
     if (!highlightedDriverId || !user || !liveData) { setRouteStops([]); return; }
     const route = liveData.activeRoutes.find((r) => r.driverId === highlightedDriverId);
     if (!route) { setRouteStops([]); return; }
+    setStopsLoading(true);
     api.get<{ stops: RouteStopResponse[] }>(`/orgs/${user.orgId}/tracking/route/${route.routeId}`)
       .then((data) => setRouteStops(
         data.stops
           .filter((s) => s.lat != null && s.lng != null)
           .map((s) => ({ id: s.stopId, lat: s.lat!, lng: s.lng!, recipientName: s.recipientName, address: s.address, status: s.status, sequenceNumber: s.sequenceNumber }))
       ))
-      .catch(() => setRouteStops([]));
+      .catch(() => setRouteStops([]))
+      .finally(() => setStopsLoading(false));
   }, [highlightedDriverId, liveData, user]);
 
   const driverMarkers = (liveData?.activeRoutes ?? [])
@@ -154,9 +160,18 @@ export default function MapPage() {
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      {/* Error banner */}
+      {error && !liveData && (
+        <div className="flex items-center gap-2 px-5 py-2.5 bg-red-50 border-b border-red-100 shrink-0">
+          <WifiOff size={14} className="text-red-500 shrink-0" />
+          <span className="text-sm text-red-700">Could not load live tracking data.</span>
+          <button onClick={load} className="ml-auto text-xs font-medium text-red-600 hover:underline">Retry</button>
+        </div>
+      )}
+
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         {/* Map */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative min-h-[280px]">
           {loading ? (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-50">
               <div className="text-gray-400 text-sm">Loading map…</div>
@@ -172,9 +187,10 @@ export default function MapPage() {
         </div>
 
         {/* Sidebar */}
-        <div className="w-72 bg-white border-l border-gray-100 overflow-y-auto shrink-0">
-          <div className="px-4 py-3 border-b border-gray-50">
+        <div className="w-full md:w-72 bg-white border-t md:border-t-0 md:border-l border-gray-100 overflow-y-auto shrink-0 max-h-60 md:max-h-none">
+          <div className="px-4 py-3 border-b border-gray-50 flex items-center justify-between">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Active Routes</p>
+            {stopsLoading && <span className="text-xs text-gray-400 animate-pulse">Loading stops…</span>}
           </div>
 
           {(liveData?.activeRoutes ?? []).length === 0 ? (

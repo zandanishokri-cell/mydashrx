@@ -69,6 +69,7 @@ export function LiveMap({
   const mapRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<any[]>([]);
+  const hasFitRef = useRef(false); // track whether initial bounds fit has fired
 
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return;
@@ -134,13 +135,32 @@ export function LiveMap({
           .bindPopup(`<strong>${stop.recipientName}</strong><br>${stop.address}<br>Status: ${stop.status}`);
       });
 
+      // Initial fit — only once when the first batch of data arrives; subsequent
+      // data refreshes must NOT re-fit (would reset zoom/pan on every 15s poll)
       const allPoints = [
         ...drivers.filter((d) => d.lat && d.lng).map((d) => [d.lat, d.lng] as [number, number]),
         ...stops.filter((s) => s.lat && s.lng).map((s) => [s.lat, s.lng] as [number, number]),
       ];
-      if (allPoints.length > 1) mapRef.current.fitBounds(allPoints, { padding: [40, 40] });
+      if (!hasFitRef.current && allPoints.length > 1) {
+        mapRef.current.fitBounds(allPoints, { padding: [40, 40] });
+        hasFitRef.current = true;
+      }
     });
   }, [drivers, stops, highlightedDriverId, onMarkerClick]);
+
+  // When a driver is selected, pan to them so the user sees their route
+  useEffect(() => {
+    if (!mapRef.current || !highlightedDriverId) return;
+    import('leaflet').then(() => {
+      const stopPoints = stops.filter((s) => s.lat && s.lng).map((s) => [s.lat, s.lng] as [number, number]);
+      const driver = drivers.find((d) => d.id === highlightedDriverId);
+      if (stopPoints.length > 1) {
+        mapRef.current.fitBounds(stopPoints, { padding: [40, 40], animate: true });
+      } else if (driver?.lat && driver?.lng) {
+        mapRef.current.setView([driver.lat, driver.lng], 14, { animate: true });
+      }
+    });
+  }, [highlightedDriverId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
