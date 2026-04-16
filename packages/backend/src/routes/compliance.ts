@@ -97,6 +97,11 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
       signedAt: string; expiresAt: string; documentUrl: string;
       notes: string; touchesPhi: boolean;
     }>;
+    const VALID_BAA_STATUSES = ['signed', 'pending', 'not_required', 'expired'];
+    if (body.baaStatus !== undefined && !VALID_BAA_STATUSES.includes(body.baaStatus)) {
+      return reply.code(400).send({ error: `Invalid baaStatus. Must be one of: ${VALID_BAA_STATUSES.join(', ')}` });
+    }
+
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (body.vendorName !== undefined) updates.vendorName = body.vendorName;
     if (body.service !== undefined) updates.service = body.service;
