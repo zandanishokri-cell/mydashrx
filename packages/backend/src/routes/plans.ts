@@ -35,6 +35,11 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     const { orgId } = req.params as { orgId: string };
     const { depotId, date } = req.body as { depotId: string; date: string };
     if (!depotId || !date) return reply.code(400).send({ error: 'depotId and date required' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return reply.code(400).send({ error: 'date must be YYYY-MM-DD' });
+    // Verify depot belongs to this org — prevents attaching a plan to a foreign depot
+    const [depot] = await db.select({ id: depots.id }).from(depots)
+      .where(and(eq(depots.id, depotId), eq(depots.orgId, orgId))).limit(1);
+    if (!depot) return reply.code(400).send({ error: 'Invalid depotId' });
     const [plan] = await db.insert(plans).values({ orgId, depotId, date }).returning();
     return reply.code(201).send(plan);
   });

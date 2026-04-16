@@ -51,9 +51,15 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/:routeId/stops', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'driver'),
-  }, async (req) => {
+  }, async (req, reply) => {
     const { routeId } = req.params as { planId: string; routeId: string };
-    const { orgId: userOrgId } = req.user as { orgId: string };
+    const { orgId: userOrgId, role, driverId } = req.user as { orgId: string; role: string; driverId?: string };
+    // Drivers may only fetch stops for their own assigned route
+    if (role === 'driver') {
+      const [route] = await db.select({ driverId: routes.driverId }).from(routes)
+        .where(and(eq(routes.id, routeId), isNull(routes.deletedAt))).limit(1);
+      if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
+    }
     return db
       .select()
       .from(stops)
