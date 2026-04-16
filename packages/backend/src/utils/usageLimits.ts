@@ -18,7 +18,7 @@ interface LimitResult {
 
 export async function checkStopLimit(orgId: string, addingCount = 1): Promise<LimitResult> {
   const [org] = await db
-    .select({ billingPlan: organizations.billingPlan })
+    .select({ billingPlan: organizations.billingPlan, timezone: organizations.timezone })
     .from(organizations)
     .where(eq(organizations.id, orgId))
     .limit(1);
@@ -27,9 +27,18 @@ export async function checkStopLimit(orgId: string, addingCount = 1): Promise<Li
   const plan = PLAN_LIMITS[org.billingPlan] ?? PLAN_LIMITS.starter;
   if (plan.stopLimit === null) return { allowed: true, current: 0, limit: null };
 
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
+  // Compute local month start using org timezone — prevents UTC midnight bypass at month boundary
+  const tz = org.timezone ?? 'America/New_York';
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' });
+  const parts = fmt.formatToParts(now);
+  const yr = parts.find(p => p.type === 'year')!.value;
+  const mo = parts.find(p => p.type === 'month')!.value;
+  // Use noon on the 1st to safely get the timezone offset (avoids DST boundary edge cases)
+  const noonOn1st = new Date(`${yr}-${mo}-01T12:00:00Z`);
+  const localNoon = new Date(noonOn1st.toLocaleString('en-US', { timeZone: tz }));
+  const offsetMs = noonOn1st.getTime() - localNoon.getTime();
+  const monthStart = new Date(new Date(`${yr}-${mo}-01T00:00:00Z`).getTime() + offsetMs);
 
   const [row] = await db
     .select({ n: count() })
