@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, drivers, plans } from '../db/schema.js';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification, sendDriverArrivalEmail, sendRouteCompleteSummaryEmail } from '../services/notifications.js';
 import { fireTrigger } from '../services/automation.js';
@@ -330,6 +330,40 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       .returning();
     if (!updated) return reply.code(404).send({ error: 'Stop not found' });
     return updated;
+  });
+
+  // Bulk move stops to a different route
+  app.post('/bulk-move', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { routeId } = req.params as { routeId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
+    const { stopIds, targetRouteId } = req.body as { stopIds: string[]; targetRouteId: string };
+    if (!Array.isArray(stopIds) || stopIds.length === 0) return reply.code(400).send({ error: 'stopIds must be a non-empty array' });
+    if (!targetRouteId) return reply.code(400).send({ error: 'targetRouteId required' });
+    // Verify both source and target routes belong to caller's org
+    const [targetRoute] = await db
+      .select({ id: routes.id })
+      .from(routes)
+      .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, userOrgId), isNull(plans.deletedAt)))
+      .where(and(eq(routes.id, targetRouteId), isNull(routes.deletedAt)))
+      .limit(1);
+    if (!targetRoute) return reply.code(404).send({ error: 'Target route not found' });
+    // Skip terminal stops — they must stay on their route for audit history
+    const TERMINAL = ['completed', 'failed', 'rescheduled'] as const;
+    const result = await db.update(stops)
+      .set({ routeId: targetRouteId, sequenceNumber: 0 })
+      .where(and(
+        inArray(stops.id, stopIds),
+        eq(stops.routeId, routeId),
+        eq(stops.orgId, userOrgId),
+        isNull(stops.deletedAt),
+        notInArray(stops.status, [...TERMINAL]),
+      ))
+      .returning({ id: stops.id });
+    const moved = result.length;
+    const skipped = stopIds.length - moved;
+    return { moved, skipped };
   });
 
   // Update any stop fields (for future use)

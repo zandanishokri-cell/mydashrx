@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { AddStopModal } from '@/components/AddStopModal';
 import { StopDetailModal } from '@/components/StopDetailModal';
-import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle, CheckCircle2, CheckSquare, Square } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
@@ -54,6 +54,11 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [movingStop, setMovingStop] = useState<Stop | null>(null);
   const [movingStopError, setMovingStopError] = useState('');
   const [confirmRemoveRouteId, setConfirmRemoveRouteId] = useState<string | null>(null);
+  const [selectedStopIds, setSelectedStopIds] = useState<Set<string>>(new Set());
+  const [selectionSourceRouteId, setSelectionSourceRouteId] = useState<string | null>(null);
+  const [bulkMoveTargetRouteId, setBulkMoveTargetRouteId] = useState('');
+  const [bulkMoving, setBulkMoving] = useState(false);
+  const [bulkMoveError, setBulkMoveError] = useState('');
   const [removingRoute, setRemovingRoute] = useState(false);
 
   const loadPlan = useCallback(async () => {
@@ -171,6 +176,50 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     } catch {
       setError('Failed to remove route');
     } finally { setRemovingRoute(false); }
+  };
+
+  const toggleStopSelection = useCallback((stopId: string, routeId: string) => {
+    setSelectedStopIds(prev => {
+      const next = new Set(prev);
+      if (selectionSourceRouteId && selectionSourceRouteId !== routeId) {
+        // Different route — clear and start fresh
+        setSelectionSourceRouteId(routeId);
+        return new Set([stopId]);
+      }
+      if (next.has(stopId)) {
+        next.delete(stopId);
+        if (next.size === 0) setSelectionSourceRouteId(null);
+      } else {
+        next.add(stopId);
+        setSelectionSourceRouteId(routeId);
+      }
+      return next;
+    });
+  }, [selectionSourceRouteId]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedStopIds(new Set());
+    setSelectionSourceRouteId(null);
+    setBulkMoveTargetRouteId('');
+    setBulkMoveError('');
+  }, []);
+
+  const executeBulkMove = async () => {
+    if (!bulkMoveTargetRouteId || !selectionSourceRouteId || bulkMoving) return;
+    setBulkMoving(true);
+    setBulkMoveError('');
+    try {
+      await api.post(`/routes/${selectionSourceRouteId}/stops/bulk-move`, {
+        stopIds: Array.from(selectedStopIds),
+        targetRouteId: bulkMoveTargetRouteId,
+      });
+      clearSelection();
+      await loadPlan();
+    } catch {
+      setBulkMoveError('Failed to move stops. Please try again.');
+    } finally {
+      setBulkMoving(false);
+    }
   };
 
   const totalStops = Object.values(stopsByRoute).reduce((s, arr) => s + arr.length, 0);
@@ -357,6 +406,9 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                             routeCount={routes.length}
                             onSelect={() => setSelectedStop(stop)}
                             onMove={() => setMovingStop(stop)}
+                            isSelected={selectedStopIds.has(stop.id)}
+                            onToggleSelect={(stopId) => toggleStopSelection(stopId, route.id)}
+                            selectionEnabled={route.status !== 'completed'}
                           />
                         ))}
                       </div>
@@ -366,6 +418,49 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Bulk Move Action Bar */}
+      {selectedStopIds.size > 0 && selectionSourceRouteId && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 shadow-lg px-6 py-3 flex items-center gap-4 flex-wrap">
+          <span className="text-sm font-medium text-gray-800">
+            {selectedStopIds.size} stop{selectedStopIds.size !== 1 ? 's' : ''} selected from{' '}
+            <strong>{drivers.find(d => d.id === routes.find(r => r.id === selectionSourceRouteId)?.driverId)?.name ?? 'route'}</strong>
+          </span>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <label className="text-sm text-gray-500 shrink-0">Move to:</label>
+            <select
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm min-w-0 flex-1 max-w-xs"
+              value={bulkMoveTargetRouteId}
+              onChange={e => setBulkMoveTargetRouteId(e.target.value)}
+              disabled={bulkMoving}
+            >
+              <option value="">Choose route…</option>
+              {routes.filter(r => r.id !== selectionSourceRouteId).map(r => {
+                const d = drivers.find(dr => dr.id === r.driverId);
+                return (
+                  <option key={r.id} value={r.id}>
+                    {d?.name ?? 'Unknown'} ({(stopsByRoute[r.id] ?? []).length} stops)
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+          {bulkMoveError && <span className="text-xs text-red-600">{bulkMoveError}</span>}
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              size="sm"
+              onClick={executeBulkMove}
+              disabled={!bulkMoveTargetRouteId || bulkMoving}
+              loading={bulkMoving}
+            >
+              <MoveRight size={13} /> Move
+            </Button>
+            <Button variant="secondary" size="sm" onClick={clearSelection} disabled={bulkMoving}>
+              Cancel
+            </Button>
+          </div>
         </div>
       )}
 
@@ -461,20 +556,32 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   );
 }
 
-function SortableStopItem({ stop, idx, routeCount, onSelect, onMove }: {
+function SortableStopItem({ stop, idx, routeCount, onSelect, onMove, isSelected, onToggleSelect, selectionEnabled }: {
   stop: Stop;
   idx: number;
   routeCount: number;
   onSelect: () => void;
   onMove: () => void;
+  isSelected: boolean;
+  onToggleSelect: (stopId: string) => void;
+  selectionEnabled: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stop.id });
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
-      className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors group"
+      className={`flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors group${isSelected ? ' bg-blue-50' : ''}`}
     >
+      {selectionEnabled && (
+        <button
+          onClick={() => onToggleSelect(stop.id)}
+          className="text-gray-300 hover:text-[#0F4C81] shrink-0 transition-colors"
+          tabIndex={-1}
+        >
+          {isSelected ? <CheckSquare size={15} className="text-[#0F4C81]" /> : <Square size={15} />}
+        </button>
+      )}
       <button
         {...attributes}
         {...listeners}
