@@ -35,7 +35,7 @@ interface Stop {
 
 type Urgency = 'overdue' | 'due-soon' | 'normal';
 function getUrgency(stop: Stop): Urgency {
-  if (stop.status === 'completed' || stop.status === 'failed') return 'normal';
+  if (stop.status === 'completed' || stop.status === 'failed' || stop.status === 'rescheduled') return 'normal';
   if (!stop.windowEnd) return 'normal';
   const end = new Date(stop.windowEnd).getTime();
   const now = Date.now();

@@ -44,9 +44,11 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // Filter by plan date (delivery date), not stop creation date
-    if (from) conditions.push(gte(plans.date, from));
-    if (to) conditions.push(lte(plans.date, to));
+    // Filter by plan date (delivery date) — skip for unassigned stops (plans.date = NULL for routeId=null)
+    if (unassigned !== 'true') {
+      if (from) conditions.push(gte(plans.date, from));
+      if (to) conditions.push(lte(plans.date, to));
+    }
 
     // Join to get depot/driver/plan context
     // Add depot/driver conditions directly to SQL — post-filtering after LIMIT breaks pagination
