@@ -30,6 +30,12 @@ const STATUS_COLORS: Record<string, string> = {
 
 const STATUSES = ['all', 'new', 'contacted', 'interested', 'negotiating', 'closed', 'lost'];
 
+const todayStr = new Date().toLocaleDateString('en-CA');
+function isOverdue(nextFollowUp: string | null): boolean {
+  if (!nextFollowUp) return false;
+  return nextFollowUp.split('T')[0] < todayStr;
+}
+
 function ScoreBadge({ score }: { score: number }) {
   const cls = score >= 70 ? 'bg-emerald-100 text-emerald-700'
     : score >= 40 ? 'bg-amber-100 text-amber-700'
@@ -199,6 +205,18 @@ export default function LeadsPage() {
                   <p className="text-xs text-gray-400">
                     Last contact: {new Date(lead.lastContactedAt).toLocaleDateString()}
                   </p>
+                )}
+                {lead.nextFollowUp ? (
+                  <div className="flex items-center gap-1.5">
+                    {isOverdue(lead.nextFollowUp) && (
+                      <span className="text-xs font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full shrink-0">OVERDUE</span>
+                    )}
+                    <span className={`text-xs ${isOverdue(lead.nextFollowUp) ? 'text-red-500' : 'text-gray-500'}`}>
+                      {new Date(lead.nextFollowUp + 'T00:00:00').toLocaleDateString()}
+                    </span>
+                  </div>
+                ) : (
+                  <span className="text-xs text-gray-400">—</span>
                 )}
               </div>
 
