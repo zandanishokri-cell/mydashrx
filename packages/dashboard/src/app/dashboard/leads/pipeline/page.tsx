@@ -48,6 +48,13 @@ function ScoreBadge({ score }: { score: number }) {
 
 const STAGE_ORDER = STAGES.reduce((acc, s, i) => ({ ...acc, [s]: i }), {} as Record<string, number>);
 
+const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD local
+
+function isOverdue(nextFollowUp: string | null): boolean {
+  if (!nextFollowUp) return false;
+  return nextFollowUp.split('T')[0] < todayStr;
+}
+
 export default function PipelinePage() {
   const [user] = useState(getUser);
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
@@ -150,9 +157,18 @@ export default function PipelinePage() {
                         </div>
                         <p className="text-xs text-gray-500">{lead.city}, {lead.state}</p>
                         {lead.nextFollowUp && (
-                          <p className="text-xs text-amber-600 mt-1">
-                            Follow-up: {new Date(lead.nextFollowUp).toLocaleDateString()}
-                          </p>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            {isOverdue(lead.nextFollowUp) ? (
+                              <>
+                                <span className="text-xs font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full">OVERDUE</span>
+                                <span className="text-xs text-red-500">{new Date(lead.nextFollowUp + 'T00:00:00').toLocaleDateString()}</span>
+                              </>
+                            ) : (
+                              <p className="text-xs text-amber-600">
+                                Follow-up: {new Date(lead.nextFollowUp + 'T00:00:00').toLocaleDateString()}
+                              </p>
+                            )}
+                          </div>
                         )}
                       </div>
                     </button>
