@@ -36,30 +36,35 @@ export default function DriversPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [deleteError, setDeleteError] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [user] = useState(getUser);
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     if (!user) return;
-    api.get<Driver[]>(`/orgs/${user.orgId}/drivers`)
-      .then(data => {
-        setDrivers(data);
-        setFiltered(data);
-        // Fetch completion rates for all drivers in parallel
-        Promise.allSettled(
-          data.map(d =>
-            api.get<DriverPerf>(`/orgs/${user.orgId}/drivers/${d.id}/performance`)
-              .then(p => ({ id: d.id, rate: p.summary.totalStops > 0 ? p.completionRate : -1 }))
-          )
-        ).then(results => {
-          const map: Record<string, number> = {};
-          for (const r of results) {
-            if (r.status === 'fulfilled') map[r.value.id] = r.value.rate;
-          }
-          setPerfMap(map);
-        });
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    try {
+      const data = await api.get<Driver[]>(`/orgs/${user.orgId}/drivers`);
+      setDrivers(data);
+      setFiltered(data);
+      setLoadError(false);
+      // Fetch completion rates for all drivers in parallel
+      Promise.allSettled(
+        data.map(d =>
+          api.get<DriverPerf>(`/orgs/${user.orgId}/drivers/${d.id}/performance`)
+            .then(p => ({ id: d.id, rate: p.summary.totalStops > 0 ? p.completionRate : -1 }))
+        )
+      ).then(results => {
+        const map: Record<string, number> = {};
+        for (const r of results) {
+          if (r.status === 'fulfilled') map[r.value.id] = r.value.rate;
+        }
+        setPerfMap(map);
+      });
+    } catch {
+      setLoadError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
 
   useEffect(() => { load(); }, [load]);
@@ -84,15 +89,18 @@ export default function DriversPage() {
   };
 
   const confirmDelete = async () => {
-    if (!confirmDeleteId || !user) return;
+    if (!confirmDeleteId || !user || deleting) return;
     const id = confirmDeleteId;
     setConfirmDeleteId(null);
+    setDeleting(true);
     try {
       await api.del(`/orgs/${user.orgId}/drivers/${id}`);
       setDeleteError('');
       load();
     } catch (err: any) {
       setDeleteError(err?.message ?? 'Failed to remove driver. Try again.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -132,6 +140,8 @@ export default function DriversPage() {
     return <span className={`font-semibold ${color}`}>{r}%</span>;
   };
 
+  const canManage = user?.role === 'pharmacy_admin' || user?.role === 'super_admin';
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
@@ -143,9 +153,11 @@ export default function DriversPage() {
           <button onClick={exportCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">
             <Download size={14} /> Export
           </button>
-          <Button size="sm" onClick={() => setShowAdd(true)}>
-            <Plus size={14} /> Add new driver
-          </Button>
+          {canManage && (
+            <Button size="sm" onClick={() => setShowAdd(true)}>
+              <Plus size={14} /> Add new driver
+            </Button>
+          )}
         </div>
       </div>
 
@@ -156,11 +168,20 @@ export default function DriversPage() {
             <span>Remove <strong>{name}</strong>? This cannot be undone.</span>
             <div className="flex items-center gap-2 ml-4 shrink-0">
               <button onClick={() => setConfirmDeleteId(null)} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
-              <button onClick={confirmDelete} className="text-xs bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600">Remove</button>
+              <button onClick={confirmDelete} disabled={deleting} className="text-xs bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600 disabled:opacity-60">
+                {deleting ? 'Removing…' : 'Remove'}
+              </button>
             </div>
           </div>
         );
       })()}
+
+      {loadError && (
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
+          Failed to load drivers. Check your connection.
+          <button onClick={load} className="ml-4 text-xs font-medium text-red-600 hover:underline shrink-0">Retry</button>
+        </div>
+      )}
 
       {deleteError && (
         <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
@@ -282,9 +303,11 @@ export default function DriversPage() {
                       <button onClick={e => openEdit(driver, e)} className="p-1.5 text-gray-400 hover:text-[#0F4C81] rounded-lg hover:bg-blue-50 transition-colors">
                         <Pencil size={13} />
                       </button>
-                      <button onClick={e => requestDelete(driver.id, e)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors">
-                        <Trash2 size={13} />
-                      </button>
+                      {canManage && (
+                        <button onClick={e => requestDelete(driver.id, e)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
