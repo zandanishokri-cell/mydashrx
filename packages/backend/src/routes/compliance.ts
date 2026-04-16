@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { baaRegistry, auditLogs, complianceChecks } from '../db/schema.js';
 import { eq, and, gte, lte, desc, sql, count } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { runComplianceScan, isDeploymentBlocked } from '../compliance/scanner.js';
 
 const ADMIN = requireRole('pharmacy_admin', 'super_admin');
 
@@ -275,5 +276,39 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
     }));
 
     return { ran: results.length, checks: results };
+  });
+
+  // ─── Automated Compliance Scanner ─────────────────────────────────────────
+  // Runs real DB queries for HIPAA + Michigan violations; persists results to compliance_checks
+
+  app.post('/scan', { preHandler: ADMIN }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    const findings = await runComplianceScan({ orgId, persistResults: true });
+    return {
+      scannedAt: new Date(),
+      findings,
+      summary: {
+        total: findings.length,
+        violations: findings.filter(f => f.count > 0).length,
+        P0: findings.filter(f => f.severity === 'P0' && f.count > 0).length,
+        P1: findings.filter(f => f.severity === 'P1' && f.count > 0).length,
+        P2: findings.filter(f => f.severity === 'P2' && f.count > 0).length,
+        P3: findings.filter(f => f.severity === 'P3' && f.count > 0).length,
+      },
+      blocksDeployment: isDeploymentBlocked(findings),
+    };
+  });
+
+  app.get('/scan/latest', { preHandler: ADMIN }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    const rows = await db
+      .select()
+      .from(complianceChecks)
+      .where(eq(complianceChecks.orgId, orgId))
+      .orderBy(desc(complianceChecks.lastCheckedAt));
+    return rows.map(r => ({
+      ...r,
+      detail: r.detail ? (() => { try { return JSON.parse(r.detail!); } catch { return r.detail; } })() : null,
+    }));
   });
 };
