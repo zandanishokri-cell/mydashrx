@@ -1,16 +1,29 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { recurringDeliveries, stops, routes, plans, depots } from '../db/schema.js';
-import { eq, and, isNull, lte } from 'drizzle-orm';
+import { eq, and, isNull, lte, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
+// All date arithmetic is done in UTC ms to avoid local-timezone drift.
+// A "weekly" schedule advances exactly 7 × 86400000 ms so day-of-week
+// is preserved regardless of DST transitions on the server.
 function calcNextDate(from: Date, schedule: string): Date {
-  const d = new Date(from);
-  if (schedule === 'weekly') d.setDate(d.getDate() + 7);
-  else if (schedule === 'biweekly') d.setDate(d.getDate() + 14);
-  else if (schedule === 'monthly') d.setMonth(d.getMonth() + 1);
-  else d.setDate(d.getDate() + 7); // custom default
-  return d;
+  const ms = from.getTime();
+  if (schedule === 'weekly') return new Date(ms + 7 * 86_400_000);
+  if (schedule === 'biweekly') return new Date(ms + 14 * 86_400_000);
+  if (schedule === 'monthly') {
+    // Advance one calendar month; clamp to last day if month is shorter.
+    const d = new Date(from);
+    const targetMonth = d.getUTCMonth() + 1;
+    d.setUTCMonth(targetMonth);
+    // If setUTCMonth overflowed (e.g. Jan 31 → Mar 3), clamp to last day of targetMonth
+    if (d.getUTCMonth() !== targetMonth % 12) {
+      d.setUTCDate(0); // roll back to last day of intended month
+    }
+    return d;
+  }
+  // 'custom' — no customIntervalDays field yet; default to weekly to avoid silent data loss
+  return new Date(ms + 7 * 86_400_000);
 }
 
 export const recurringRoutes: FastifyPluginAsync = async (app) => {
@@ -70,11 +83,11 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(rec);
   });
 
-  // Update
+  // Update — scoped to orgId to prevent cross-org mutation
   app.patch('/:id', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
-    const { id } = req.params as { orgId: string; id: string };
+    const { orgId, id } = req.params as { orgId: string; id: string };
     const body = req.body as Record<string, unknown>;
 
     const allowed = ['recipientName', 'address', 'lat', 'lng', 'recipientPhone', 'recipientEmail',
@@ -88,17 +101,23 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (Object.keys(updates).length === 0) return reply.code(400).send({ error: 'No valid fields' });
-    const [updated] = await db.update(recurringDeliveries).set(updates).where(eq(recurringDeliveries.id, id)).returning();
+    const [updated] = await db.update(recurringDeliveries).set(updates)
+      .where(and(eq(recurringDeliveries.id, id), eq(recurringDeliveries.orgId, orgId), isNull(recurringDeliveries.deletedAt)))
+      .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     return updated;
   });
 
-  // Soft delete
+  // Soft delete — scoped to orgId to prevent cross-org deletion
   app.delete('/:id', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
-    const { id } = req.params as { orgId: string; id: string };
-    await db.update(recurringDeliveries).set({ deletedAt: new Date() }).where(eq(recurringDeliveries.id, id));
+    const { orgId, id } = req.params as { orgId: string; id: string };
+    const [deleted] = await db.update(recurringDeliveries)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(recurringDeliveries.id, id), eq(recurringDeliveries.orgId, orgId), isNull(recurringDeliveries.deletedAt)))
+      .returning({ id: recurringDeliveries.id });
+    if (!deleted) return reply.code(404).send({ error: 'Not found' });
     return reply.code(204).send();
   });
 
@@ -123,24 +142,32 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
 
     if (due.length === 0) return { generated: 0, stops: [] };
 
-    // Resolve route to attach stops to
+    // Resolve route to attach stops to — all queries scoped to this org's plans
     let routeId: string | undefined;
     if (planId) {
-      const [existingRoute] = await db.select().from(routes)
+      const [existingRoute] = await db.select({ id: routes.id }).from(routes)
         .where(and(eq(routes.planId, planId), isNull(routes.deletedAt)))
         .limit(1);
       routeId = existingRoute?.id;
     }
 
     if (!routeId) {
-      const [existingRoute] = await db.select().from(routes)
-        .where(and(isNull(routes.deletedAt), eq(routes.status, 'pending')))
-        .limit(1);
-      routeId = existingRoute?.id;
+      // Find a pending plan belonging to this org, then its route
+      const orgPlans = await db.select({ id: plans.id }).from(plans)
+        .where(and(eq(plans.orgId, orgId), isNull(plans.deletedAt)));
+      if (orgPlans.length > 0) {
+        const planIds = orgPlans.map(p => p.id);
+        const [existingRoute] = await db.select({ id: routes.id }).from(routes)
+          .where(and(inArray(routes.planId, planIds), isNull(routes.deletedAt), eq(routes.status, 'pending')))
+          .limit(1);
+        routeId = existingRoute?.id;
+      }
     }
 
     if (!routeId) {
-      const [depot] = await db.select({ id: depots.id }).from(depots).limit(1);
+      const [depot] = await db.select({ id: depots.id }).from(depots)
+        .where(eq(depots.orgId, orgId))
+        .limit(1);
       if (!depot) return reply.code(400).send({ error: 'No depot configured' });
       const [plan] = await db.insert(plans).values({ orgId, depotId: depot.id, date }).returning();
       const [newRoute] = await db.insert(routes).values({ planId: plan.id }).returning();
