@@ -65,6 +65,10 @@ export interface Route {
 
 export type StopStatus = 'pending' | 'en_route' | 'arrived' | 'completed' | 'failed' | 'rescheduled';
 
+/** All statuses that represent a stop no longer requiring driver action. */
+export const TERMINAL_STATUSES: StopStatus[] = ['completed', 'failed', 'rescheduled'];
+export const isTerminalStatus = (status: string): boolean => (TERMINAL_STATUSES as string[]).includes(status);
+
 export type FailureReason =
   | 'not_home'
   | 'refused'

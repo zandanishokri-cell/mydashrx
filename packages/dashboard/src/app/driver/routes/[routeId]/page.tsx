@@ -103,7 +103,8 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
 
   const completed = stops.filter((s) => s.status === 'completed').length;
   const failed = stops.filter((s) => s.status === 'failed').length;
-  const remaining = stops.length - completed - failed;
+  const rescheduled = stops.filter((s) => s.status === 'rescheduled').length;
+  const remaining = stops.length - completed - failed - rescheduled;
   const allDone = stops.length > 0 && remaining === 0;
   const pct = stops.length > 0 ? Math.round((completed / stops.length) * 100) : 0;
 
@@ -195,7 +196,7 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
 
         {/* Navigate to Next Stop */}
         {(() => {
-          const nextStop = stops.find(s => s.status !== 'completed' && s.status !== 'failed');
+          const nextStop = stops.find(s => s.status !== 'completed' && s.status !== 'failed' && s.status !== 'rescheduled');
           if (!nextStop) return null;
           const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(nextStop.address)}&dirflg=d`;
           return (

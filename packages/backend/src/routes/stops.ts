@@ -5,9 +5,7 @@ import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification, sendDriverArrivalEmail, sendRouteCompleteSummaryEmail } from '../services/notifications.js';
 import { fireTrigger } from '../services/automation.js';
-import type { StopStatus } from '@mydash-rx/shared';
-
-const TERMINAL_STATUSES: StopStatus[] = ['completed', 'failed', 'rescheduled'];
+import { TERMINAL_STATUSES, type StopStatus } from '@mydash-rx/shared';
 
 export async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
   const [route] = await db.select({ completedAt: routes.completedAt, driverId: routes.driverId })
