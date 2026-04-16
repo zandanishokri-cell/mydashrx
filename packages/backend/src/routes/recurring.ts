@@ -75,6 +75,14 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
 
     if (!body.recipientName) return reply.code(400).send({ error: 'recipientName required' });
     if (!body.address) return reply.code(400).send({ error: 'address required' });
+    if (body.customIntervalDays != null && (body.customIntervalDays < 1 || !Number.isInteger(body.customIntervalDays))) {
+      return reply.code(400).send({ error: 'customIntervalDays must be a positive integer' });
+    }
+    if (body.endDate) {
+      const end = new Date(body.endDate);
+      const todayUTC = new Date(); todayUTC.setUTCHours(0, 0, 0, 0);
+      if (end < todayUTC) return reply.code(400).send({ error: 'endDate must not be in the past' });
+    }
 
     // Geocode if lat/lng not provided by caller
     let { lat, lng } = { lat: body.lat, lng: body.lng };
@@ -181,10 +189,16 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     // Resolve route to attach stops to — all queries scoped to this org's plans
     let routeId: string | undefined;
     if (planId) {
-      const [existingRoute] = await db.select({ id: routes.id }).from(routes)
-        .where(and(eq(routes.planId, planId), isNull(routes.deletedAt)))
+      // Verify the plan belongs to this org before trusting planId from caller
+      const [callerPlan] = await db.select({ id: plans.id }).from(plans)
+        .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
         .limit(1);
-      routeId = existingRoute?.id;
+      if (callerPlan) {
+        const [existingRoute] = await db.select({ id: routes.id }).from(routes)
+          .where(and(eq(routes.planId, callerPlan.id), isNull(routes.deletedAt)))
+          .limit(1);
+        routeId = existingRoute?.id;
+      }
     }
 
     if (!routeId) {
@@ -231,12 +245,13 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
 
     const inserted = await db.insert(stops).values(stopValues).returning({ id: stops.id });
 
-    // Update lastDeliveryDate and nextDeliveryDate for each
+    // Update lastDeliveryDate and nextDeliveryDate for each.
+    // WHERE includes orgId + deletedAt guard to prevent cross-org mutation and race with soft-delete.
     await Promise.all(due.map(rec =>
       db.update(recurringDeliveries).set({
         lastDeliveryDate: targetDate,
         nextDeliveryDate: calcNextDate(targetDate, rec.schedule, rec.customIntervalDays),
-      }).where(eq(recurringDeliveries.id, rec.id))
+      }).where(and(eq(recurringDeliveries.id, rec.id), eq(recurringDeliveries.orgId, orgId), isNull(recurringDeliveries.deletedAt)))
     ));
 
     return { generated: inserted.length, stops: inserted.map(s => s.id) };
