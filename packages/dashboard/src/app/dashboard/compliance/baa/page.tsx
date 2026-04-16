@@ -130,9 +130,7 @@ export default function BaaPage() {
     if (!user) return;
     setSaving(true); setSaveError('');
     try {
-      for (const v of DEFAULT_VENDORS) {
-        await api.post(`/orgs/${user.orgId}/compliance/baa`, v);
-      }
+      await Promise.all(DEFAULT_VENDORS.map(v => api.post(`/orgs/${user.orgId}/compliance/baa`, v)));
       await load();
     } catch (err: any) { setSaveError(err?.message ?? 'Failed to seed defaults. Please try again.'); }
     finally { setSaving(false); }

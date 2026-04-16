@@ -145,6 +145,7 @@ export default function CompliancePage() {
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanLoadedAt, setScanLoadedAt] = useState<string | null>(null);
+  const [scanLoadError, setScanLoadError] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -174,7 +175,7 @@ export default function CompliancePage() {
         blocksDeployment: findings.some((f) => f.blocksDeployment && f.count > 0),
       });
       setScanLoadedAt(rows[0].lastCheckedAt);
-    } catch { /* no scan yet */ }
+    } catch { setScanLoadError(true); }
   }, [user]);
 
   useEffect(() => { load(); loadLatestScan(); }, [load, loadLatestScan]);
@@ -366,7 +367,18 @@ export default function CompliancePage() {
               </div>
             )}
 
-            {!scanResult ? (
+            {scanLoadError ? (
+              <div className="bg-white rounded-xl border border-gray-100 px-6 py-8 text-center">
+                <AlertCircle size={28} className="text-red-400 mx-auto mb-3" />
+                <p className="text-sm font-semibold text-red-700 mb-1">Failed to load scan history</p>
+                <p className="text-xs text-gray-400 mb-4">Run a new scan or check your connection and reload.</p>
+                <button onClick={runScan} disabled={scanning}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-blue-900 disabled:opacity-50 transition-colors">
+                  <Zap size={14} />
+                  {scanning ? 'Scanning…' : 'Run New Scan'}
+                </button>
+              </div>
+            ) : !scanResult ? (
               <div className="bg-white rounded-xl border border-gray-100 border-dashed px-6 py-10 text-center">
                 <Zap size={28} className="text-gray-300 mx-auto mb-3" />
                 <p className="text-sm font-medium text-gray-500 mb-1">No scan results yet</p>

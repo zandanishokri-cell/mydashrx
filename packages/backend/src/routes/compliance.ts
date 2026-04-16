@@ -334,9 +334,16 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
       .from(complianceChecks)
       .where(eq(complianceChecks.orgId, orgId))
       .orderBy(desc(complianceChecks.lastCheckedAt));
-    return rows.map(r => ({
-      ...r,
-      detail: r.detail ? (() => { try { return JSON.parse(r.detail!); } catch { return r.detail; } })() : null,
-    }));
+    // Only return rows that contain scanner ScanFinding JSON (have severity field).
+    // Rows from POST /checks/run store plain strings — exclude them to keep summary counts accurate.
+    return rows
+      .map(r => {
+        try {
+          const detail = r.detail ? JSON.parse(r.detail) : null;
+          if (!detail?.severity) return null;
+          return { ...r, detail };
+        } catch { return null; }
+      })
+      .filter(Boolean);
   });
 };
