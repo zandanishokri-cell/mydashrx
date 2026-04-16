@@ -24,6 +24,7 @@ interface Stop {
   rxNumbers: string[]; packageCount: number; deliveryNotes?: string;
   codAmount?: number; trackingToken?: string; arrivedAt?: string;
   completedAt?: string; failureReason?: string; failureNote?: string;
+  priority?: string;
 }
 interface Driver { id: string; name: string; vehicleType: string; status: string; }
 
@@ -488,6 +489,8 @@ function SortableStopItem({ stop, idx, routeCount, onSelect, onMove }: {
       <div className="flex-1 min-w-0 cursor-pointer" onClick={onSelect}>
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-gray-900 truncate">{stop.recipientName}</span>
+          {stop.priority === 'urgent' && <span className="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-medium">Urgent</span>}
+          {stop.priority === 'high' && <span className="text-xs bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-medium">High</span>}
           {stop.requiresRefrigeration && <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">❄ Cold</span>}
           {stop.controlledSubstance && <span className="text-xs bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded">⚠ Ctrl</span>}
         </div>

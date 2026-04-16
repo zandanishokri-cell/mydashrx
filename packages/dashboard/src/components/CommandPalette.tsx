@@ -30,34 +30,42 @@ export function CommandPalette({ open, onClose }: Props) {
   const [results, setResults] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchGenRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Focus input when opened
+  // Focus input when opened; reset + invalidate in-flight requests on close
   useEffect(() => {
     if (open) {
       setTimeout(() => inputRef.current?.focus(), 50);
     } else {
-      // Reset on close
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      searchGenRef.current++; // invalidate any in-flight request from previous open
       setQuery('');
       setResults(null);
     }
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [open]);
 
-  const doSearch = useCallback(async (q: string) => {
+  const doSearch = useCallback(async (q: string, gen: number) => {
     if (!user || !q.trim()) { setResults(null); return; }
     setLoading(true);
     try {
       const data = await api.get<SearchResponse>(`/orgs/${user.orgId}/search?q=${encodeURIComponent(q.trim())}&type=all`);
+      if (gen !== searchGenRef.current) return; // superseded by newer search or close
       setResults(data);
-    } catch { setResults(null); }
-    finally { setLoading(false); }
+    } catch {
+      if (gen !== searchGenRef.current) return;
+      setResults(null);
+    }
+    finally { if (gen === searchGenRef.current) setLoading(false); }
   }, [user]);
 
   const handleInput = (v: string) => {
     setQuery(v);
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    const gen = ++searchGenRef.current; // invalidate any in-flight request
     if (!v.trim()) { setResults(null); return; }
-    debounceRef.current = setTimeout(() => doSearch(v), 300);
+    debounceRef.current = setTimeout(() => doSearch(v, gen), 300);
   };
 
   const navigate = (path: string) => { router.push(path); onClose(); };
@@ -87,7 +95,7 @@ export function CommandPalette({ open, onClose }: Props) {
           />
           {loading && <span className="w-3.5 h-3.5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin shrink-0" />}
           {!loading && query && (
-            <button onClick={() => { setQuery(''); setResults(null); }} className="text-gray-300 hover:text-gray-500">
+            <button onClick={() => handleInput('')} className="text-gray-300 hover:text-gray-500">
               <X size={14} />
             </button>
           )}
