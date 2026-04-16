@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, plans, depots, drivers, leadProspects, proofOfDeliveries } from '../db/schema.js';
+import { stops, routes, plans, depots, drivers, leadProspects, proofOfDeliveries, notificationLogs } from '../db/schema.js';
 import { eq, and, isNull, ilike, or, gte, lte, sql, inArray, ne } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { checkAndNotifyRouteComplete } from './stops.js';
@@ -175,6 +175,19 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     const [pod] = await db.select().from(proofOfDeliveries)
       .where(eq(proofOfDeliveries.stopId, stopId)).limit(1);
 
+    const notifications = await db
+      .select({
+        id: notificationLogs.id,
+        event: notificationLogs.event,
+        channel: notificationLogs.channel,
+        recipient: notificationLogs.recipient,
+        status: notificationLogs.status,
+        sentAt: notificationLogs.sentAt,
+      })
+      .from(notificationLogs)
+      .where(eq(notificationLogs.stopId, stopId))
+      .orderBy(notificationLogs.sentAt);
+
     // Build timeline from known timestamps
     const timeline: Array<{ event: string; timestamp: string | null; meta?: string }> = [
       { event: 'Created', timestamp: row.createdAt?.toISOString() ?? null },
@@ -188,7 +201,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
         : []),
     ].filter(e => e.timestamp);
 
-    return { ...row, pod: pod ?? null, timeline };
+    return { ...row, pod: pod ?? null, timeline, notifications };
   });
 
   // POST /orgs/:orgId/stops/bulk-action — bulk status update for dispatcher

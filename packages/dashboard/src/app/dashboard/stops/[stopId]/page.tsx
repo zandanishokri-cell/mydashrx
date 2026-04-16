@@ -14,7 +14,7 @@ const LeafletMap = dynamic(() => import('@/components/ui/LeafletMap'), {
 import {
   ArrowLeft, Phone, Mail, MapPin, Package, Thermometer, AlertTriangle,
   PenLine, Clock, CheckCircle2, XCircle, Truck, User, FileCheck,
-  Flag, RotateCcw, FileEdit, ChevronRight, AlertCircle, X,
+  Flag, RotateCcw, FileEdit, ChevronRight, AlertCircle, X, MessageSquare,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -60,6 +60,16 @@ interface StopDetail {
   barcodesScanned?: string[];
   packageConfirmed?: boolean;
   timeline?: TimelineEvent[];
+  notifications?: NotificationLog[];
+}
+
+interface NotificationLog {
+  id: string;
+  event: string;
+  channel: string;
+  recipient: string;
+  status: string;
+  sentAt: string;
 }
 
 const TIMELINE_ICONS: Record<string, React.ElementType> = {
@@ -73,6 +83,25 @@ const TIMELINE_ICONS: Record<string, React.ElementType> = {
 
 const initials = (name: string) =>
   name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
+
+const EVENT_LABELS: Record<string, string> = {
+  route_dispatched: 'Route Dispatched',
+  stop_arrived: 'Driver Arrived',
+  stop_completed: 'Delivery Confirmed',
+  stop_failed: 'Failed Delivery',
+  stop_rescheduled: 'Delivery Rescheduled',
+};
+
+function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 11 && digits[0] === '1') {
+    return `(${digits.slice(1,4)}) ***-${digits.slice(7)}`;
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0,3)}) ***-${digits.slice(6)}`;
+  }
+  return phone.slice(0, 4) + '***' + phone.slice(-2);
+}
 
 function StopDetailContent({ stopId }: { stopId: string }) {
   const router = useRouter();
@@ -484,6 +513,38 @@ function StopDetailContent({ stopId }: { stopId: string }) {
                 View POD
               </button>
             )}
+          </section>
+        )}
+
+        {stop.notifications && stop.notifications.length > 0 && (
+          <section className="bg-white rounded-2xl border border-gray-100 p-5">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2 mb-4">
+              <MessageSquare size={14} />
+              Patient Notifications
+            </h2>
+            <div className="space-y-2">
+              {stop.notifications.map(n => (
+                <div key={n.id} className="flex items-center justify-between gap-3 py-2 border-b border-gray-50 last:border-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`shrink-0 w-2 h-2 rounded-full ${n.status === 'sent' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-800">{EVENT_LABELS[n.event] ?? n.event}</p>
+                      <p className="text-xs text-gray-400">
+                        {n.channel === 'sms' ? 'SMS' : 'Email'} → {n.channel === 'sms' ? maskPhone(n.recipient) : n.recipient.split('@')[0] + '@***'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${n.status === 'sent' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                      {n.status === 'sent' ? 'Sent' : 'Failed'}
+                    </span>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {new Date(n.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </section>
         )}
 
