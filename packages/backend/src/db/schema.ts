@@ -10,6 +10,7 @@ import {
   uuid,
   varchar,
   index,
+  uniqueIndex,
   time,
 } from 'drizzle-orm/pg-core';
 
@@ -286,7 +287,7 @@ export const leadProspects = pgTable('lead_prospects', {
   email: text('email'),
   ownerName: text('owner_name'),
   businessType: text('business_type'),
-  googlePlaceId: text('google_place_id').unique(),
+  googlePlaceId: text('google_place_id'),
   rating: real('rating'),
   reviewCount: integer('review_count'),
   score: integer('score').notNull().default(0),
@@ -303,6 +304,9 @@ export const leadProspects = pgTable('lead_prospects', {
 }, (t) => ({
   orgIdx: index('leads_org_idx').on(t.orgId),
   statusIdx: index('leads_status_idx').on(t.status),
+  // Per-org uniqueness: same pharmacy can't be imported twice by the same org,
+  // but two different orgs may import the same Google Place.
+  orgPlaceUniq: uniqueIndex('leads_org_place_idx').on(t.orgId, t.googlePlaceId),
 }));
 
 export const leadOutreachLog = pgTable('lead_outreach_log', {

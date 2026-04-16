@@ -122,7 +122,8 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     const body = req.body as {
       name: string; address: string; city: string; state?: string; zip?: string;
       phone?: string; website?: string; email?: string; ownerName?: string;
-      businessType?: string; notes?: string;
+      businessType?: string; notes?: string; score?: number;
+      googlePlaceId?: string; rating?: number; reviewCount?: number; sourceData?: unknown;
     };
 
     if (!body.name || !body.address || !body.city) {
@@ -130,7 +131,23 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const [lead] = await db.insert(leadProspects).values({
-      orgId, ...body, state: body.state ?? 'MI',
+      orgId,
+      name: body.name,
+      address: body.address,
+      city: body.city,
+      state: body.state ?? 'MI',
+      zip: body.zip,
+      phone: body.phone,
+      website: body.website,
+      email: body.email,
+      ownerName: body.ownerName,
+      businessType: body.businessType,
+      notes: body.notes,
+      score: body.score ?? 0,
+      googlePlaceId: body.googlePlaceId,
+      rating: body.rating,
+      reviewCount: body.reviewCount,
+      sourceData: body.sourceData ?? {},
     }).returning();
 
     return reply.code(201).send(lead);
@@ -179,7 +196,12 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     const radiusMeters = (radius ?? 10) * 1609;
     const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${searchQuery}&radius=${radiusMeters}&key=${apiKey}`;
 
-    const gRes = await fetch(url);
+    let gRes: Response;
+    try {
+      gRes = await fetch(url);
+    } catch (e: any) {
+      return reply.code(502).send({ error: `Google Places network error: ${e?.message ?? 'fetch failed'}` });
+    }
     if (!gRes.ok) return reply.code(502).send({ error: 'Google Places API error' });
 
     const gData = await gRes.json() as { results: GooglePlaceResult[]; status: string };
@@ -251,7 +273,7 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     if (body.phone !== undefined) updates.phone = body.phone;
     if (body.ownerName !== undefined) updates.ownerName = body.ownerName;
     if (body.businessType !== undefined) updates.businessType = body.businessType;
-    if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
+    if (body.tags !== undefined) updates.tags = body.tags;
 
     const [lead] = await db.update(leadProspects)
       .set(updates as any)
@@ -300,24 +322,28 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     const payload = req.user as { sub?: string };
     const sentBy = payload?.sub ?? null;
 
-    const resendRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-      body: JSON.stringify({
-        from: `${fromName ?? 'MyDashRx Team'} <outreach@${senderDomain}>`,
-        to: [lead.email],
-        subject,
-        html: emailBody,
-      }),
-    });
-
+    let resendRes: Response;
     let resendMessageId: string | null = null;
     let emailStatus = 'sent';
 
-    if (resendRes.ok) {
-      const resendData = await resendRes.json() as { id?: string };
-      resendMessageId = resendData.id ?? null;
-    } else {
+    try {
+      resendRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+        body: JSON.stringify({
+          from: `${fromName ?? 'MyDashRx Team'} <outreach@${senderDomain}>`,
+          to: [lead.email],
+          subject,
+          html: emailBody,
+        }),
+      });
+      if (resendRes.ok) {
+        const resendData = await resendRes.json() as { id?: string };
+        resendMessageId = resendData.id ?? null;
+      } else {
+        emailStatus = 'failed';
+      }
+    } catch {
       emailStatus = 'failed';
     }
 

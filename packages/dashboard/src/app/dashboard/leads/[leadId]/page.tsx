@@ -117,17 +117,19 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
   const addTag = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && tagInput.trim()) {
       e.preventDefault();
+      const prev = tags;
       const newTags = [...new Set([...tags, tagInput.trim()])];
       setTags(newTags);
       setTagInput('');
-      save({ tags: newTags });
+      save({ tags: newTags }).catch(() => setTags(prev));
     }
   };
 
   const removeTag = (t: string) => {
+    const prev = tags;
     const newTags = tags.filter(tag => tag !== t);
     setTags(newTags);
-    save({ tags: newTags });
+    save({ tags: newTags }).catch(() => setTags(prev));
   };
 
   const sendEmail = async () => {

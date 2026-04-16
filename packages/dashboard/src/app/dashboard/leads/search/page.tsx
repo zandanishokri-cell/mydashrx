@@ -87,23 +87,27 @@ export default function LeadSearchPage() {
     if (!user || selected.size === 0) return;
     setImporting(true);
     const toImport = results.filter(r => selected.has(r.googlePlaceId) && !r.alreadyImported);
-    const results2 = await Promise.allSettled(
+    const settled = await Promise.allSettled(
       toImport.map(place => api.post(`/orgs/${user.orgId}/leads`, {
         name: place.name, address: place.address, city: place.city,
         state: place.state, zip: place.zip, phone: place.phone,
         website: place.website, googlePlaceId: place.googlePlaceId,
         rating: place.rating, reviewCount: place.reviewCount,
         score: place.score, sourceData: place,
-      }))
+      }).then(() => place.googlePlaceId))
     );
-    const count = results2.filter(r => r.status === 'fulfilled').length;
+    const succeeded = new Set(settled.filter(r => r.status === 'fulfilled').map(r => (r as PromiseFulfilledResult<string>).value));
+    const failed = settled.filter(r => r.status === 'rejected').length;
     setImporting(false);
-    // Mark imported
-    setResults(prev => prev.map(r => selected.has(r.googlePlaceId) ? { ...r, alreadyImported: true } : r));
+    setResults(prev => prev.map(r => succeeded.has(r.googlePlaceId) ? { ...r, alreadyImported: true } : r));
     setSelected(new Set());
-    showToast(count > 0
-      ? `Imported ${count} lead${count !== 1 ? 's' : ''} successfully`
-      : 'Import failed — no leads were saved. Try again.');
+    if (succeeded.size > 0 && failed === 0) {
+      showToast(`Imported ${succeeded.size} lead${succeeded.size !== 1 ? 's' : ''} successfully`);
+    } else if (succeeded.size > 0) {
+      showToast(`Imported ${succeeded.size} lead${succeeded.size !== 1 ? 's' : ''} — ${failed} failed. Check for duplicates.`);
+    } else {
+      showToast('Import failed — no leads were saved. Try again.');
+    }
   };
 
   const importable = results.filter(r => !r.alreadyImported);
