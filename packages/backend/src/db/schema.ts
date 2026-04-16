@@ -368,6 +368,16 @@ export const complianceChecks = pgTable('compliance_checks', {
   nextCheckAt: timestamp('next_check_at'),
 });
 
+export const complianceScoreHistory = pgTable('compliance_score_history', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  score: integer('score').notNull(),
+  violationCount: integer('violation_count').notNull().default(0),
+  p0Count: integer('p0_count').notNull().default(0),
+  p1Count: integer('p1_count').notNull().default(0),
+  scannedAt: timestamp('scanned_at').notNull().defaultNow(),
+});
+
 // ─── Michigan Compliance ──────────────────────────────────────────────────────
 export const miComplianceItems = pgTable('mi_compliance_items', {
   id: uuid('id').primaryKey().defaultRandom(),
