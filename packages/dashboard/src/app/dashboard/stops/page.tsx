@@ -190,7 +190,7 @@ export default function StopsPage() {
       a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
       a.download = `stops-${new Date().toISOString().split('T')[0]}.csv`;
       a.click();
-    } catch (err: any) { setExportError(err?.message ?? 'Export failed. Please try again.'); }
+    } catch { setExportError('Export failed. Please try again.'); }
     finally { setExporting(false); }
   };
 

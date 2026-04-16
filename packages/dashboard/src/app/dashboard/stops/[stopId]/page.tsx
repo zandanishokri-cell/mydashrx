@@ -108,8 +108,8 @@ function StopDetailContent({ stopId }: { stopId: string }) {
       const data = await api.get<StopDetail>(`/orgs/${user.orgId}/stops/${stopId}`);
       setStop(data);
       setNotesValue(data.deliveryNotes ?? '');
-    } catch (err: any) {
-      if (err?.message?.startsWith('API 404')) setNotFound(true);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.startsWith('API 404')) setNotFound(true);
       else setLoadError(true);
     } finally {
       setLoading(false);
@@ -134,7 +134,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
     setRescheduling(true);
     setRescheduleError(null);
     try {
-      await api.patch(`/routes/${stop.routeId}/stops/${stop.id}/status`, { status: 'pending' });
+      await api.patch(`/routes/${stop.routeId}/stops/${stop.id}/status`, { status: 'rescheduled' });
       await load();
     } catch {
       setRescheduleError('Failed to reschedule. Please try again.');

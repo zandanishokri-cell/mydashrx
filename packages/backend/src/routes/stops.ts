@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, drivers } from '../db/schema.js';
+import { stops, routes, drivers, plans } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification, sendDriverArrivalEmail, sendRouteCompleteSummaryEmail } from '../services/notifications.js';
@@ -118,11 +118,17 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { routeId } = req.params as { routeId: string };
-    const [route] = await db.select().from(routes).where(eq(routes.id, routeId)).limit(1);
+    const { orgId: userOrgId } = req.user as { orgId: string };
+    // Verify route belongs to caller's org before allowing stop creation
+    const [route] = await db
+      .select({ id: routes.id })
+      .from(routes)
+      .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, userOrgId), isNull(plans.deletedAt)))
+      .where(and(eq(routes.id, routeId), isNull(routes.deletedAt)))
+      .limit(1);
     if (!route) return reply.code(404).send({ error: 'Route not found' });
 
     const body = req.body as {
-      orgId: string;
       recipientName: string;
       recipientPhone: string;
       recipientEmail?: string;
@@ -145,7 +151,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
 
     const [stop] = await db.insert(stops).values({
       routeId,
-      orgId: body.orgId,
+      orgId: userOrgId,
       recipientName: body.recipientName,
       recipientPhone: body.recipientPhone,
       recipientEmail: body.recipientEmail,
@@ -173,10 +179,20 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { routeId } = req.params as { routeId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
     const { stopIds } = req.body as { stopIds: string[] };
     if (!Array.isArray(stopIds) || stopIds.length === 0) {
       return reply.code(400).send({ error: 'stopIds must be a non-empty array' });
     }
+    // Verify route belongs to caller's org before allowing reorder
+    const [route] = await db
+      .select({ id: routes.id })
+      .from(routes)
+      .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, userOrgId), isNull(plans.deletedAt)))
+      .where(and(eq(routes.id, routeId), isNull(routes.deletedAt)))
+      .limit(1);
+    if (!route) return reply.code(404).send({ error: 'Route not found' });
+
     await Promise.all(
       stopIds.map((id, idx) =>
         db.update(stops).set({ sequenceNumber: idx }).where(and(eq(stops.id, id), eq(stops.routeId, routeId), isNull(stops.deletedAt)))
@@ -197,7 +213,12 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     };
 
     // Guard: block updates on terminal stops (prevents resurrecting completed/failed stops)
-    const [existing] = await db.select({ status: stops.status }).from(stops).where(eq(stops.id, stopId)).limit(1);
+    const { orgId: userOrgId } = req.user as { orgId: string };
+    const [existing] = await db
+      .select({ status: stops.status, orgId: stops.orgId })
+      .from(stops)
+      .where(and(eq(stops.id, stopId), eq(stops.orgId, userOrgId), isNull(stops.deletedAt)))
+      .limit(1);
     if (!existing) return reply.code(404).send({ error: 'Not found' });
     if ((TERMINAL_STATUSES as string[]).includes(existing.status)) {
       return reply.code(409).send({ error: `Cannot update a stop in terminal status: ${existing.status}` });
@@ -205,7 +226,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
 
     const updates: Record<string, unknown> = { status };
     if (status === 'arrived') updates.arrivedAt = new Date();
-    if (status === 'completed') updates.completedAt = new Date();
+    if (status === 'completed' || status === 'failed') updates.completedAt = new Date();
     if (failureReason) updates.failureReason = failureReason;
     if (failureNote) updates.failureNote = failureNote;
 
@@ -271,12 +292,21 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { routeId, stopId } = req.params as { routeId: string; stopId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
     const { targetRouteId } = req.body as { targetRouteId: string };
     if (!targetRouteId) return reply.code(400).send({ error: 'targetRouteId required' });
+    // Verify target route belongs to caller's org before allowing cross-route move
+    const [targetRoute] = await db
+      .select({ id: routes.id })
+      .from(routes)
+      .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, userOrgId), isNull(plans.deletedAt)))
+      .where(and(eq(routes.id, targetRouteId), isNull(routes.deletedAt)))
+      .limit(1);
+    if (!targetRoute) return reply.code(404).send({ error: 'Target route not found' });
     // Scope to the originating route to prevent cross-org moves
     const [updated] = await db.update(stops)
       .set({ routeId: targetRouteId })
-      .where(and(eq(stops.id, stopId), eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+      .where(and(eq(stops.id, stopId), eq(stops.routeId, routeId), eq(stops.orgId, userOrgId), isNull(stops.deletedAt)))
       .returning();
     if (!updated) return reply.code(404).send({ error: 'Stop not found' });
     return updated;

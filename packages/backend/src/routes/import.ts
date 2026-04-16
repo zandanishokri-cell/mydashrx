@@ -50,7 +50,7 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
 
     let routeId = existingRoute?.id;
     if (!routeId) {
-      const [depot] = await db.select({ id: depots.id }).from(depots).limit(1);
+      const [depot] = await db.select({ id: depots.id }).from(depots).where(eq(depots.orgId, orgId)).limit(1);
       if (!depot) return reply.code(400).send({ error: 'No depot configured. Set up a depot first.' });
       const today = todayInTz();
       const [plan] = await db.insert(plans).values({ orgId, depotId: depot.id, date: today }).returning();
