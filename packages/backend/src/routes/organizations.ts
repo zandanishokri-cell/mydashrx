@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { organizations, users } from '../db/schema.js';
+import { organizations, users, drivers } from '../db/schema.js';
 import { eq, isNull, and } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import bcrypt from 'bcryptjs';
@@ -155,6 +155,19 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       })
       .returning({ id: users.id, orgId: users.orgId, email: users.email, name: users.name, role: users.role, depotIds: users.depotIds, createdAt: users.createdAt });
 
-    return reply.code(201).send({ user: newUser, tempPassword });
+    let driverId: string | undefined;
+    if (body.role === 'driver') {
+      const [driverRecord] = await db.insert(drivers).values({
+        orgId,
+        name: body.name,
+        email: body.email,
+        phone: '',
+        passwordHash,
+        vehicleType: 'car',
+      }).returning({ id: drivers.id });
+      driverId = driverRecord.id;
+    }
+
+    return reply.code(201).send({ user: newUser, tempPassword, ...(driverId ? { driverId } : {}) });
   });
 };
