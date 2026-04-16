@@ -32,6 +32,11 @@ const seedDefaults = [
   },
 ];
 
+const VALID_TRIGGERS = [
+  'stop_completed', 'stop_failed', 'stop_status_changed',
+  'driver_started_route', 'route_completed', 'stop_approaching',
+] as const;
+
 export const automationRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/automation/rules
   app.get('/rules', { preHandler: requireRole(...authRoles) }, async (req) => {
@@ -54,6 +59,13 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
       emailSubject?: string;
       emailTemplate?: string;
     };
+    if (!body.name?.trim()) return reply.code(400).send({ error: 'name is required' });
+    if (!VALID_TRIGGERS.includes(body.trigger as any)) {
+      return reply.code(400).send({ error: `Invalid trigger. Must be one of: ${VALID_TRIGGERS.join(', ')}` });
+    }
+    if (!Array.isArray(body.actions) || body.actions.length === 0) {
+      return reply.code(400).send({ error: 'At least one action is required' });
+    }
     const [rule] = await db.insert(automationRules).values({
       orgId,
       name: body.name,
@@ -91,6 +103,9 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
       emailSubject: string;
       emailTemplate: string;
     }>;
+    if (body.trigger !== undefined && !VALID_TRIGGERS.includes(body.trigger as any)) {
+      return reply.code(400).send({ error: `Invalid trigger. Must be one of: ${VALID_TRIGGERS.join(', ')}` });
+    }
     const allowed = ['name', 'trigger', 'enabled', 'conditions', 'actions', 'smsTemplate', 'emailSubject', 'emailTemplate'];
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     for (const k of allowed) if (k in body) updates[k] = (body as any)[k];

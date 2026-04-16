@@ -1,6 +1,6 @@
 import { db } from '../db/connection.js';
-import { automationRules, automationLog } from '../db/schema.js';
-import { eq, and, sql } from 'drizzle-orm';
+import { automationRules, automationLog, users } from '../db/schema.js';
+import { eq, and, sql, isNull } from 'drizzle-orm';
 
 export interface TriggerContext {
   orgId: string;
@@ -54,9 +54,19 @@ async function executeRule(
     if (action.type === 'email' && rule.emailTemplate && rule.emailSubject) {
       const body = interpolate(rule.emailTemplate, ctx.data);
       const subject = interpolate(rule.emailSubject, ctx.data);
-      const toEmail = ctx.data[action.to + 'Email'] as string | undefined;
-      if (toEmail && process.env.RESEND_API_KEY) {
-        await sendResendEmail(toEmail, subject, body);
+      if (!process.env.RESEND_API_KEY) continue;
+      if (action.to === 'patient') {
+        const toEmail = ctx.data.patientEmail as string | undefined;
+        if (toEmail) await sendResendEmail(toEmail, subject, body);
+      } else {
+        // Resolve org users with matching role (dispatcher, pharmacy_admin, etc.)
+        const orgUsers = await db
+          .select({ email: users.email })
+          .from(users)
+          .where(and(eq(users.orgId, ctx.orgId), eq(users.role as any, action.to), isNull(users.deletedAt)));
+        for (const u of orgUsers) {
+          await sendResendEmail(u.email, subject, body).catch(console.error);
+        }
       }
     }
   }

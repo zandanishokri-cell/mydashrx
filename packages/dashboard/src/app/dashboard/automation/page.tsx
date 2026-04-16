@@ -94,13 +94,14 @@ function AddRuleModal({ onClose, onSaved, orgId }: ModalProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) return setErr('Name is required');
+    const actions: Array<{ type: string; to: string }> = [];
+    if (form.smsPatient) actions.push({ type: 'sms', to: 'patient' });
+    if (form.emailPatient) actions.push({ type: 'email', to: 'patient' });
+    if (form.emailDispatcher) actions.push({ type: 'email', to: 'dispatcher' });
+    if (actions.length === 0) return setErr('Select at least one action');
     setSaving(true);
     setErr('');
     try {
-      const actions: Array<{ type: string; to: string }> = [];
-      if (form.smsPatient) actions.push({ type: 'sms', to: 'patient' });
-      if (form.emailPatient) actions.push({ type: 'email', to: 'patient' });
-      if (form.emailDispatcher) actions.push({ type: 'email', to: 'dispatcher' });
       await api.post(`/orgs/${orgId}/automation/rules`, {
         name: form.name,
         trigger: form.trigger,
@@ -111,8 +112,8 @@ function AddRuleModal({ onClose, onSaved, orgId }: ModalProps) {
       });
       onSaved();
       onClose();
-    } catch (e: any) {
-      setErr(e.message ?? 'Failed to save rule');
+    } catch {
+      setErr('Failed to save rule. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -249,6 +250,7 @@ export default function AutomationPage() {
   const [toggleError, setToggleError] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState('');
 
   const load = useCallback(async () => {
     if (!orgId) return;
@@ -279,7 +281,7 @@ export default function AutomationPage() {
       if (msg.includes('409') || msg.toLowerCase().includes('already exist')) {
         setSeedError('');
       } else {
-        setSeedError(msg || 'Failed to seed defaults');
+        setSeedError('Failed to seed defaults. Please try again.');
       }
     } finally {
       setSeeding(false);
@@ -292,7 +294,7 @@ export default function AutomationPage() {
     try {
       const updated = await api.patch<Rule>(`/orgs/${orgId}/automation/rules/${rule.id}`, { enabled: !rule.enabled });
       setRules(rs => rs.map(r => r.id === updated.id ? updated : r));
-    } catch (e: any) { setToggleError(e?.message ?? 'Failed to update rule'); }
+    } catch { setToggleError('Failed to update rule. Please try again.'); }
     finally { setToggling(null); }
   };
 
@@ -301,10 +303,11 @@ export default function AutomationPage() {
     const id = confirmDeleteId;
     setConfirmDeleteId(null);
     setDeleting(id);
+    setDeleteError('');
     try {
       await api.del(`/orgs/${orgId}/automation/rules/${id}`);
       setRules(rs => rs.filter(r => r.id !== id));
-    } catch (e: any) { setSeedError(e?.message ?? 'Failed to delete rule'); }
+    } catch { setDeleteError('Failed to delete rule. Please try again.'); }
     finally { setDeleting(null); }
   };
 
@@ -372,6 +375,12 @@ export default function AutomationPage() {
         <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
           {seedError || toggleError}
           <button onClick={() => { setSeedError(''); setToggleError(''); }} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
+      {deleteError && (
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
+          {deleteError}
+          <button onClick={() => setDeleteError('')} className="ml-2 text-red-400 hover:text-red-600">✕</button>
         </div>
       )}
       {confirmDeleteId && (() => {
