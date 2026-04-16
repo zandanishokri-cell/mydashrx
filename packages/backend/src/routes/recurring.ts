@@ -5,25 +5,32 @@ import { eq, and, isNull, lte, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 // All date arithmetic is done in UTC ms to avoid local-timezone drift.
-// A "weekly" schedule advances exactly 7 × 86400000 ms so day-of-week
-// is preserved regardless of DST transitions on the server.
-function calcNextDate(from: Date, schedule: string): Date {
+// Weekly/biweekly use pure millisecond offsets; monthly uses setUTCMonth with day clamping.
+function calcNextDate(from: Date, schedule: string, customIntervalDays?: number | null): Date {
   const ms = from.getTime();
   if (schedule === 'weekly') return new Date(ms + 7 * 86_400_000);
   if (schedule === 'biweekly') return new Date(ms + 14 * 86_400_000);
   if (schedule === 'monthly') {
-    // Advance one calendar month; clamp to last day if month is shorter.
     const d = new Date(from);
     const targetMonth = d.getUTCMonth() + 1;
     d.setUTCMonth(targetMonth);
-    // If setUTCMonth overflowed (e.g. Jan 31 → Mar 3), clamp to last day of targetMonth
-    if (d.getUTCMonth() !== targetMonth % 12) {
-      d.setUTCDate(0); // roll back to last day of intended month
-    }
+    if (d.getUTCMonth() !== targetMonth % 12) d.setUTCDate(0);
     return d;
   }
-  // 'custom' — no customIntervalDays field yet; default to weekly to avoid silent data loss
+  if (schedule === 'custom') {
+    const days = customIntervalDays && customIntervalDays > 0 ? customIntervalDays : 7;
+    return new Date(ms + days * 86_400_000);
+  }
   return new Date(ms + 7 * 86_400_000);
+}
+
+// Combine a date with a time-of-day string ("HH:MM" or "HH:MM:SS") into a UTC timestamp.
+function combineDateTime(date: Date, timeStr: string | null | undefined): Date | undefined {
+  if (!timeStr) return undefined;
+  const parts = timeStr.split(':').map(Number);
+  const d = new Date(date);
+  d.setUTCHours(parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, 0);
+  return d;
 }
 
 export const recurringRoutes: FastifyPluginAsync = async (app) => {
@@ -54,8 +61,14 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
       dayOfWeek?: number;
       dayOfMonth?: number;
       nextDeliveryDate?: string;
+      endDate?: string;
       rxNumber?: string;
       isControlled?: boolean;
+      requiresSignature?: boolean;
+      requiresRefrigeration?: boolean;
+      windowStartTime?: string;
+      windowEndTime?: string;
+      customIntervalDays?: number;
       depotId?: string;
     };
 
@@ -75,8 +88,14 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
       dayOfWeek: body.dayOfWeek,
       dayOfMonth: body.dayOfMonth,
       nextDeliveryDate: body.nextDeliveryDate ? new Date(body.nextDeliveryDate) : new Date(),
+      endDate: body.endDate ? new Date(body.endDate) : undefined,
       rxNumber: body.rxNumber,
       isControlled: body.isControlled ?? false,
+      requiresSignature: body.requiresSignature ?? true,
+      requiresRefrigeration: body.requiresRefrigeration ?? false,
+      windowStartTime: body.windowStartTime,
+      windowEndTime: body.windowEndTime,
+      customIntervalDays: body.customIntervalDays,
       depotId: body.depotId,
     }).returning();
 
@@ -91,12 +110,17 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     const body = req.body as Record<string, unknown>;
 
     const allowed = ['recipientName', 'address', 'lat', 'lng', 'recipientPhone', 'recipientEmail',
-      'notes', 'schedule', 'dayOfWeek', 'dayOfMonth', 'nextDeliveryDate', 'rxNumber', 'isControlled', 'enabled', 'depotId'];
+      'notes', 'schedule', 'dayOfWeek', 'dayOfMonth', 'nextDeliveryDate', 'endDate',
+      'rxNumber', 'isControlled', 'enabled', 'requiresSignature', 'requiresRefrigeration',
+      'windowStartTime', 'windowEndTime', 'customIntervalDays', 'depotId'];
     const updates: Record<string, unknown> = {};
     for (const k of allowed) {
       if (k in body) {
-        if (k === 'nextDeliveryDate' && body[k]) updates[k] = new Date(body[k] as string);
-        else updates[k] = body[k];
+        if ((k === 'nextDeliveryDate' || k === 'endDate') && body[k]) {
+          updates[k] = new Date(body[k] as string);
+        } else {
+          updates[k] = body[k];
+        }
       }
     }
 
@@ -132,13 +156,16 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     const targetDate = new Date(date);
 
     // Find all enabled, non-deleted recurring deliveries due by targetDate
-    const due = await db.select().from(recurringDeliveries)
+    const allDue = await db.select().from(recurringDeliveries)
       .where(and(
         eq(recurringDeliveries.orgId, orgId),
         eq(recurringDeliveries.enabled, true),
         isNull(recurringDeliveries.deletedAt),
         lte(recurringDeliveries.nextDeliveryDate, targetDate),
       ));
+
+    // Filter out schedules that have passed their endDate
+    const due = allDue.filter(rec => !rec.endDate || rec.endDate >= targetDate);
 
     if (due.length === 0) return { generated: 0, stops: [] };
 
@@ -152,7 +179,6 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (!routeId) {
-      // Find a pending plan belonging to this org, then its route
       const orgPlans = await db.select({ id: plans.id }).from(plans)
         .where(and(eq(plans.orgId, orgId), isNull(plans.deletedAt)));
       if (orgPlans.length > 0) {
@@ -186,6 +212,10 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
       deliveryNotes: rec.notes || undefined,
       rxNumbers: rec.rxNumber ? [rec.rxNumber] : [],
       controlledSubstance: rec.isControlled,
+      requiresSignature: rec.requiresSignature,
+      requiresRefrigeration: rec.requiresRefrigeration,
+      windowStart: combineDateTime(targetDate, rec.windowStartTime),
+      windowEnd: combineDateTime(targetDate, rec.windowEndTime),
       status: 'pending' as const,
     }));
 
@@ -195,7 +225,7 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     await Promise.all(due.map(rec =>
       db.update(recurringDeliveries).set({
         lastDeliveryDate: targetDate,
-        nextDeliveryDate: calcNextDate(targetDate, rec.schedule),
+        nextDeliveryDate: calcNextDate(targetDate, rec.schedule, rec.customIntervalDays),
       }).where(eq(recurringDeliveries.id, rec.id))
     ));
 

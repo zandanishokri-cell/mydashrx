@@ -10,6 +10,7 @@ import {
   uuid,
   varchar,
   index,
+  time,
 } from 'drizzle-orm/pg-core';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -414,6 +415,12 @@ export const recurringDeliveries = pgTable('recurring_deliveries', {
   rxNumber: text('rx_number'),
   isControlled: boolean('is_controlled').notNull().default(false),
   enabled: boolean('enabled').notNull().default(true),
+  endDate: timestamp('end_date'),
+  requiresSignature: boolean('requires_signature').notNull().default(true),
+  requiresRefrigeration: boolean('requires_refrigeration').notNull().default(false),
+  windowStartTime: time('window_start_time'),
+  windowEndTime: time('window_end_time'),
+  customIntervalDays: integer('custom_interval_days'),
   depotId: uuid('depot_id').references(() => depots.id),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
