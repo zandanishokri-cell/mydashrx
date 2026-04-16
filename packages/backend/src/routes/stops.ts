@@ -65,6 +65,25 @@ async function fireApproachNotifications(orgId: string, routeId: string): Promis
 
   const stopOrder = route.stopOrder as string[];
 
+  // Fetch ALL non-terminal stops (including already-notified) to build the active queue
+  const allActive = await db
+    .select({ id: stops.id, status: stops.status })
+    .from(stops)
+    .where(and(
+      eq(stops.routeId, routeId),
+      eq(stops.orgId, orgId),
+      isNull(stops.deletedAt),
+    ));
+
+  const nonTerminalIds = new Set(
+    allActive
+      .filter(s => !(TERMINAL_STATUSES as string[]).includes(s.status ?? ''))
+      .map(s => s.id),
+  );
+
+  // Active queue: stopOrder filtered to only non-terminal stops preserves relative sequence
+  const activeOrder = stopOrder.filter(id => nonTerminalIds.has(id));
+
   const pending = await db
     .select({
       id: stops.id,
@@ -84,7 +103,8 @@ async function fireApproachNotifications(orgId: string, routeId: string): Promis
 
   for (const stop of pending) {
     if ((TERMINAL_STATUSES as string[]).includes(stop.status ?? '')) continue;
-    const stopsAhead = stopOrder.indexOf(stop.id);
+    // Use relative position in active queue — not absolute index in full stopOrder
+    const stopsAhead = activeOrder.indexOf(stop.id);
     if (stopsAhead <= 0 || stopsAhead > APPROACH_THRESHOLD) continue;
 
     const etaMin = Math.round(stopsAhead * ETA_PER_STOP_MS / 60000);
