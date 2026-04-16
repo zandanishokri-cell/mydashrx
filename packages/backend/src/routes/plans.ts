@@ -101,7 +101,15 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     const results = await Promise.all(
       planRoutes.map(async (route) => {
         const routeStops = await db
-          .select()
+          .select({
+            id: stops.id,
+            lat: stops.lat,
+            lng: stops.lng,
+            status: stops.status,
+            address: stops.address,
+            recipientName: stops.recipientName,
+            windowEnd: stops.windowEnd,
+          })
           .from(stops)
           .where(and(
             eq(stops.routeId, route.id),
@@ -112,6 +120,11 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
         // Filter out stops with missing geocoding (lat=0,lng=0 → pre-geocoding-fix data)
         const geocodedStops = routeStops.filter(s => s.lat !== 0 || s.lng !== 0);
         if (geocodedStops.length === 0) return null;
+
+        // Window lookup: id → windowEnd (for violation detection after optimize)
+        const windowByStopId = new Map(
+          routeStops.map((s) => [s.id, s.windowEnd]),
+        );
 
         const originalOrder = [...(route.stopOrder as string[])];
         const optimized = await optimizeRoute(depot.lat, depot.lng, geocodedStops);
@@ -132,16 +145,57 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
           ),
         );
 
-        return { routeId: route.id, originalOrder, newOrder: optimized.stopIds, estimatedDuration };
+        // Departure time assumption: today = now; future date = 8am local on plan.date
+        const planDateObj = new Date(`${plan.date}T08:00:00`);
+        const isToday = plan.date === new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Detroit' }).format(new Date());
+        const departureMs = isToday ? Date.now() : planDateObj.getTime();
+
+        // Compute cumulative arrival time at each stop using optimized legs
+        const windowViolations: { stopId: string; address: string; windowEnd: string; estimatedArrival: string }[] = [];
+        let elapsedMs = 0;
+        for (let i = 0; i < optimized.stopIds.length; i++) {
+          const leg = optimized.legs[i];
+          if (leg) elapsedMs += leg.durationMin * 60_000;
+          const stopId = optimized.stopIds[i];
+          const windowEnd = windowByStopId.get(stopId);
+          if (windowEnd) {
+            const estimatedArrivalMs = departureMs + elapsedMs;
+            if (estimatedArrivalMs > windowEnd.getTime()) {
+              const stop = geocodedStops.find((s) => s.id === stopId);
+              windowViolations.push({
+                stopId,
+                address: stop?.address ?? '',
+                windowEnd: windowEnd.toISOString(),
+                estimatedArrival: new Date(estimatedArrivalMs).toISOString(),
+              });
+            }
+          }
+        }
+
+        return { routeId: route.id, originalOrder, newOrder: optimized.stopIds, estimatedDuration, windowViolations };
       }),
     );
 
-    const optimizedResults = results.filter(Boolean) as { routeId: string; originalOrder: string[]; newOrder: string[]; estimatedDuration: number }[];
+    const optimizedResults = results.filter(Boolean) as {
+      routeId: string;
+      originalOrder: string[];
+      newOrder: string[];
+      estimatedDuration: number;
+      windowViolations: { stopId: string; address: string; windowEnd: string; estimatedArrival: string }[];
+    }[];
     // Only mark optimized if at least one route was actually processed
     if (optimizedResults.length > 0) {
       await db.update(plans).set({ status: 'optimized' }).where(eq(plans.id, planId));
     }
-    return { optimized: optimizedResults.length, routes: optimizedResults };
+    const allViolations = optimizedResults.flatMap((r) => r.windowViolations);
+    return {
+      optimized: optimizedResults.length,
+      routes: optimizedResults,
+      windowViolations: allViolations,
+      departureAssumption: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Detroit' }).format(new Date()) === plan.date
+        ? 'Departure assumed at current time'
+        : `Departure assumed at 08:00 AM on ${plan.date}`,
+    };
   });
 
   app.delete('/:planId', {
