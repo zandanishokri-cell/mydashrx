@@ -12,7 +12,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     // Include total stop count (all time) and today's stop count
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayInTz();
     const rows = await db
       .select({
         id: drivers.id, orgId: drivers.orgId, name: drivers.name,
