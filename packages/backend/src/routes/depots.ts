@@ -22,16 +22,29 @@ export const depotRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.put('/:depotId', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
-    const { depotId } = req.params as { orgId: string; depotId: string };
+    const { orgId, depotId } = req.params as { orgId: string; depotId: string };
     const body = req.body as Partial<{ name: string; address: string; lat: number; lng: number; phone: string }>;
-    const [updated] = await db.update(depots).set(body).where(eq(depots.id, depotId)).returning();
+    // Whitelist updatable fields — prevents injection of orgId/deletedAt/id
+    const { name, address, lat, lng, phone } = body;
+    const updates: Record<string, unknown> = {};
+    if (name !== undefined) updates.name = name;
+    if (address !== undefined) updates.address = address;
+    if (lat !== undefined) updates.lat = lat;
+    if (lng !== undefined) updates.lng = lng;
+    if (phone !== undefined) updates.phone = phone;
+    const [updated] = await db.update(depots).set(updates)
+      .where(and(eq(depots.id, depotId), eq(depots.orgId, orgId), isNull(depots.deletedAt)))
+      .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     return updated;
   });
 
   app.delete('/:depotId', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
-    const { depotId } = req.params as { orgId: string; depotId: string };
-    await db.update(depots).set({ deletedAt: new Date() }).where(eq(depots.id, depotId));
+    const { orgId, depotId } = req.params as { orgId: string; depotId: string };
+    const result = await db.update(depots).set({ deletedAt: new Date() })
+      .where(and(eq(depots.id, depotId), eq(depots.orgId, orgId), isNull(depots.deletedAt)))
+      .returning({ id: depots.id });
+    if (result.length === 0) return reply.code(404).send({ error: 'Not found' });
     return reply.code(204).send();
   });
 };

@@ -144,6 +144,13 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
       return reply.code(400).send({ error: 'Invalid email address' });
     }
+    const ASSIGNABLE_ROLES = ['pharmacy_admin', 'dispatcher', 'pharmacist', 'driver'];
+    if (!ASSIGNABLE_ROLES.includes(body.role)) {
+      return reply.code(400).send({ error: `Invalid role. Must be one of: ${ASSIGNABLE_ROLES.join(', ')}` });
+    }
+    if (requestor.role === 'pharmacy_admin' && body.role === 'pharmacy_admin') {
+      return reply.code(403).send({ error: 'Insufficient permissions to assign this role' });
+    }
 
     // Check if user already exists in org
     const [existing] = await db
@@ -162,7 +169,7 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
         orgId,
         email: body.email,
         name: body.name,
-        role: body.role as any,
+        role: body.role as 'pharmacy_admin' | 'dispatcher' | 'pharmacist' | 'driver',
         depotIds: body.depotIds ?? [],
         passwordHash,
         mustChangePassword: true,
