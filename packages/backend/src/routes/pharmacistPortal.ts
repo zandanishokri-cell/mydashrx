@@ -68,6 +68,19 @@ export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
       .where(and(baseWhere, eq(stops.status, 'arrived'), gte(stops.arrivedAt, todayStart)))
       .orderBy(desc(stops.arrivedAt));
 
+    // Failed stops awaiting return confirmation
+    const awaitingReturn = await db
+      .select({
+        id: stops.id,
+        recipientName: stops.recipientName,
+        address: stops.address,
+        controlledSubstance: stops.controlledSubstance,
+        returnedAt: stops.returnedAt,
+      })
+      .from(stops)
+      .where(and(baseWhere, eq(stops.status, 'failed'), isNull(stops.returnedAt)))
+      .orderBy(desc(stops.completedAt));
+
     // Today stats
     const [dispensedRow] = await db
       .select({ cnt: sql<number>`count(*)::int` })
@@ -89,6 +102,7 @@ export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
       awaitingPickup,
       controlledSubstance,
       driverArrivals,
+      awaitingReturn,
       todayStats: {
         dispensed: dispensedRow?.cnt ?? 0,
         pending: pendingRow?.cnt ?? 0,

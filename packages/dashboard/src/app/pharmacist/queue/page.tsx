@@ -25,11 +25,20 @@ interface QueueStop {
   pharmacistApproved?: boolean;
 }
 
+interface AwaitingReturnStop {
+  id: string;
+  recipientName: string;
+  address: string;
+  controlledSubstance: boolean;
+  returnedAt: string | null;
+}
+
 interface QueueData {
   pendingDispensing: QueueStop[];
   awaitingPickup: QueueStop[];
   controlledSubstance: QueueStop[];
   driverArrivals: QueueStop[];
+  awaitingReturn: AwaitingReturnStop[];
   todayStats: { dispensed: number; pending: number; controlled: number };
 }
 
@@ -371,6 +380,33 @@ export default function PharmacistQueuePage() {
                 selected={selectedIds.has(s.id)} onToggleSelect={toggleSelect} />
             ))}
           </Section>
+
+          {(data?.awaitingReturn.length ?? 0) > 0 && (
+            <section>
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+                <span className="w-2 h-2 bg-amber-400 rounded-full" />
+                Awaiting Return ({data!.awaitingReturn.length})
+              </h2>
+              <div className="space-y-2">
+                {data!.awaitingReturn.map(stop => (
+                  <div key={stop.id} className={`bg-white border rounded-xl px-4 py-3 ${stop.controlledSubstance ? 'border-amber-300' : 'border-gray-100'}`}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">{stop.recipientName}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{stop.address}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {stop.controlledSubstance && (
+                          <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">CS</span>
+                        )}
+                        <span className="text-xs text-gray-400">Pending return</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
 
