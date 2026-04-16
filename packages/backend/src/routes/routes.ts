@@ -64,6 +64,11 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     // Verify plan belongs to this org before allowing route deletion
     const [plan] = await db.select({ orgId: plans.orgId }).from(plans).where(eq(plans.id, planId)).limit(1);
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
+    // Unassign non-terminal stops before soft-deleting the route so they
+    // appear in the "Unassigned" tab instead of becoming orphaned records
+    await db.update(stops)
+      .set({ routeId: null })
+      .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)));
     await db.update(routes).set({ deletedAt: new Date() })
       .where(and(eq(routes.id, routeId), eq(routes.planId, planId)));
     return reply.code(204).send();
