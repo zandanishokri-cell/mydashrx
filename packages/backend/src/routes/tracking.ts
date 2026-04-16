@@ -61,7 +61,8 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
     return {
       stopId: stop.id,
       status: stop.status,
-      recipientName: stop.recipientName.split(' ')[0],
+      recipientName: stop.recipientName.split(' ')[0], // first name only — HIPAA-safe
+      routeActive: route?.status === 'active',
       stopsAhead,
       estimatedArrivalAt,
       windowStart: stop.windowStart,

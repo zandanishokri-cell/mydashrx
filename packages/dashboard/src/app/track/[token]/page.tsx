@@ -4,6 +4,8 @@ import { notFound } from 'next/navigation';
 interface TrackingData {
   stopId: string;
   status: string;
+  recipientName: string;
+  routeActive: boolean;
   stopsAhead: number;
   estimatedArrivalAt?: string | null;
   windowStart?: string | null;
@@ -12,16 +14,23 @@ interface TrackingData {
   driverLocation?: { lat: number; lng: number; lastPingAt: string } | null;
 }
 
-async function getTrackingData(token: string): Promise<TrackingData | null> {
+type FetchResult =
+  | { ok: true; data: TrackingData }
+  | { ok: false; notFound: true }
+  | { ok: false; notFound: false };
+
+async function getTrackingData(token: string): Promise<FetchResult> {
   try {
     const res = await fetch(
       `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/v1/track/${token}`,
       { next: { revalidate: 30 } },
     );
-    if (!res.ok) return null;
-    return res.json() as Promise<TrackingData>;
+    if (res.status === 404) return { ok: false, notFound: true };
+    if (!res.ok) return { ok: false, notFound: false };
+    const data = await res.json() as TrackingData;
+    return { ok: true, data };
   } catch {
-    return null;
+    return { ok: false, notFound: false };
   }
 }
 
@@ -29,7 +38,6 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: 'Track Your Delivery — MyDashRx' };
 }
 
-// Timeline steps in order
 const TIMELINE_STEPS = [
   { key: 'pending',   label: 'Order Received' },
   { key: 'preparing', label: 'Preparing'       },
@@ -37,16 +45,10 @@ const TIMELINE_STEPS = [
   { key: 'delivered', label: 'Delivered'        },
 ] as const;
 
-// Map DB status → timeline index (0-based)
 function timelineIndex(status: string): number {
   const map: Record<string, number> = {
-    pending:     0,
-    preparing:   1,
-    en_route:    2,
-    arrived:     2,
-    completed:   3,
-    failed:      3,
-    rescheduled: 1,
+    pending: 0, preparing: 1, en_route: 2, arrived: 2,
+    completed: 3, failed: 3, rescheduled: 1,
   };
   return map[status] ?? 0;
 }
@@ -69,21 +71,55 @@ function staticMapUrl(lat: number, lng: number) {
 }
 
 export default async function TrackingPage({ params }: { params: { token: string } }) {
-  const data = await getTrackingData(params.token);
-  if (!data) notFound();
+  const result = await getTrackingData(params.token);
 
-  const { status, stopsAhead, estimatedArrivalAt, driverLocation, windowStart, windowEnd, completedAt } = data;
+  // Genuine 404 — token doesn't exist
+  if (!result.ok && result.notFound) notFound();
+
+  // Backend unreachable / error — show friendly error, not 404
+  if (!result.ok) {
+    return (
+      <div className="min-h-screen bg-[#F7F8FC] flex flex-col items-center py-10 px-4">
+        <div className="w-full max-w-sm space-y-4">
+          <div className="text-center mb-6">
+            <h1 className="font-bold text-2xl text-[#0F4C81]" style={{ fontFamily: 'system-ui' }}>MyDashRx</h1>
+            <p className="text-gray-400 text-sm mt-1">Prescription Delivery Tracker</p>
+          </div>
+          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-6 text-center shadow-sm">
+            <p className="text-base font-semibold text-amber-800 mb-2">Tracking temporarily unavailable</p>
+            <p className="text-sm text-gray-600">We&apos;re having trouble loading your tracking info. Please try refreshing in a moment.</p>
+          </div>
+          <p className="text-center text-xs text-gray-400 pt-2">
+            Questions about your delivery? Contact your pharmacy directly.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const { data } = result;
+  const { status, recipientName, routeActive, stopsAhead, estimatedArrivalAt, driverLocation, windowStart, windowEnd, completedAt } = data;
   const activeStep = timelineIndex(status);
   const isDelivered = status === 'completed';
   const isFailed = status === 'failed';
-  const isEnRoute = status === 'en_route' || status === 'arrived';
+  const isRescheduled = status === 'rescheduled';
+  // Only show en-route UI when route is actually active (prevents "Arriving soon!" for unassigned stops)
+  const isEnRoute = (status === 'en_route' || status === 'arrived') && routeActive;
   const mapUrl = driverLocation ? staticMapUrl(driverLocation.lat, driverLocation.lng) : null;
-
-  // Dynamic ETA from stops-ahead calc; fall back to scheduled window if not available
   const etaIso = estimatedArrivalAt ?? windowEnd ?? windowStart;
+  const inProgress = !isDelivered && !isFailed && !isRescheduled;
+  // Auto-refresh interval in seconds — only when delivery is actively in progress
+  const refreshSeconds = inProgress ? 30 : null;
 
   return (
     <div className="min-h-screen bg-[#F7F8FC] flex flex-col items-center py-10 px-4">
+      {refreshSeconds && (
+        // Meta refresh keeps the page live for patients watching their delivery
+        // eslint-disable-next-line @next/next/no-head-element
+        <head>
+          <meta httpEquiv="refresh" content={String(refreshSeconds)} />
+        </head>
+      )}
       <style>{`
         @keyframes delivered-in {
           from { opacity: 0; transform: scale(0.85); }
@@ -102,7 +138,7 @@ export default async function TrackingPage({ params }: { params: { token: string
 
         {/* Header */}
         <div className="text-center mb-6">
-          <h1 className="font-bold text-2xl text-[#0F4C81]" style={{ fontFamily: 'var(--font-sora)' }}>
+          <h1 className="font-bold text-2xl text-[#0F4C81]" style={{ fontFamily: 'system-ui' }}>
             MyDashRx
           </h1>
           <p className="text-gray-400 text-sm mt-1">Prescription Delivery Tracker</p>
@@ -116,13 +152,13 @@ export default async function TrackingPage({ params }: { params: { token: string
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <p className="text-xl font-bold text-green-700 mb-1">Your delivery is complete!</p>
+            <p className="text-xl font-bold text-green-700 mb-1">
+              {recipientName ? `${recipientName}, your delivery is complete!` : 'Your delivery is complete!'}
+            </p>
             {completedAt && (
-              <p className="text-sm text-green-600 mb-3">
-                Delivered at {fmtTime(completedAt)}
-              </p>
+              <p className="text-sm text-green-600 mb-3">Delivered at {fmtTime(completedAt)}</p>
             )}
-            <p className="text-xs text-gray-500">Questions? Call your pharmacy directly.</p>
+            <p className="text-xs text-gray-500">Questions? Contact your pharmacy directly.</p>
           </div>
         )}
 
@@ -134,28 +170,38 @@ export default async function TrackingPage({ params }: { params: { token: string
           </div>
         )}
 
+        {/* ── RESCHEDULED STATE ── */}
+        {isRescheduled && (
+          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-5 shadow-sm">
+            <p className="text-base font-semibold text-amber-800 mb-1">Delivery Rescheduled</p>
+            <p className="text-sm text-gray-600">Your delivery has been rescheduled. Your pharmacy will contact you with a new delivery window.</p>
+          </div>
+        )}
+
         {/* ── IN-PROGRESS STATUS CARD ── */}
-        {!isDelivered && !isFailed && (
+        {inProgress && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm font-semibold text-gray-800 flex-1">Your Delivery</span>
+              <span className="text-sm font-semibold text-gray-800 flex-1">
+                {recipientName ? `Hi ${recipientName}!` : 'Your Delivery'}
+              </span>
               {isEnRoute && (
                 <span className="text-xs bg-teal-50 text-teal-700 px-2.5 py-1 rounded-full font-medium">On the way</span>
               )}
-              {status === 'pending' && (
+              {!isEnRoute && (
                 <span className="text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full font-medium">Preparing</span>
               )}
             </div>
 
             {/* ETA */}
-            {etaIso && !isDelivered && (
+            {etaIso && (
               <div className="bg-blue-50 rounded-xl px-4 py-3 mb-4">
                 <p className="text-xs text-blue-500 font-medium uppercase tracking-wide mb-0.5">Estimated Arrival</p>
                 <p className="text-base font-bold text-blue-800">{etaWindow(etaIso)}</p>
               </div>
             )}
 
-            {/* Stops ahead indicator */}
+            {/* Stops ahead — only when route is active */}
             {isEnRoute && stopsAhead > 0 && (
               <div className="text-sm text-teal-700 bg-teal-50 rounded-lg px-3 py-2.5 mb-4">
                 {stopsAhead === 1 ? "You're next!" : `${stopsAhead} stops before yours`}
@@ -173,9 +219,7 @@ export default async function TrackingPage({ params }: { params: { token: string
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Delivery Progress</p>
           <div className="relative">
-            {/* Vertical connector line */}
             <div className="absolute left-[13px] top-3 bottom-3 w-[2px] bg-gray-100" />
-
             <div className="space-y-5">
               {TIMELINE_STEPS.map((step, i) => {
                 const done    = i < activeStep;
@@ -183,7 +227,6 @@ export default async function TrackingPage({ params }: { params: { token: string
                 const pending = i > activeStep;
                 return (
                   <div key={step.key} className="flex items-center gap-3 relative">
-                    {/* Step dot */}
                     <div className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-all
                       ${done    ? 'bg-[#0F4C81]' : ''}
                       ${active  ? 'bg-[#0F4C81] pulse-dot' : ''}
@@ -206,7 +249,7 @@ export default async function TrackingPage({ params }: { params: { token: string
           </div>
         </div>
 
-        {/* ── DRIVER CARD (en_route / arrived) ── */}
+        {/* ── DRIVER CARD ── */}
         {isEnRoute && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Your Driver</p>
@@ -223,18 +266,10 @@ export default async function TrackingPage({ params }: { params: { token: string
                 </p>
               </div>
             </div>
-
-            {/* Static map if driver location available */}
             {mapUrl && (
               <div className="mt-4 rounded-xl overflow-hidden border border-gray-100">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={mapUrl}
-                  alt="Driver location map"
-                  className="w-full h-auto"
-                  width={400}
-                  height={160}
-                />
+                <img src={mapUrl} alt="Driver location map" className="w-full h-auto" width={400} height={160} />
               </div>
             )}
           </div>
