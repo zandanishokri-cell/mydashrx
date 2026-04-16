@@ -386,6 +386,50 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
 
     return updated;
   });
+
+  // POST /me/stops/:stopId/return-confirm — driver confirms package returned to pharmacy
+  app.post('/me/stops/:stopId/return-confirm', { preHandler: requireRole('driver') }, async (req, reply) => {
+    const jwtUser = req.user as { sub: string; driverId?: string; orgId: string };
+    const driverId = jwtUser.driverId ?? jwtUser.sub;
+    const { stopId } = req.params as { stopId: string };
+
+    const [stop] = await db
+      .select({ id: stops.id, status: stops.status, returnedAt: stops.returnedAt, routeId: stops.routeId, orgId: stops.orgId, controlledSubstance: stops.controlledSubstance })
+      .from(stops)
+      .where(and(eq(stops.id, stopId), eq(stops.orgId, jwtUser.orgId), isNull(stops.deletedAt)))
+      .limit(1);
+
+    if (!stop) return reply.code(404).send({ error: 'Stop not found' });
+    if (stop.status !== 'failed') return reply.code(409).send({ error: 'Can only confirm return for failed stops' });
+    if (stop.returnedAt) return reply.code(409).send({ error: 'Return already confirmed' });
+
+    if (stop.routeId) {
+      const [route] = await db
+        .select({ driverId: routes.driverId })
+        .from(routes)
+        .where(eq(routes.id, stop.routeId))
+        .limit(1);
+      if (route?.driverId && route.driverId !== driverId) {
+        return reply.code(403).send({ error: 'Not your route' });
+      }
+    }
+
+    const [updated] = await db.update(stops)
+      .set({ returnedAt: new Date() })
+      .where(and(eq(stops.id, stopId), isNull(stops.returnedAt)))
+      .returning();
+
+    if (!updated) return reply.code(409).send({ error: 'Return already confirmed' });
+
+    fireTrigger({
+      orgId: jwtUser.orgId,
+      trigger: 'stop_failed',
+      resourceId: stopId,
+      data: { patientName: '', address: '', stopStatus: 'failed', controlledSubstance: String(stop.controlledSubstance ?? false) },
+    }).catch(console.error);
+
+    return { ok: true, returnedAt: updated.returnedAt };
+  });
 };
 
 async function logCsAudit(stopId: string, driverId: string) {
