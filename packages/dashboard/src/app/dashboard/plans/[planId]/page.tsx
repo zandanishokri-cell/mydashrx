@@ -189,7 +189,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
               <Zap size={14} /> Optimize
             </Button>
           )}
-          {(plan.status === 'optimized' || plan.status === 'draft') && totalStops > 0 && (
+          {(plan.status === 'optimized' || plan.status === 'draft') && routes.length > 0 && totalStops > 0 && (
             <Button size="sm" onClick={distribute} loading={distributing}>
               <Send size={14} /> Distribute
             </Button>

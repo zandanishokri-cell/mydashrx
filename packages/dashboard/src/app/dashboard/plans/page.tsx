@@ -67,7 +67,7 @@ export default function PlansPage() {
       setPlans(withMeta);
     } catch { setPlans([]); setLoadError(true); }
     finally { setLoading(false); }
-  }, [user, depotId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 

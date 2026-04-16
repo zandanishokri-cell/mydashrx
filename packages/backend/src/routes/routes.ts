@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { routes, stops, plans } from '../db/schema.js';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 export const routeRoutes: FastifyPluginAsync = async (app) => {
@@ -11,7 +11,8 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     const { planId } = req.params as { planId: string };
     const { orgId: userOrgId } = req.user as { orgId: string };
     // Verify plan belongs to this org before listing routes
-    const [plan] = await db.select({ orgId: plans.orgId }).from(plans).where(eq(plans.id, planId)).limit(1);
+    const [plan] = await db.select({ orgId: plans.orgId }).from(plans)
+      .where(and(eq(plans.id, planId), isNull(plans.deletedAt))).limit(1);
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
     return db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
   });
@@ -22,7 +23,8 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     const { planId } = req.params as { planId: string };
     const { orgId: userOrgId } = req.user as { orgId: string };
     // Verify plan belongs to this org before allowing route creation
-    const [plan] = await db.select({ orgId: plans.orgId }).from(plans).where(eq(plans.id, planId)).limit(1);
+    const [plan] = await db.select({ orgId: plans.orgId }).from(plans)
+      .where(and(eq(plans.id, planId), isNull(plans.deletedAt))).limit(1);
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
     const { driverId } = req.body as { driverId: string };
     if (!driverId) return reply.code(400).send({ error: 'driverId required' });
@@ -36,9 +38,14 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     const { planId, routeId } = req.params as { planId: string; routeId: string };
     const { orgId: userOrgId } = req.user as { orgId: string };
     // Verify plan belongs to this org before allowing status mutation
-    const [plan] = await db.select({ orgId: plans.orgId }).from(plans).where(eq(plans.id, planId)).limit(1);
+    const [plan] = await db.select({ orgId: plans.orgId }).from(plans)
+      .where(and(eq(plans.id, planId), isNull(plans.deletedAt))).limit(1);
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
-    const { status } = req.body as { status: 'pending' | 'active' | 'completed' };
+    const { status } = req.body as { status: string };
+    const VALID_STATUSES = ['pending', 'active', 'completed'] as const;
+    if (!VALID_STATUSES.includes(status as typeof VALID_STATUSES[number])) {
+      return reply.code(400).send({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
+    }
     const updates: Record<string, unknown> = { status };
     if (status === 'active') updates.startedAt = new Date();
     if (status === 'completed') updates.completedAt = new Date();
@@ -73,7 +80,8 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     const { planId, routeId } = req.params as { planId: string; routeId: string };
     const { orgId: userOrgId } = req.user as { orgId: string };
     // Verify plan belongs to this org before allowing route deletion
-    const [plan] = await db.select({ orgId: plans.orgId }).from(plans).where(eq(plans.id, planId)).limit(1);
+    const [plan] = await db.select({ orgId: plans.orgId }).from(plans)
+      .where(and(eq(plans.id, planId), isNull(plans.deletedAt))).limit(1);
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
     // Unassign non-terminal stops before soft-deleting the route so they
     // appear in the "Unassigned" tab instead of becoming orphaned records

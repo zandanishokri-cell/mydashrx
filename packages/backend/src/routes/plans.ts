@@ -48,6 +48,20 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
+
+    // Verify plan exists, belongs to org, and has at least one route before distributing
+    const [plan] = await db.select().from(plans)
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .limit(1);
+    if (!plan) return reply.code(404).send({ error: 'Not found' });
+
+    const planRouteList = await db.select({ id: routes.id })
+      .from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
+    if (planRouteList.length === 0) return reply.code(400).send({ error: 'Cannot distribute a plan with no routes' });
+
+    // Idempotent: already distributed is a no-op
+    if (plan.status === 'distributed') return plan;
+
     const [updated] = await db
       .update(plans)
       .set({ status: 'distributed' })
@@ -67,10 +81,19 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
       .limit(1);
     if (!plan) return reply.code(404).send({ error: 'Plan not found' });
 
+    // Block optimization on already-distributed or completed plans
+    if (plan.status === 'distributed' || plan.status === 'completed') {
+      return reply.code(409).send({ error: `Cannot optimize a plan with status '${plan.status}'` });
+    }
+
     const [depot] = await db.select().from(depots).where(eq(depots.id, plan.depotId)).limit(1);
     if (!depot) return reply.code(404).send({ error: 'Depot not found' });
 
+    // Guard: depot must have valid coordinates for optimizer
+    if (!depot.lat || !depot.lng) return reply.code(422).send({ error: 'Depot is missing GPS coordinates — cannot optimize' });
+
     const planRoutes = await db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
+    if (planRoutes.length === 0) return reply.code(400).send({ error: 'No routes to optimize' });
 
     const results = await Promise.all(
       planRoutes.map(async (route) => {
@@ -111,7 +134,10 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     );
 
     const optimizedResults = results.filter(Boolean) as { routeId: string; originalOrder: string[]; newOrder: string[]; estimatedDuration: number }[];
-    await db.update(plans).set({ status: 'optimized' }).where(eq(plans.id, planId));
+    // Only mark optimized if at least one route was actually processed
+    if (optimizedResults.length > 0) {
+      await db.update(plans).set({ status: 'optimized' }).where(eq(plans.id, planId));
+    }
     return { optimized: optimizedResults.length, routes: optimizedResults };
   });
 
