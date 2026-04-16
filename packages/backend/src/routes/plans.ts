@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { plans, routes, stops, depots } from '../db/schema.js';
-import { eq, and, isNull, inArray } from 'drizzle-orm';
+import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { optimizeRoute } from '../services/routeOptimizer.js';
 
@@ -72,12 +72,22 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
         const routeStops = await db
           .select()
           .from(stops)
-          .where(and(eq(stops.routeId, route.id), isNull(stops.deletedAt)));
-        if (routeStops.length === 0) return null;
+          .where(and(
+            eq(stops.routeId, route.id),
+            isNull(stops.deletedAt),
+            // Exclude already-terminal stops from re-optimization
+            notInArray(stops.status, ['completed', 'failed', 'rescheduled']),
+          ));
+        // Filter out stops with missing geocoding (lat=0,lng=0 → pre-geocoding-fix data)
+        const geocodedStops = routeStops.filter(s => s.lat !== 0 || s.lng !== 0);
+        if (geocodedStops.length === 0) return null;
 
         const originalOrder = [...(route.stopOrder as string[])];
-        const optimized = await optimizeRoute(depot.lat, depot.lng, routeStops);
-        const estimatedDuration = optimized.stopIds.length * 8 * 60; // 8 min/stop in seconds
+        const optimized = await optimizeRoute(depot.lat, depot.lng, geocodedStops);
+        // Use real route duration from optimizer (minutes→seconds); fall back to 8 min/stop estimate
+        const estimatedDuration = optimized.totalDuration > 0
+          ? Math.round(optimized.totalDuration * 60)
+          : optimized.stopIds.length * 8 * 60;
 
         await db.update(routes).set({
           stopOrder: optimized.stopIds,
