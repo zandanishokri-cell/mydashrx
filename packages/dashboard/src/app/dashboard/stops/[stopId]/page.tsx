@@ -93,6 +93,12 @@ function StopDetailContent({ stopId }: { stopId: string }) {
   const [reassigning, setReassigning] = useState(false);
   const [reassignError, setReassignError] = useState<string | null>(null);
   const [openReassignError, setOpenReassignError] = useState('');
+  const [showAssign, setShowAssign] = useState(false);
+  const [assignRoutes, setAssignRoutes] = useState<{ id: string; driverName: string | null; planDate: string | null; depotName: string | null; stopCount: number }[]>([]);
+  const [assignTargetId, setAssignTargetId] = useState('');
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [assignError, setAssignError] = useState('');
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -163,6 +169,30 @@ function StopDetailContent({ stopId }: { stopId: string }) {
     } catch {
       setReassignError('Failed to reassign. Please try again.');
     } finally { setReassigning(false); }
+  };
+
+  const openAssign = async () => {
+    if (!user) return;
+    setAssignLoading(true); setAssignError('');
+    try {
+      const data = await api.get<{ routes: { id: string; driverName: string | null; planDate: string | null; depotName: string | null; stopCount: number }[] }>(`/orgs/${user.orgId}/routes`);
+      setAssignRoutes(data.routes ?? []);
+      setAssignTargetId(data.routes?.[0]?.id ?? '');
+      setShowAssign(true);
+    } catch { setAssignError('Failed to load routes. Please try again.'); }
+    finally { setAssignLoading(false); }
+  };
+
+  const confirmAssign = async () => {
+    if (!stop || !assignTargetId || !user) return;
+    setAssigning(true); setAssignError('');
+    try {
+      await api.post(`/orgs/${user.orgId}/stops/bulk-reassign`, { stopIds: [stop.id], targetRouteId: assignTargetId });
+      await load();
+      setShowAssign(false);
+    } catch {
+      setAssignError('Failed to assign route. Please try again.');
+    } finally { setAssigning(false); }
   };
 
   if (loading) return (
@@ -466,6 +496,21 @@ function StopDetailContent({ stopId }: { stopId: string }) {
               )}
             </div>
           )}
+          {!stop.routeId && !['completed', 'failed', 'rescheduled'].includes(stop.status) &&
+           user && user.role !== 'driver' && user.role !== 'pharmacist' && (
+            <>
+              <button
+                onClick={openAssign}
+                disabled={assignLoading}
+                className="flex items-center gap-2 px-4 py-2 bg-[#0F4C81] text-white rounded-xl text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
+              >
+                <Truck size={15} /> {assignLoading ? 'Loading routes…' : 'Assign to Route'}
+              </button>
+              {assignError && !showAssign && (
+                <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} />{assignError}</p>
+              )}
+            </>
+          )}
           {stop.routeId && stop.planId && !['completed', 'failed', 'rescheduled'].includes(stop.status) &&
            user && user.role !== 'driver' && user.role !== 'pharmacist' && (
             <>
@@ -499,6 +544,55 @@ function StopDetailContent({ stopId }: { stopId: string }) {
             </Link>
           )}
         </section>
+
+        {/* Assign to Route Modal */}
+        {showAssign && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-4" onClick={() => { setShowAssign(false); setAssignError(''); }}>
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-base font-semibold text-gray-900">Assign to Route</h3>
+                <button onClick={() => { setShowAssign(false); setAssignError(''); }} className="p-1 text-gray-400 hover:text-gray-600"><X size={16} /></button>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">Select a route to add this stop to</p>
+              {assignRoutes.length === 0 ? (
+                <p className="text-sm text-gray-400 mb-4">No active routes available. Create a route plan first.</p>
+              ) : (
+                <div className="mb-4 space-y-2 max-h-64 overflow-y-auto">
+                  {assignRoutes.map(r => (
+                    <button
+                      key={r.id}
+                      onClick={() => setAssignTargetId(r.id)}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-colors ${
+                        assignTargetId === r.id
+                          ? 'border-[#0F4C81] bg-blue-50 text-[#0F4C81]'
+                          : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      <div className="font-medium">{r.driverName ?? 'Unassigned driver'}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {r.planDate ?? 'No date'} · {r.depotName ?? 'No depot'} · {r.stopCount} stop{r.stopCount !== 1 ? 's' : ''}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {assignError && <p className="text-xs text-red-600 mb-3 flex items-center gap-1"><AlertCircle size={12} />{assignError}</p>}
+              <div className="flex gap-2">
+                <button onClick={() => { setShowAssign(false); setAssignError(''); }}
+                  className="flex-1 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-sm hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmAssign}
+                  disabled={assigning || !assignTargetId || assignRoutes.length === 0}
+                  className="flex-1 px-4 py-2 bg-[#0F4C81] text-white rounded-xl text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
+                >
+                  {assigning ? 'Assigning…' : 'Assign'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Reassign Driver Modal */}
         {showReassign && (
