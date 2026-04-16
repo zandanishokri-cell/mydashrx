@@ -181,7 +181,7 @@ async function michiganChecks(orgId: string): Promise<ComplianceFinding[]> {
       eq(stops.controlledSubstance, true),
       eq(stops.status, 'completed'),
       isNull(stops.deletedAt),
-      or(isNull(proofOfDeliveries.id), eq(proofOfDeliveries.idDobConfirmed, false)),
+      or(isNull(proofOfDeliveries.id), isNull(proofOfDeliveries.idDobConfirmed), eq(proofOfDeliveries.idDobConfirmed, false)),
     ));
   if (csNoDob.length > 0) findings.push({
     orgId, severity: 'P0', category: 'michigan',
@@ -228,6 +228,8 @@ async function michiganChecks(orgId: string): Promise<ComplianceFinding[]> {
       AND s.deleted_at IS NULL
       AND d.drug_capable = false
       AND r.driver_id IS NOT NULL
+      AND r.status NOT IN ('completed', 'cancelled')
+      AND p.status NOT IN ('completed', 'cancelled')
   `);
   if (drugIncapable.length > 0) findings.push({
     orgId, severity: 'P1', category: 'michigan',
@@ -289,32 +291,33 @@ const SCANNER_CHECK_NAMES = [
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
 async function persistFindings(findings: ComplianceFinding[], scannedOrgIds: string[]): Promise<void> {
-  // Always delete stale scanner rows for every scanned org — even if org has zero violations
-  for (const orgId of scannedOrgIds) {
-    await db.delete(complianceChecks).where(and(
-      eq(complianceChecks.orgId, orgId),
-      inArray(complianceChecks.checkName, SCANNER_CHECK_NAMES),
-    ));
-  }
-  if (!findings.length) return;
-  await db.insert(complianceChecks).values(
-    findings.map(f => ({
-      orgId: f.orgId,
-      category: f.category,
-      checkName: f.checkName,
-      status: f.count > 0 ? 'fail' : 'pass',
-      detail: JSON.stringify({
-        severity: f.severity,
-        description: f.description,
-        count: f.count,
-        legalRef: f.legalRef,
-        recommendation: f.recommendation,
-        resourceIds: f.resourceIds,
-        blocksDeployment: f.blocksDeployment,
-      }),
-      lastCheckedAt: new Date(),
-    }))
-  );
+  const toInsert = findings.map(f => ({
+    orgId: f.orgId,
+    category: f.category,
+    checkName: f.checkName,
+    status: f.count > 0 ? 'fail' : 'pass',
+    detail: JSON.stringify({
+      severity: f.severity,
+      description: f.description,
+      count: f.count,
+      legalRef: f.legalRef,
+      recommendation: f.recommendation,
+      resourceIds: f.resourceIds,
+      blocksDeployment: f.blocksDeployment,
+    }),
+    lastCheckedAt: new Date(),
+  }));
+
+  await db.transaction(async (tx) => {
+    // Always delete stale scanner rows for every scanned org — even if org has zero violations
+    for (const orgId of scannedOrgIds) {
+      await tx.delete(complianceChecks).where(and(
+        eq(complianceChecks.orgId, orgId),
+        inArray(complianceChecks.checkName, SCANNER_CHECK_NAMES),
+      ));
+    }
+    if (toInsert.length > 0) await tx.insert(complianceChecks).values(toInsert);
+  });
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

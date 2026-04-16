@@ -102,6 +102,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   app.post('/items', { preHandler: requireRole(...ADMIN_ROLES) }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as { category: string; itemName: string; legalRef?: string; notes?: string; dueDate?: string };
+    if (!body.itemName?.trim()) return reply.code(400).send({ error: 'itemName is required' });
     const [item] = await db.insert(miComplianceItems).values({
       orgId,
       category: body.category,
@@ -168,6 +169,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   app.post('/regulatory', { preHandler: requireRole(...ADMIN_ROLES) }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as { title: string; summary: string; source: string; impactLevel?: string; effectiveDate?: string; url?: string };
+    if (!body.title?.trim() || !body.summary?.trim()) return reply.code(400).send({ error: 'title and summary are required' });
     if (body.impactLevel !== undefined && !VALID_IMPACT_LEVELS.includes(body.impactLevel)) {
       return reply.code(400).send({ error: `Invalid impactLevel. Must be one of: ${VALID_IMPACT_LEVELS.join(', ')}` });
     }

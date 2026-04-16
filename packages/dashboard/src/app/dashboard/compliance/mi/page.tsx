@@ -17,21 +17,24 @@ interface MiItem {
 }
 
 const STATUS_CYCLE: Record<string, string> = {
-  pending: 'in_progress',
-  in_progress: 'compliant',
-  compliant: 'pending',
+  pending: 'compliant',
+  compliant: 'warning',
+  warning: 'non_compliant',
+  non_compliant: 'pending',
 };
 
 const STATUS_BADGE: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700',
-  in_progress: 'bg-blue-100 text-blue-700',
+  pending: 'bg-gray-100 text-gray-600',
   compliant: 'bg-emerald-100 text-emerald-700',
+  warning: 'bg-amber-100 text-amber-700',
+  non_compliant: 'bg-red-100 text-red-700',
 };
 
 const STATUS_LABEL: Record<string, string> = {
   pending: 'Pending',
-  in_progress: 'In Progress',
   compliant: 'Compliant',
+  warning: 'Warning',
+  non_compliant: 'Non-Compliant',
 };
 
 function statusIcon(status: string) {
@@ -62,6 +65,7 @@ export default function MiCompliancePage() {
   useEffect(() => { load(); }, [load]);
 
   const cycleStatus = async (item: MiItem) => {
+    if (!user) return;
     const next = STATUS_CYCLE[item.status] ?? 'pending';
     setSaving(item.id);
     setSaveError('');
@@ -201,7 +205,7 @@ export default function MiCompliancePage() {
       )}
 
       <p className="text-xs text-gray-400 text-center">
-        Click any status icon to cycle: Pending → In Progress → Compliant
+        Click any status icon to cycle: Pending → Compliant → Warning → Non-Compliant
       </p>
     </div>
   );

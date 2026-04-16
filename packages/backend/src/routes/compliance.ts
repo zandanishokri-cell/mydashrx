@@ -343,7 +343,7 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(complianceScoreHistory.orgId, orgId))
       .orderBy(desc(complianceScoreHistory.scannedAt))
       .limit(30);
-    return rows.reverse(); // chronological order for charting
+    return [...rows].reverse(); // chronological order for charting
   });
 
   // ─── Michigan Compliance Checklist ──────────────────────────────────────────
@@ -357,6 +357,11 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/mi-checklist/:itemId', { preHandler: ADMIN }, async (req, reply) => {
     const { orgId, itemId } = req.params as { orgId: string; itemId: string };
     const body = req.body as Partial<{ status: string; notes: string; dueDate: string }>;
+
+    const VALID_MI_ITEM_STATUSES = ['compliant', 'warning', 'non_compliant', 'pending'];
+    if (body.status !== undefined && !VALID_MI_ITEM_STATUSES.includes(body.status)) {
+      return reply.code(400).send({ error: `Invalid status. Must be one of: ${VALID_MI_ITEM_STATUSES.join(', ')}` });
+    }
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (body.status !== undefined) {
