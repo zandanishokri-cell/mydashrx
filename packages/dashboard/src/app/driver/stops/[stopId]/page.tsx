@@ -77,8 +77,8 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
       const result = await api.post<Stop>(`/driver/me/stops/${stopId}/barcode`, { barcode: value });
       setScannedBarcodes(result.barcodesScanned ?? []);
       setSuccess(`Barcode scanned: ${value.slice(0, 20)}${value.length > 20 ? '…' : ''}`);
-    } catch (err: any) {
-      setError(err?.message ?? 'Scan failed');
+    } catch {
+      setError('Scan failed. Please try again.');
     }
   };
 
@@ -111,8 +111,8 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
       if (status === 'completed' || status === 'failed') {
         setTimeout(() => router.back(), 1500);
       }
-    } catch (err: any) {
-      setError(err?.message ?? 'Failed to update');
+    } catch {
+      setError('Failed to update status. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -133,8 +133,8 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
       const data = await res.json();
       setPhotoUrl(data.url);
       setSuccess('Photo uploaded!');
-    } catch (err: any) {
-      setError(err?.message ?? 'Upload failed');
+    } catch {
+      setError('Upload failed. Please try again.');
     } finally {
       setUploading(false);
     }
@@ -187,6 +187,15 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
         <p className="text-blue-200 text-sm mt-1 flex items-center gap-1">
           <MapPin size={12} /> {stop.address}
         </p>
+        {!isDone && (
+          <a
+            href={`https://maps.google.com/?q=${encodeURIComponent(stop.address)}&dirflg=d`}
+            target="_blank" rel="noreferrer"
+            className="mt-3 inline-flex items-center gap-1.5 text-xs bg-white/20 text-white px-3 py-1.5 rounded-full hover:bg-white/30 transition-colors"
+          >
+            <MapPin size={11} /> Navigate
+          </a>
+        )}
       </div>
 
       <div className="px-4 py-4 space-y-4">
