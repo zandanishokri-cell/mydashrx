@@ -58,6 +58,7 @@ function ComplianceItemsContent() {
   const [showAdd, setShowAdd] = useState(false);
   const [newItem, setNewItem] = useState({ category: 'maps_reporting', itemName: '', legalRef: '', notes: '' });
   const [saving, setSaving] = useState('');
+  const [actionError, setActionError] = useState('');
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -77,30 +78,39 @@ function ComplianceItemsContent() {
   const updateStatus = async (id: string, status: string) => {
     if (!user) return;
     setSaving(id);
+    setActionError('');
     try {
       const updated = await api.patch<ComplianceItem>(`/orgs/${user.orgId}/mi-compliance/items/${id}`, { status });
       setItems(prev => prev.map(i => i.id === id ? updated : i));
+    } catch (err: any) {
+      setActionError(err?.message ?? 'Update failed. Please try again.');
     } finally { setSaving(''); }
   };
 
   const saveNote = async (id: string) => {
     if (!user || !editing) return;
     setSaving(id);
+    setActionError('');
     try {
       const updated = await api.patch<ComplianceItem>(`/orgs/${user.orgId}/mi-compliance/items/${id}`, { notes: editing.notes });
       setItems(prev => prev.map(i => i.id === id ? updated : i));
       setEditing(null);
+    } catch (err: any) {
+      setActionError(err?.message ?? 'Save failed. Please try again.');
     } finally { setSaving(''); }
   };
 
   const addItem = async () => {
     if (!user || !newItem.itemName.trim()) return;
     setSaving('new');
+    setActionError('');
     try {
       const created = await api.post<ComplianceItem>(`/orgs/${user.orgId}/mi-compliance/items`, newItem);
       setItems(prev => [...prev, created]);
       setNewItem({ category: 'maps_reporting', itemName: '', legalRef: '', notes: '' });
       setShowAdd(false);
+    } catch (err: any) {
+      setActionError(err?.message ?? 'Failed to add item. Please try again.');
     } finally { setSaving(''); }
   };
 
@@ -110,6 +120,12 @@ function ComplianceItemsContent() {
         <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
           <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load compliance items. Please try again.</span>
           <button onClick={load} className="text-red-600 font-medium hover:underline text-xs">Retry</button>
+        </div>
+      )}
+      {actionError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />{actionError}</span>
+          <button onClick={() => setActionError('')} className="text-red-400 hover:text-red-600">✕</button>
         </div>
       )}
       {/* Header */}

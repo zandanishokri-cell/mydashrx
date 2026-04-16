@@ -50,6 +50,7 @@ export default function RegulatoryUpdatesPage() {
   const [loadError, setLoadError] = useState(false);
   const [unackOnly, setUnackOnly] = useState(false);
   const [acknowledging, setAcknowledging] = useState('');
+  const [ackError, setAckError] = useState('');
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -69,9 +70,12 @@ export default function RegulatoryUpdatesPage() {
   const acknowledge = async (id: string) => {
     if (!user) return;
     setAcknowledging(id);
+    setAckError('');
     try {
       const updated = await api.patch<RegulatoryUpdate>(`/orgs/${user.orgId}/mi-compliance/regulatory/${id}`, {});
       setUpdates(prev => prev.map(u => u.id === id ? updated : u));
+    } catch (err: any) {
+      setAckError(err?.message ?? 'Failed to acknowledge. Please try again.');
     } finally { setAcknowledging(''); }
   };
 
@@ -83,6 +87,12 @@ export default function RegulatoryUpdatesPage() {
         <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
           <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load regulatory updates. Please try again.</span>
           <button onClick={load} className="text-red-600 font-medium hover:underline text-xs">Retry</button>
+        </div>
+      )}
+      {ackError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />{ackError}</span>
+          <button onClick={() => setAckError('')} className="text-red-400 hover:text-red-600">✕</button>
         </div>
       )}
       {/* Header */}
