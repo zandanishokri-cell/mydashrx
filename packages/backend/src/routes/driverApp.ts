@@ -7,6 +7,7 @@ import { sendStopNotification } from '../services/notifications.js';
 import { fireTrigger } from '../services/automation.js';
 import { uploadBuffer } from '../services/storage.js';
 import type { StopStatus } from '@mydash-rx/shared';
+import { todayInTz } from '../utils/date.js';
 
 export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   // GET /driver/me/routes — driver's active routes
@@ -15,7 +16,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   }, async (req) => {
     const user = req.user as { sub: string; driverId?: string };
     const driverId = user.driverId ?? user.sub;
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayInTz();
 
     const myRoutes = await db
       .select({
