@@ -9,7 +9,7 @@ const DEFAULT_PREFS = { route_completed: true, stop_failed: true, stop_assigned:
 export const userSettingsRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/users/me/preferences
   app.get('/users/me/preferences', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'pharmacist'),
   }, async (req) => {
     const caller = req.user as { id: string };
     const [user] = await db.select({ notificationPreferences: users.notificationPreferences })
@@ -20,7 +20,7 @@ export const userSettingsRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /orgs/:orgId/users/me/preferences
   app.patch('/users/me/preferences', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'pharmacist'),
   }, async (req) => {
     const caller = req.user as { id: string; orgId: string };
     const { orgId } = req.params as { orgId: string };

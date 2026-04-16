@@ -235,6 +235,7 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
   const [editingRoleFor, setEditingRoleFor] = useState<string | null>(null);
   const [editRoleValue, setEditRoleValue] = useState<Role>('dispatcher');
   const [savingRole, setSavingRole] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState('');
   const [saveRoleError, setSaveRoleError] = useState('');
   const [loadError, setLoadError] = useState(false);
@@ -259,22 +260,25 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
       setShowInvite(false);
       setInvite({ name: '', email: '', role: 'dispatcher', depotIds: [] });
     } catch (e: any) {
-      setInviteError(e.message?.includes('409') || e.message?.includes('already exists')
-        ? 'A user with this email already exists in the organization'
-        : 'Failed to invite user');
+      setInviteError(
+        e.message?.toLowerCase().includes('already exists')
+          ? 'A user with this email already exists in this organization'
+          : 'Failed to invite user. Please try again.'
+      );
     } finally { setInviting(false); }
   };
 
   const handleRemove = async () => {
-    if (!removeTarget) return;
+    if (!removeTarget || removing) return;
+    setRemoving(true);
     try {
       await api.del(`/orgs/${orgId}/users/${removeTarget.id}`);
       setMembers(prev => prev.filter(m => m.id !== removeTarget.id));
       setRemoveTarget(null);
-    } catch (err: any) {
-      setRemoveError(err?.message ?? 'Failed to remove user');
+    } catch {
+      setRemoveError('Failed to remove user. Please try again.');
       setRemoveTarget(null);
-    }
+    } finally { setRemoving(false); }
   };
 
   const startEditRole = (m: OrgUser) => { setEditingRoleFor(m.id); setEditRoleValue(m.role); };
@@ -285,7 +289,7 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
       const updated = await api.patch<OrgUser>(`/orgs/${orgId}/users/${userId}`, { role: editRoleValue });
       setMembers(prev => prev.map(m => m.id === userId ? { ...m, role: updated.role } : m));
       setEditingRoleFor(null);
-    } catch (err: any) { setSaveRoleError(err?.message ?? 'Failed to update role'); }
+    } catch { setSaveRoleError('Failed to update role. Please try again.'); }
     finally { setSavingRole(false); }
   };
 
@@ -478,8 +482,9 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
                 className="flex-1 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
                 Cancel
               </button>
-              <button onClick={handleRemove}
-                className="flex-1 px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 transition-colors">
+              <button onClick={handleRemove} disabled={removing}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50">
+                {removing ? <Loader2 size={14} className="animate-spin" /> : null}
                 Remove
               </button>
             </div>
@@ -499,6 +504,7 @@ function DepotsTab({ orgId }: { orgId: string }) {
   const [deleteTarget, setDeleteTarget] = useState<Depot | null>(null);
   const [form, setForm] = useState({ name: '', address: '', phone: '', lat: '', lng: '' });
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [formError, setFormError] = useState('');
   const [deleteError, setDeleteError] = useState('');
   const [loadError, setLoadError] = useState(false);
@@ -541,15 +547,16 @@ function DepotsTab({ orgId }: { orgId: string }) {
   };
 
   const handleDelete = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
     try {
       await api.del(`/orgs/${orgId}/depots/${deleteTarget.id}`);
       setDepots(prev => prev.filter(d => d.id !== deleteTarget.id));
       setDeleteTarget(null);
-    } catch (err: any) {
-      setDeleteError(err?.message ?? 'Failed to delete depot');
+    } catch {
+      setDeleteError('Failed to delete depot. Please try again.');
       setDeleteTarget(null);
-    }
+    } finally { setDeleting(false); }
   };
 
   const DepotForm = ({ isEdit }: { isEdit?: boolean }) => (
@@ -704,8 +711,9 @@ function DepotsTab({ orgId }: { orgId: string }) {
                 className="flex-1 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50">
                 Cancel
               </button>
-              <button onClick={handleDelete}
-                className="flex-1 px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600">
+              <button onClick={handleDelete} disabled={deleting}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 disabled:opacity-50">
+                {deleting ? <Loader2 size={14} className="animate-spin" /> : null}
                 Delete
               </button>
             </div>
