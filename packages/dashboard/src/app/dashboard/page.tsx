@@ -117,6 +117,8 @@ export default function CommandCenter() {
   const allRoutes = plans.flatMap(p => p.routes);
   const completedStops = stops.filter(s => s.status === 'completed').length;
   const failedStops = stops.filter(s => s.status === 'failed').length;
+  const rescheduledStops = stops.filter(s => s.status === 'rescheduled').length;
+  const pendingStops = stops.length - completedStops - failedStops - rescheduledStops;
   const completionPct = stops.length > 0 ? Math.round((completedStops / stops.length) * 100) : 0;
 
   const kpis = [
@@ -268,12 +270,14 @@ export default function CommandCenter() {
             <div className="flex h-2 rounded-full overflow-hidden">
               <div className="bg-[#2ECC71] h-2 transition-all duration-500" style={{ width: `${(completedStops / stops.length) * 100}%` }} />
               <div className="bg-red-400 h-2 transition-all duration-500" style={{ width: `${(failedStops / stops.length) * 100}%` }} />
+              <div className="bg-amber-400 h-2 transition-all duration-500" style={{ width: `${(rescheduledStops / stops.length) * 100}%` }} />
             </div>
           </div>
-          <div className="flex items-center gap-4 text-xs text-gray-400">
+          <div className="flex items-center gap-4 text-xs text-gray-400 flex-wrap">
             <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#2ECC71] inline-block" />{completedStops} completed</span>
             <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />{failedStops} failed</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-200 inline-block" />{stops.length - completedStops - failedStops} remaining</span>
+            {rescheduledStops > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />{rescheduledStops} rescheduled</span>}
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-200 inline-block" />{pendingStops} remaining</span>
           </div>
         </div>
       )}
