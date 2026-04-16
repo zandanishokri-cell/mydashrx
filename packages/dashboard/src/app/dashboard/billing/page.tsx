@@ -103,6 +103,7 @@ export default function BillingPage() {
   const [plans, setPlans] = useState<PlanOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
   const [actionError, setActionError] = useState('');
   const [loadError, setLoadError] = useState(false);
   const user = getUser();
@@ -136,20 +137,25 @@ export default function BillingPage() {
       else if (res.error === 'Stripe not configured') {
         setActionError('Stripe is not configured. Add STRIPE_SECRET_KEY to enable billing.');
       }
-    } catch (e: any) {
-      setActionError(e?.message ?? 'Failed to start checkout');
+    } catch {
+      setActionError('Failed to start checkout. Please try again.');
     } finally {
       setUpgrading(null);
     }
   };
 
   const handlePortal = async () => {
-    if (!orgId) return;
+    if (!orgId || portalLoading) return;
+    setPortalLoading(true);
+    setActionError('');
     try {
       const res = await api.post<{ url?: string; error?: string }>(`/orgs/${orgId}/billing/portal`, {});
       if (res.url) window.location.href = res.url;
-    } catch (e: any) {
-      setActionError(e?.message ?? 'Failed to open billing portal');
+      else if (res.error) setActionError('Billing portal is not yet configured. Please subscribe first.');
+    } catch {
+      setActionError('Failed to open billing portal. Please try again.');
+    } finally {
+      setPortalLoading(false);
     }
   };
 
@@ -191,9 +197,10 @@ export default function BillingPage() {
         {billing?.stripeCustomerId && (
           <button
             onClick={handlePortal}
-            className="text-sm font-medium text-[#0F4C81] hover:bg-blue-50 px-4 py-2 rounded-lg transition-colors border border-blue-100"
+            disabled={portalLoading}
+            className="text-sm font-medium text-[#0F4C81] hover:bg-blue-50 px-4 py-2 rounded-lg transition-colors border border-blue-100 disabled:opacity-50"
           >
-            Manage Billing
+            {portalLoading ? 'Loading…' : 'Manage Billing'}
           </button>
         )}
       </div>
@@ -288,8 +295,9 @@ export default function BillingPage() {
           <p className="text-xs text-gray-400 mt-0.5">All plans include core delivery management</p>
         </div>
 
+        <div className="overflow-x-auto">
         {/* Plan headers */}
-        <div className="grid grid-cols-4 border-b border-gray-100">
+        <div className="grid grid-cols-4 border-b border-gray-100 min-w-[480px]">
           {plans.map(plan => {
             const isCurrent = billing?.currentPlan === plan.key;
             const isRecommended = plan.key === 'growth';
@@ -322,7 +330,7 @@ export default function BillingPage() {
           { label: 'Stops / mo', values: plans.map(p => p.stopLimit ? p.stopLimit.toLocaleString() : 'Unlimited') },
           { label: 'Drivers', values: plans.map(p => p.driverLimit ? p.driverLimit.toString() : 'Unlimited') },
         ].map(row => (
-          <div key={row.label} className="grid grid-cols-4 border-b border-gray-50">
+          <div key={row.label} className="grid grid-cols-4 border-b border-gray-50 min-w-[480px]">
             {plans.map((plan, i) => (
               <div key={plan.key} className={`p-3 text-center border-r last:border-r-0 border-gray-100 ${
                 plan.key === 'growth' ? 'bg-blue-50/30' : ''
@@ -335,8 +343,8 @@ export default function BillingPage() {
         ))}
 
         {/* Feature rows */}
-        {Array.from({ length: Math.max(...plans.map(p => p.features.length)) }, (_, i) => (
-          <div key={i} className="grid grid-cols-4 border-b last:border-b-0 border-gray-50">
+        {Array.from({ length: Math.max(0, ...plans.map(p => p.features.length)) }, (_, i) => (
+          <div key={i} className="grid grid-cols-4 border-b last:border-b-0 border-gray-50 min-w-[480px]">
             {plans.map(plan => (
               <div key={plan.key} className={`p-3 flex items-center justify-center ${
                 plan.key === 'growth' ? 'bg-blue-50/30' : ''
@@ -353,7 +361,7 @@ export default function BillingPage() {
         ))}
 
         {/* CTA row */}
-        <div className="grid grid-cols-4 border-t border-gray-100 bg-gray-50/50 p-4 gap-3">
+        <div className="grid grid-cols-4 border-t border-gray-100 bg-gray-50/50 p-4 gap-3 min-w-[480px]">
           {plans.map(plan => {
             const isCurrent = billing?.currentPlan === plan.key;
             const isEnterprise = plan.key === 'enterprise';
@@ -391,6 +399,7 @@ export default function BillingPage() {
             );
           })}
         </div>
+        </div>{/* /overflow-x-auto */}
       </div>
     </div>
   );
