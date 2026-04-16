@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { ArrowLeft, MapPin, CheckCircle2, XCircle, Clock, Navigation, Play, PartyPopper } from 'lucide-react';
@@ -46,6 +46,8 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
   const [routeStatus, setRouteStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
+  const [locationStatus, setLocationStatus] = useState<'off' | 'active' | 'denied'>('off');
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = () => {
     Promise.all([
@@ -62,11 +64,40 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
 
   useEffect(() => { load(); }, []); // eslint-disable-line
 
+  const stopLocationPing = () => {
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+  };
+
+  const startLocationPing = () => {
+    if (!navigator?.geolocation || intervalRef.current) return;
+    const ping = () => {
+      navigator.geolocation.getCurrentPosition(
+        ({ coords }) => {
+          api.post('/driver/me/location', { lat: coords.latitude, lng: coords.longitude, routeId }).catch(() => {});
+        },
+        (err) => {
+          if (err.code === err.PERMISSION_DENIED) { setLocationStatus('denied'); stopLocationPing(); }
+          // other errors (timeout/unavailable) — keep interval running
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+      );
+    };
+    ping(); // immediate first ping
+    intervalRef.current = setInterval(ping, 30000);
+    setLocationStatus('active');
+  };
+
+  // Start pinging when route becomes active
+  useEffect(() => {
+    if (routeStatus === 'active') startLocationPing();
+  }, [routeStatus]); // eslint-disable-line
+
   const startRoute = async () => {
     setStarting(true);
     try {
       const r = await api.patch<{ status: string }>(`/driver/me/routes/${routeId}/start`, {});
       setRouteStatus(r.status);
+      startLocationPing();
     } finally { setStarting(false); }
   };
 
@@ -75,6 +106,14 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
   const remaining = stops.length - completed - failed;
   const allDone = stops.length > 0 && remaining === 0;
   const pct = stops.length > 0 ? Math.round((completed / stops.length) * 100) : 0;
+
+  // Stop pinging when all done
+  useEffect(() => {
+    if (allDone) stopLocationPing();
+  }, [allDone]); // eslint-disable-line
+
+  // Cleanup on unmount
+  useEffect(() => () => { stopLocationPing(); }, []); // eslint-disable-line
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -110,13 +149,27 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
             style={{ width: `${pct}%` }}
           />
         </div>
-        <div className="text-xs text-blue-200 mt-1.5 flex justify-between">
+        <div className="text-xs text-blue-200 mt-1.5 flex justify-between items-center">
           <span>
             {stops.length > 0
               ? `Stop ${Math.min(completed + 1, stops.length)} of ${stops.length}`
               : ''}
           </span>
-          <span>{pct}% complete</span>
+          <div className="flex items-center gap-3">
+            <span>{pct}% complete</span>
+            {locationStatus === 'active' && (
+              <span className="flex items-center gap-1 text-green-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
+                GPS
+              </span>
+            )}
+            {locationStatus === 'denied' && (
+              <span className="flex items-center gap-1 text-red-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />
+                GPS off
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
