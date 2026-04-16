@@ -4,6 +4,7 @@ import { stops, routes, plans, depots, drivers, leadProspects, proofOfDeliveries
 import { eq, and, isNull, ilike, or, gte, lte, sql, inArray, ne } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { checkAndNotifyRouteComplete } from './stops.js';
+import { geocodeAddress } from '../utils/geocode.js';
 
 export const searchRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/stops — filterable stop list (used by Stops page + Search page)
@@ -434,6 +435,8 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     if (!body.recipientName?.trim()) return reply.code(400).send({ error: 'recipientName is required' });
     if (!body.address?.trim()) return reply.code(400).send({ error: 'address is required' });
 
+    const geo = await geocodeAddress(body.address.trim());
+
     const [stop] = await db.insert(stops).values({
       orgId,
       recipientName: body.recipientName.trim(),
@@ -450,8 +453,8 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       windowStart: body.windowStart ? new Date(body.windowStart) : undefined,
       windowEnd: body.windowEnd ? new Date(body.windowEnd) : undefined,
       deliveryNotes: body.deliveryNotes?.trim() || undefined,
-      lat: 0,
-      lng: 0,
+      lat: geo.lat,
+      lng: geo.lng,
       status: 'pending',
     }).returning();
 

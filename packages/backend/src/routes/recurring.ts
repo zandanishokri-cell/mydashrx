@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { recurringDeliveries, stops, routes, plans, depots } from '../db/schema.js';
 import { eq, and, isNull, lte, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { geocodeAddress } from '../utils/geocode.js';
 
 // All date arithmetic is done in UTC ms to avoid local-timezone drift.
 // Weekly/biweekly use pure millisecond offsets; monthly uses setUTCMonth with day clamping.
@@ -75,12 +76,20 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     if (!body.recipientName) return reply.code(400).send({ error: 'recipientName required' });
     if (!body.address) return reply.code(400).send({ error: 'address required' });
 
+    // Geocode if lat/lng not provided by caller
+    let { lat, lng } = { lat: body.lat, lng: body.lng };
+    if (lat == null || lng == null) {
+      const geo = await geocodeAddress(body.address);
+      lat = geo.lat;
+      lng = geo.lng;
+    }
+
     const [rec] = await db.insert(recurringDeliveries).values({
       orgId,
       recipientName: body.recipientName,
       address: body.address,
-      lat: body.lat,
-      lng: body.lng,
+      lat,
+      lng,
       recipientPhone: body.recipientPhone,
       recipientEmail: body.recipientEmail,
       notes: body.notes,

@@ -4,6 +4,7 @@ import { stops, routes, plans, depots } from '../db/schema.js';
 import { eq, isNull, and, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { todayInTz } from '../utils/date.js';
+import { geocodeAddress } from '../utils/geocode.js';
 
 function parseCsv(text: string): Array<Record<string, string>> {
   const lines = text.trim().split('\n');
@@ -23,20 +24,6 @@ function parseCsv(text: string): Array<Record<string, string>> {
   });
 }
 
-async function geocodeAddress(address: string): Promise<{ lat: number; lng: number; ok: boolean }> {
-  const key = process.env.GOOGLE_MAPS_API_KEY;
-  if (!key) return { lat: 0, lng: 0, ok: false };
-  try {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${key}`;
-    const res = await fetch(url);
-    const data = await res.json() as { status: string; results: Array<{ geometry: { location: { lat: number; lng: number } } }> };
-    if (data.status === 'OK' && data.results[0]) {
-      const { lat, lng } = data.results[0].geometry.location;
-      return { lat, lng, ok: true };
-    }
-  } catch { /* fall through */ }
-  return { lat: 0, lng: 0, ok: false };
-}
 
 export const importRoutes: FastifyPluginAsync = async (app) => {
   app.post('/stops/import', {
