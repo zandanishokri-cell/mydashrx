@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { plans, routes, stops, depots } from '../db/schema.js';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { optimizeRoute } from '../services/routeOptimizer.js';
 
@@ -104,10 +104,22 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
-    const [deleted] = await db.update(plans).set({ deletedAt: new Date() })
-      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
-      .returning({ id: plans.id });
-    if (!deleted) return reply.code(404).send({ error: 'Not found' });
+    // Verify ownership before cascade
+    const [plan] = await db.select({ id: plans.id }).from(plans)
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt))).limit(1);
+    if (!plan) return reply.code(404).send({ error: 'Not found' });
+
+    // Cascade: unassign stops + soft-delete routes before deleting plan
+    const planRoutes = await db.select({ id: routes.id })
+      .from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
+    if (planRoutes.length > 0) {
+      const routeIds = planRoutes.map(r => r.id);
+      await db.update(stops).set({ routeId: null })
+        .where(and(inArray(stops.routeId, routeIds), isNull(stops.deletedAt)));
+      await db.update(routes).set({ deletedAt: new Date() })
+        .where(inArray(routes.id, routeIds));
+    }
+    await db.update(plans).set({ deletedAt: new Date() }).where(eq(plans.id, planId));
     return reply.code(204).send();
   });
 };

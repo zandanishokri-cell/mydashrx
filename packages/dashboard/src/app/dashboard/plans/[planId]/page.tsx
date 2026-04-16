@@ -44,19 +44,23 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [showAddStop, setShowAddStop] = useState<string | null>(null);
   const [showAddRoute, setShowAddRoute] = useState(false);
   const [addingDriverId, setAddingDriverId] = useState('');
+  const [addingRoute, setAddingRoute] = useState(false);
+  const [addRouteError, setAddRouteError] = useState('');
   const [selectedStop, setSelectedStop] = useState<Stop | null>(null);
-  const [moveStop, setMoveStop] = useState<{ stop: Stop; targetRouteId: string } | null>(null);
   const [movingStop, setMovingStop] = useState<Stop | null>(null);
+  const [movingStopError, setMovingStopError] = useState('');
   const [confirmRemoveRouteId, setConfirmRemoveRouteId] = useState<string | null>(null);
+  const [removingRoute, setRemovingRoute] = useState(false);
 
   const loadPlan = useCallback(async () => {
     if (!user) return;
     try {
-      const [planData, routesData, driversData] = await Promise.all([
+      // planData already embeds routes — skip redundant GET /plans/:planId/routes
+      const [planData, driversData] = await Promise.all([
         api.get<Plan & { routes: Route[] }>(`/orgs/${user.orgId}/plans/${planId}`),
-        api.get<Route[]>(`/plans/${planId}/routes`),
         api.get<Driver[]>(`/orgs/${user.orgId}/drivers`),
       ]);
+      const routesData = planData.routes ?? [];
       setPlan(planData);
       setRoutes(routesData);
       setDrivers(driversData);
@@ -105,15 +109,16 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   };
 
   const addRoute = async () => {
-    if (!addingDriverId) return;
+    if (!addingDriverId || addingRoute) return;
+    setAddingRoute(true); setAddRouteError('');
     try {
       await api.post(`/plans/${planId}/routes`, { driverId: addingDriverId });
       setShowAddRoute(false);
       setAddingDriverId('');
       await loadPlan();
     } catch {
-      setError('Failed to add driver to plan');
-    }
+      setAddRouteError('Failed to add driver. Please try again.');
+    } finally { setAddingRoute(false); }
   };
 
   const reorderStops = useCallback(async (routeId: string, stopIds: string[]) => {
@@ -126,31 +131,15 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   }, [loadPlan]);
 
   const removeRoute = async () => {
-    if (!confirmRemoveRouteId) return;
-    const routeId = confirmRemoveRouteId;
-    setConfirmRemoveRouteId(null);
+    if (!confirmRemoveRouteId || removingRoute) return;
+    setRemovingRoute(true);
     try {
-      await api.del(`/plans/${planId}/routes/${routeId}`);
+      await api.del(`/plans/${planId}/routes/${confirmRemoveRouteId}`);
+      setConfirmRemoveRouteId(null);
       await loadPlan();
     } catch {
       setError('Failed to remove route');
-    }
-  };
-
-  const confirmMoveStop = async () => {
-    if (!movingStop || !moveStop) return;
-    try {
-      // Update stop's routeId by patching status to same value (triggers route reassign)
-      // We need a dedicated move endpoint — use patch on stop with new routeId
-      await api.patch(`/routes/${movingStop.routeId}/stops/${movingStop.id}/move`, {
-        targetRouteId: moveStop.targetRouteId,
-      });
-      setMovingStop(null);
-      setMoveStop(null);
-      await loadPlan();
-    } catch {
-      setError('Failed to move stop');
-    }
+    } finally { setRemovingRoute(false); }
   };
 
   const totalStops = Object.values(stopsByRoute).reduce((s, arr) => s + arr.length, 0);
@@ -168,7 +157,12 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     );
   }
 
-  if (!plan) return <div className="p-6 text-red-500">{error || 'Plan not found'}</div>;
+  if (!plan) return (
+    <div className="p-6 text-center">
+      <p className="text-red-500 mb-2">{error || 'Plan not found'}</p>
+      {error && <button onClick={loadPlan} className="text-sm text-[#0F4C81] hover:underline">Retry</button>}
+    </div>
+  );
 
   return (
     <div className="p-6">
@@ -205,10 +199,13 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
 
       {confirmRemoveRouteId && (
         <div className="mb-4 px-4 py-2.5 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-800 flex items-center justify-between">
-          <span>Remove this route and all its stops? This cannot be undone.</span>
+          <span>Remove this route? Non-terminal stops will become unassigned.</span>
           <div className="flex items-center gap-2 ml-4 shrink-0">
-            <button onClick={() => setConfirmRemoveRouteId(null)} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
-            <button onClick={removeRoute} className="text-xs bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600">Remove</button>
+            <button onClick={() => setConfirmRemoveRouteId(null)} disabled={removingRoute} className="text-xs text-gray-500 hover:text-gray-700 disabled:opacity-50">Cancel</button>
+            <button onClick={removeRoute} disabled={removingRoute} className="text-xs bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600 disabled:opacity-60 flex items-center gap-1">
+              {removingRoute && <span className="inline-block w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+              {removingRoute ? 'Removing…' : 'Remove'}
+            </button>
           </div>
         </div>
       )}
@@ -301,7 +298,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
 
       {/* Add Driver Modal */}
       {showAddRoute && (
-        <Modal title="Add Driver to Plan" onClose={() => setShowAddRoute(false)}>
+        <Modal title="Add Driver to Plan" onClose={() => { setShowAddRoute(false); setAddRouteError(''); setAddingDriverId(''); }}>
           {availableDrivers.length === 0 ? (
             <p className="text-gray-500 text-sm">All drivers are already assigned to this plan.</p>
           ) : (
@@ -312,6 +309,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   value={addingDriverId}
                   onChange={e => setAddingDriverId(e.target.value)}
+                  disabled={addingRoute}
                 >
                   <option value="">Choose a driver…</option>
                   {availableDrivers.map(d => (
@@ -319,9 +317,14 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                   ))}
                 </select>
               </div>
+              {addRouteError && (
+                <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{addRouteError}</p>
+              )}
               <div className="flex justify-end gap-2 pt-2">
-                <Button variant="secondary" size="sm" onClick={() => setShowAddRoute(false)}>Cancel</Button>
-                <Button size="sm" onClick={addRoute} disabled={!addingDriverId}>Add Driver</Button>
+                <Button variant="secondary" size="sm" onClick={() => { setShowAddRoute(false); setAddRouteError(''); setAddingDriverId(''); }} disabled={addingRoute}>Cancel</Button>
+                <Button size="sm" onClick={addRoute} disabled={!addingDriverId || addingRoute} loading={addingRoute}>
+                  {addingRoute ? 'Adding…' : 'Add Driver'}
+                </Button>
               </div>
             </div>
           )}
@@ -330,8 +333,11 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
 
       {/* Move Stop Modal */}
       {movingStop && (
-        <Modal title="Move stop to another route" onClose={() => setMovingStop(null)}>
+        <Modal title="Move stop to another route" onClose={() => { setMovingStop(null); setMovingStopError(''); }}>
           <p className="text-sm text-gray-600 mb-3">Moving <strong>{movingStop.recipientName}</strong> to:</p>
+          {movingStopError && (
+            <p className="text-xs text-red-600 mb-3 bg-red-50 px-3 py-2 rounded-lg">{movingStopError}</p>
+          )}
           <div className="space-y-2">
             {routes.filter(r => r.id !== movingStop.routeId).map(r => {
               const d = drivers.find(dr => dr.id === r.driverId);
@@ -339,12 +345,14 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                 <button
                   key={r.id}
                   onClick={async () => {
-                    setMoveStop({ stop: movingStop, targetRouteId: r.id });
+                    setMovingStopError('');
                     try {
                       await api.patch(`/routes/${movingStop.routeId}/stops/${movingStop.id}/move`, { targetRouteId: r.id });
                       setMovingStop(null);
                       await loadPlan();
-                    } catch { setError('Failed to move stop'); setMovingStop(null); }
+                    } catch {
+                      setMovingStopError('Failed to move stop. Please try again.');
+                    }
                   }}
                   className="w-full flex items-center gap-3 px-4 py-3 border border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50 transition-colors text-left"
                 >
