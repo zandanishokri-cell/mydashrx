@@ -56,7 +56,8 @@ const URGENCY_BADGE: Record<Urgency, string | null> = {
 
 const STATUS_TABS = [
   { key: 'all', label: 'All stops' },
-  { key: 'pending', label: 'Unassigned' },
+  { key: 'unassigned', label: 'Unassigned' },
+  { key: 'pending', label: 'Pending' },
   { key: 'in_progress', label: 'In progress' },
   { key: 'completed', label: 'Completed' },
   { key: 'failed', label: 'Failed' },
@@ -133,7 +134,11 @@ export default function StopsPage() {
       const params = new URLSearchParams({ page: String(p), limit: '50' });
       if (search) params.set('q', search);
       if (depotId) params.set('depotId', depotId);
-      if (statusTab !== 'all') params.set('status', statusTab);
+      if (statusTab === 'unassigned') {
+        params.set('unassigned', 'true');
+      } else if (statusTab !== 'all') {
+        params.set('status', statusTab);
+      }
       if (dateRange.from) params.set('from', dateRange.from);
       if (dateRange.to) params.set('to', dateRange.to);
       const data = await api.get<{ stops: Stop[]; total: number }>(`/orgs/${user.orgId}/stops?${params}`);
@@ -160,7 +165,11 @@ export default function StopsPage() {
       const params = new URLSearchParams({ page: '1', limit: '10000' });
       if (search) params.set('q', search);
       if (depotId) params.set('depotId', depotId);
-      if (statusTab !== 'all') params.set('status', statusTab);
+      if (statusTab === 'unassigned') {
+        params.set('unassigned', 'true');
+      } else if (statusTab !== 'all') {
+        params.set('status', statusTab);
+      }
       if (dateRange.from) params.set('from', dateRange.from);
       if (dateRange.to) params.set('to', dateRange.to);
       const data = await api.get<{ stops: Stop[] }>(`/orgs/${user.orgId}/stops?${params}`);

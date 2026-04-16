@@ -56,6 +56,7 @@ export default function PipelinePage() {
   const [outreach, setOutreach] = useState<OutreachEntry[]>([]);
   const [loadingOutreach, setLoadingOutreach] = useState(false);
   const [movingTo, setMovingTo] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState('');
   const [loadError, setLoadError] = useState(false);
   const [outreachError, setOutreachError] = useState(false);
 
@@ -81,18 +82,25 @@ export default function PipelinePage() {
     finally { setLoadingOutreach(false); }
   };
 
-  const moveToNext = async (lead: Lead) => {
+  const moveLead = async (lead: Lead, targetStage: string) => {
+    setMovingTo(lead.id); setMoveError('');
+    try {
+      await api.patch(`/orgs/${user!.orgId}/leads/${lead.id}`, { status: targetStage });
+      await load();
+      if (selectedLead?.id === lead.id) {
+        setSelectedLead(prev => prev ? { ...prev, status: targetStage } : null);
+      }
+    } catch {
+      setMoveError('Failed to move lead. Please try again.');
+      setTimeout(() => setMoveError(''), 4000);
+    } finally { setMovingTo(null); }
+  };
+
+  const moveToNext = (lead: Lead) => {
     const currentIdx = STAGE_ORDER[lead.status] ?? 0;
     const nextStage = STAGES[currentIdx + 1];
     if (!nextStage || nextStage === 'lost') return;
-    setMovingTo(lead.id);
-    try {
-      await api.patch(`/orgs/${user!.orgId}/leads/${lead.id}`, { status: nextStage });
-      await load();
-      if (selectedLead?.id === lead.id) {
-        setSelectedLead(prev => prev ? { ...prev, status: nextStage } : null);
-      }
-    } finally { setMovingTo(null); }
+    moveLead(lead, nextStage);
   };
 
   return (
@@ -263,13 +271,28 @@ export default function PipelinePage() {
 
           {/* Actions */}
           <div className="p-4 border-t border-gray-100 space-y-2">
+            {moveError && (
+              <p className="text-xs text-red-600 flex items-center gap-1"><AlertCircle size={12} />{moveError}</p>
+            )}
             {!['closed', 'lost'].includes(selectedLead.status) && (
               <button
                 onClick={() => moveToNext(selectedLead)}
                 disabled={movingTo === selectedLead.id}
                 className="w-full bg-[#0F4C81] hover:bg-[#0a3d6b] text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-60"
               >
+                {movingTo === selectedLead.id ? (
+                  <span className="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                ) : null}
                 Move to next stage <ChevronRight size={15} />
+              </button>
+            )}
+            {!['closed', 'lost'].includes(selectedLead.status) && (
+              <button
+                onClick={() => moveLead(selectedLead, 'lost')}
+                disabled={movingTo === selectedLead.id}
+                className="w-full border border-gray-200 hover:bg-red-50 hover:border-red-200 hover:text-red-600 text-gray-500 py-2 rounded-lg text-sm font-medium disabled:opacity-60 transition-colors"
+              >
+                Mark as Lost
               </button>
             )}
             <Link href={`/dashboard/leads/${selectedLead.id}`}

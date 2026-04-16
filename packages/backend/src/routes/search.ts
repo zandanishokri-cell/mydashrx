@@ -11,8 +11,8 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
-    const { q, depotId, status, from, to, driverId, page = '1', limit = '50' } = req.query as {
-      q?: string; depotId?: string; status?: string;
+    const { q, depotId, status, from, to, driverId, unassigned, page = '1', limit = '50' } = req.query as {
+      q?: string; depotId?: string; status?: string; unassigned?: string;
       from?: string; to?: string; driverId?: string;
       page?: string; limit?: string;
     };
@@ -34,7 +34,9 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       )!);
     }
 
-    if (status && status !== 'all') {
+    if (unassigned === 'true') {
+      conditions.push(isNull(stops.routeId));
+    } else if (status && status !== 'all') {
       if (status === 'in_progress') {
         conditions.push(or(eq(stops.status, 'en_route'), eq(stops.status, 'arrived'))!);
       } else {
