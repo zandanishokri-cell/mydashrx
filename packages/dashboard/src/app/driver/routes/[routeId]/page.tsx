@@ -97,7 +97,7 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
     try {
       const r = await api.patch<{ status: string }>(`/driver/me/routes/${routeId}/start`, {});
       setRouteStatus(r.status);
-      startLocationPing();
+      // useEffect on routeStatus handles startLocationPing() when status becomes 'active'
     } finally { setStarting(false); }
   };
 
