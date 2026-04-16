@@ -64,6 +64,11 @@ export function CsvImportModal({ orgId, onClose, onSuccess }: Props) {
         body: form,
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => 'Upload failed');
+        setResult({ imported: 0, errors: [{ row: 0, field: '', message: msg || 'Upload failed. Please try again.' }], warnings: [] });
+        return;
+      }
       const data = await res.json() as ImportResult;
       setResult(data);
       if (data.imported > 0) onSuccess();

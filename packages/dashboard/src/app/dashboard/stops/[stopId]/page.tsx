@@ -79,6 +79,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
   const [stop, setStop] = useState<StopDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
@@ -95,12 +96,14 @@ function StopDetailContent({ stopId }: { stopId: string }) {
 
   const load = useCallback(async () => {
     if (!user) return;
+    setLoadError(false);
     try {
       const data = await api.get<StopDetail>(`/orgs/${user.orgId}/stops/${stopId}`);
       setStop(data);
       setNotesValue(data.deliveryNotes ?? '');
-    } catch {
-      setNotFound(true);
+    } catch (err: any) {
+      if (err?.message?.startsWith('API 404')) setNotFound(true);
+      else setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -115,7 +118,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
       await api.patch(`/routes/${stop.routeId}/stops/${stop.id}`, { deliveryNotes: notesValue });
       setStop(s => s ? { ...s, deliveryNotes: notesValue } : s);
       setEditingNotes(false);
-    } catch (err: any) { setSaveNotesError(err?.message ?? 'Failed to save notes'); }
+    } catch { setSaveNotesError('Failed to save notes. Please try again.'); }
     finally { setSavingNotes(false); }
   };
 
@@ -165,6 +168,17 @@ function StopDetailContent({ stopId }: { stopId: string }) {
   if (loading) return (
     <div className="p-6 space-y-4">
       {[1, 2, 3].map(i => <div key={i} className="h-20 bg-gray-100 rounded-xl animate-pulse" />)}
+    </div>
+  );
+
+  if (loadError) return (
+    <div className="p-6 text-center text-gray-400">
+      <AlertCircle size={24} className="mx-auto mb-2 text-amber-400" />
+      <p className="text-base font-medium text-gray-700">Couldn&apos;t load stop details</p>
+      <p className="text-sm text-gray-400 mt-1 mb-3">There was a problem connecting to the server.</p>
+      <button onClick={load} className="text-sm text-[#0F4C81] hover:underline">
+        Retry
+      </button>
     </div>
   );
 
