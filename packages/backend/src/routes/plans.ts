@@ -98,6 +98,12 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     const planRoutes = await db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
     if (planRoutes.length === 0) return reply.code(400).send({ error: 'No routes to optimize' });
 
+    // Departure time assumption: today = now; future date = 8am Detroit time on plan.date
+    const isToday = plan.date === new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Detroit' }).format(new Date());
+    const departureMs = isToday
+      ? Date.now()
+      : new Date(new Date(`${plan.date}T08:00:00`).toLocaleString('en-US', { timeZone: 'America/Detroit' })).getTime();
+
     const results = await Promise.all(
       planRoutes.map(async (route) => {
         const routeStops = await db
@@ -121,9 +127,9 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
         const geocodedStops = routeStops.filter(s => s.lat !== 0 || s.lng !== 0);
         if (geocodedStops.length === 0) return null;
 
-        // Window lookup: id → windowEnd (for violation detection after optimize)
+        // Window lookup: id → { windowEnd, address } (for violation detection after optimize)
         const windowByStopId = new Map(
-          routeStops.map((s) => [s.id, s.windowEnd]),
+          routeStops.map((s) => [s.id, { windowEnd: s.windowEnd, address: s.address ?? '' }]),
         );
 
         const originalOrder = [...(route.stopOrder as string[])];
@@ -145,11 +151,6 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
           ),
         );
 
-        // Departure time assumption: today = now; future date = 8am local on plan.date
-        const planDateObj = new Date(`${plan.date}T08:00:00`);
-        const isToday = plan.date === new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Detroit' }).format(new Date());
-        const departureMs = isToday ? Date.now() : planDateObj.getTime();
-
         // Compute cumulative arrival time at each stop using optimized legs
         const windowViolations: { stopId: string; address: string; windowEnd: string; estimatedArrival: string }[] = [];
         let elapsedMs = 0;
@@ -157,15 +158,14 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
           const leg = optimized.legs[i];
           if (leg) elapsedMs += leg.durationMin * 60_000;
           const stopId = optimized.stopIds[i];
-          const windowEnd = windowByStopId.get(stopId);
-          if (windowEnd) {
+          const entry = windowByStopId.get(stopId);
+          if (entry?.windowEnd) {
             const estimatedArrivalMs = departureMs + elapsedMs;
-            if (estimatedArrivalMs > windowEnd.getTime()) {
-              const stop = geocodedStops.find((s) => s.id === stopId);
+            if (estimatedArrivalMs > entry.windowEnd.getTime()) {
               windowViolations.push({
                 stopId,
-                address: stop?.address ?? '',
-                windowEnd: windowEnd.toISOString(),
+                address: entry.address,
+                windowEnd: entry.windowEnd.toISOString(),
                 estimatedArrival: new Date(estimatedArrivalMs).toISOString(),
               });
             }
