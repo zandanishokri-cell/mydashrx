@@ -301,7 +301,7 @@ function EditDriverModal({ driver, orgId, onClose, onSaved }: {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setError('');
     try { await api.patch(`/orgs/${orgId}/drivers/${driver.id}`, form); onSaved(); }
-    catch (err: any) { setError(err.message ?? 'Failed to update driver'); }
+    catch { setError('Failed to update driver. Please try again.'); }
     finally { setSaving(false); }
   };
   return (

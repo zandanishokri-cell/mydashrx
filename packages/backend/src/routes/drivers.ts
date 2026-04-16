@@ -163,8 +163,8 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
 
     const to = query.to ?? todayInTz();
     const from = query.from ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.now() - 30 * 86400000));
-    const fromTs = new Date(from + 'T00:00:00Z');
-    const toTs = new Date(to + 'T23:59:59Z');
+    const fromTs = new Date(from + 'T00:00:00');
+    const toTs = new Date(to + 'T23:59:59');
 
     const [driver] = await db
       .select({ id: drivers.id, name: drivers.name })
