@@ -172,11 +172,10 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
     if (!row) return reply.code(404).send({ error: 'Not found' });
 
-    const [pod] = await db.select().from(proofOfDeliveries)
-      .where(eq(proofOfDeliveries.stopId, stopId)).limit(1);
-
-    const notifications = await db
-      .select({
+    const [podResult, notifications] = await Promise.all([
+      db.select().from(proofOfDeliveries)
+        .where(eq(proofOfDeliveries.stopId, stopId)).limit(1),
+      db.select({
         id: notificationLogs.id,
         event: notificationLogs.event,
         channel: notificationLogs.channel,
@@ -184,9 +183,11 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
         status: notificationLogs.status,
         sentAt: notificationLogs.sentAt,
       })
-      .from(notificationLogs)
-      .where(eq(notificationLogs.stopId, stopId))
-      .orderBy(notificationLogs.sentAt);
+        .from(notificationLogs)
+        .where(eq(notificationLogs.stopId, stopId))
+        .orderBy(notificationLogs.sentAt),
+    ]);
+    const [pod] = podResult;
 
     // Build timeline from known timestamps
     const timeline: Array<{ event: string; timestamp: string | null; meta?: string }> = [

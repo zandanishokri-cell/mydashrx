@@ -93,6 +93,7 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 function maskPhone(phone: string): string {
+  if (!phone) return '—';
   const digits = phone.replace(/\D/g, '');
   if (digits.length === 11 && digits[0] === '1') {
     return `(${digits.slice(1,4)}) ***-${digits.slice(7)}`;
@@ -526,7 +527,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
               {stop.notifications.map(n => (
                 <div key={n.id} className="flex items-center justify-between gap-3 py-2 border-b border-gray-50 last:border-0">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <span className={`shrink-0 w-2 h-2 rounded-full ${n.status === 'sent' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                    <span className={`shrink-0 w-2 h-2 rounded-full ${n.status === 'sent' ? 'bg-emerald-400' : 'bg-red-400'}`} aria-label={n.status} />
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-800">{EVENT_LABELS[n.event] ?? n.event}</p>
                       <p className="text-xs text-gray-400">
