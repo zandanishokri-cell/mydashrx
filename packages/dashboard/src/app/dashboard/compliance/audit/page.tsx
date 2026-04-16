@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { Download, Search, ChevronLeft, ChevronRight as ChevRight } from 'lucide-react';
+import { Download, Search, ChevronLeft, ChevronRight as ChevRight, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 
 interface AuditLog {
@@ -39,25 +39,29 @@ export default function AuditPage() {
   const [userFilter, setUserFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
   const [resourceFilter, setResourceFilter] = useState('');
+  // Applied filters — only committed on Search click (prevents API storm on keystroke)
+  const [applied, setApplied] = useState({ user: '', action: '', resource: '' });
   const [page, setPage] = useState(1);
+  const [loadError, setLoadError] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
+    setLoadError(false);
     try {
       const params = new URLSearchParams({ page: String(page) });
       if (from) params.set('from', from);
       if (to) params.set('to', to);
-      if (userFilter) params.set('user', userFilter);
-      if (actionFilter) params.set('action', actionFilter);
-      if (resourceFilter) params.set('resource', resourceFilter);
+      if (applied.user) params.set('user', applied.user);
+      if (applied.action) params.set('action', applied.action);
+      if (applied.resource) params.set('resource', applied.resource);
       const result = await api.get<AuditResponse>(`/orgs/${user.orgId}/compliance/audit-logs?${params}`);
       setData(result);
-    } catch { setData(null); }
+    } catch { setLoadError(true); }
     finally { setLoading(false); }
-  }, [user, page, from, to, userFilter, actionFilter, resourceFilter]);
+  }, [user, page, from, to, applied]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -68,9 +72,9 @@ export default function AuditPage() {
     const params = new URLSearchParams({ export: 'csv' });
     if (from) params.set('from', from);
     if (to) params.set('to', to);
-    if (userFilter) params.set('user', userFilter);
-    if (actionFilter) params.set('action', actionFilter);
-    if (resourceFilter) params.set('resource', resourceFilter);
+    if (applied.user) params.set('user', applied.user);
+    if (applied.action) params.set('action', applied.action);
+    if (applied.resource) params.set('resource', applied.resource);
     const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
     const url = `${BASE}/api/v1/orgs/${user.orgId}/compliance/audit-logs?${params}`;
     try {
@@ -88,7 +92,10 @@ export default function AuditPage() {
     }
   };
 
-  const applyFilters = () => { setPage(1); load(); };
+  const applyFilters = () => {
+    setApplied({ user: userFilter, action: actionFilter, resource: resourceFilter });
+    setPage(1);
+  };
 
   const totalPages = data ? Math.ceil(data.total / data.pageSize) : 0;
 
@@ -165,6 +172,13 @@ export default function AuditPage() {
       <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-gray-400 text-sm animate-pulse">Loading…</div>
+        ) : loadError ? (
+          <div className="p-12 text-center">
+            <AlertCircle size={32} className="text-red-400 mx-auto mb-3" />
+            <p className="text-gray-700 font-semibold text-sm mb-1">Failed to load audit logs</p>
+            <p className="text-gray-400 text-sm mb-4">Check your connection and try again.</p>
+            <button onClick={load} className="text-sm bg-[#0F4C81] text-white px-4 py-2 rounded-lg hover:bg-blue-900">Retry</button>
+          </div>
         ) : !data || data.rows.length === 0 ? (
           <div className="p-12 text-center">
             <p className="text-gray-400 text-sm mb-2">No audit events found</p>

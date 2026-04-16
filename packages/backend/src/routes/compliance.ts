@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { baaRegistry, auditLogs, complianceChecks } from '../db/schema.js';
+import { baaRegistry, auditLogs, complianceChecks, miComplianceItems } from '../db/schema.js';
 import { eq, and, gte, lte, desc, sql, count } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { runComplianceScan, isDeploymentBlocked } from '../compliance/scanner.js';
@@ -297,6 +297,34 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
       },
       blocksDeployment: isDeploymentBlocked(findings),
     };
+  });
+
+  // ─── Michigan Compliance Checklist ──────────────────────────────────────────
+  app.get('/mi-checklist', { preHandler: ADMIN }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    return db.select().from(miComplianceItems)
+      .where(eq(miComplianceItems.orgId, orgId))
+      .orderBy(miComplianceItems.category, miComplianceItems.createdAt);
+  });
+
+  app.patch('/mi-checklist/:itemId', { preHandler: ADMIN }, async (req, reply) => {
+    const { orgId, itemId } = req.params as { orgId: string; itemId: string };
+    const body = req.body as Partial<{ status: string; notes: string; dueDate: string }>;
+
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (body.status !== undefined) {
+      updates.status = body.status;
+      updates.completedAt = body.status === 'compliant' ? new Date() : null;
+    }
+    if (body.notes !== undefined) updates.notes = body.notes;
+    if (body.dueDate !== undefined) updates.dueDate = body.dueDate ? new Date(body.dueDate) : null;
+
+    const [row] = await db.update(miComplianceItems)
+      .set(updates)
+      .where(and(eq(miComplianceItems.id, itemId), eq(miComplianceItems.orgId, orgId)))
+      .returning();
+    if (!row) { reply.code(404).send({ error: 'Not found' }); return; }
+    return row;
   });
 
   app.get('/scan/latest', { preHandler: ADMIN }, async (req) => {

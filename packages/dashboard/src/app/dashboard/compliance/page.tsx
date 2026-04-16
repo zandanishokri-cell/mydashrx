@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import {
   Shield, CheckCircle2, AlertTriangle, XCircle, RefreshCw,
-  FileText, ClipboardList, ChevronRight, Zap, Ban, AlertCircle,
+  FileText, ClipboardList, ChevronRight, Zap, Ban, AlertCircle, MapPin,
 } from 'lucide-react';
 
 interface CategoryStat { status: string; score: number; detail: string; }
@@ -396,7 +396,7 @@ export default function CompliancePage() {
           </div>
 
           {/* Quick links */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Link href="/dashboard/compliance/baa"
               className="flex items-center gap-4 bg-white rounded-xl border border-gray-100 p-4 hover:border-[#0F4C81] transition-colors group">
               <div className="p-2 bg-blue-50 rounded-lg group-hover:bg-blue-100 transition-colors">
@@ -418,6 +418,17 @@ export default function CompliancePage() {
                 <p className="text-xs text-gray-500">Review all system access events</p>
               </div>
               <ChevronRight size={16} className="text-gray-400 group-hover:text-[#00B8A9]" />
+            </Link>
+            <Link href="/dashboard/compliance/mi"
+              className="flex items-center gap-4 bg-white rounded-xl border border-gray-100 p-4 hover:border-[#0F4C81] transition-colors group">
+              <div className="p-2 bg-blue-50 rounded-lg group-hover:bg-blue-100 transition-colors">
+                <MapPin size={20} className="text-[#0F4C81]" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-800">Michigan Checklist</p>
+                <p className="text-xs text-gray-500">MAPS reporting &amp; state compliance</p>
+              </div>
+              <ChevronRight size={16} className="text-gray-400 group-hover:text-[#0F4C81]" />
             </Link>
           </div>
         </>
