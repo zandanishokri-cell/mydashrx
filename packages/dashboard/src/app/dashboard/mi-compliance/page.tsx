@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { Scale, Shield, AlertTriangle, CheckCircle, Clock, ChevronRight, Zap, Bell } from 'lucide-react';
+import { Scale, Shield, AlertTriangle, CheckCircle, Clock, ChevronRight, Zap, Bell, AlertCircle, X } from 'lucide-react';
 
 interface CategoryStat {
   status: string;
@@ -70,16 +70,17 @@ export default function MiCompliancePage() {
   const [user] = useState(getUser);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedMsg, setSeedMsg] = useState('');
 
   const load = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    setLoading(true); setLoadError(false);
     try {
       const result = await api.get<DashboardData>(`/orgs/${user.orgId}/mi-compliance/dashboard`);
       setData(result);
-    } catch { setData(null); }
+    } catch { setData(null); setLoadError(true); }
     finally { setLoading(false); }
   }, [user]);
 
@@ -105,6 +106,12 @@ export default function MiCompliancePage() {
 
   return (
     <div className="p-6 space-y-6">
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load compliance dashboard. Please try again.</span>
+          <button onClick={load} className="text-red-600 font-medium hover:underline text-xs">Retry</button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

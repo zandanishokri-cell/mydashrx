@@ -4,7 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { ArrowLeft, Plus, CheckCircle, AlertTriangle, Clock, XCircle, Pencil, X, Check } from 'lucide-react';
+import { ArrowLeft, Plus, CheckCircle, AlertTriangle, Clock, XCircle, Pencil, X, Check, AlertCircle } from 'lucide-react';
 
 interface ComplianceItem {
   id: string;
@@ -53,6 +53,7 @@ function ComplianceItemsContent() {
   const [category, setCategory] = useState(initCategory);
   const [items, setItems] = useState<ComplianceItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [editing, setEditing] = useState<EditState | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [newItem, setNewItem] = useState({ category: 'maps_reporting', itemName: '', legalRef: '', notes: '' });
@@ -60,14 +61,14 @@ function ComplianceItemsContent() {
 
   const load = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    setLoading(true); setLoadError(false);
     try {
       const url = category
         ? `/orgs/${user.orgId}/mi-compliance/items?category=${category}`
         : `/orgs/${user.orgId}/mi-compliance/items`;
       const result = await api.get<ComplianceItem[]>(url);
       setItems(result);
-    } catch { setItems([]); }
+    } catch { setItems([]); setLoadError(true); }
     finally { setLoading(false); }
   }, [user, category]);
 
@@ -105,6 +106,12 @@ function ComplianceItemsContent() {
 
   return (
     <div className="p-6 space-y-6">
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load compliance items. Please try again.</span>
+          <button onClick={load} className="text-red-600 font-medium hover:underline text-xs">Retry</button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

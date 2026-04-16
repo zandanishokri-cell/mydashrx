@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { ArrowLeft, CheckCircle, ExternalLink } from 'lucide-react';
+import { ArrowLeft, CheckCircle, ExternalLink, AlertCircle } from 'lucide-react';
 
 interface RegulatoryUpdate {
   id: string;
@@ -47,19 +47,20 @@ export default function RegulatoryUpdatesPage() {
   const [user] = useState(getUser);
   const [updates, setUpdates] = useState<RegulatoryUpdate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [unackOnly, setUnackOnly] = useState(false);
   const [acknowledging, setAcknowledging] = useState('');
 
   const load = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    setLoading(true); setLoadError(false);
     try {
       const url = unackOnly
         ? `/orgs/${user.orgId}/mi-compliance/regulatory?unacknowledged=true`
         : `/orgs/${user.orgId}/mi-compliance/regulatory`;
       const result = await api.get<RegulatoryUpdate[]>(url);
       setUpdates(result);
-    } catch { setUpdates([]); }
+    } catch { setUpdates([]); setLoadError(true); }
     finally { setLoading(false); }
   }, [user, unackOnly]);
 
@@ -78,6 +79,12 @@ export default function RegulatoryUpdatesPage() {
 
   return (
     <div className="p-6 space-y-6">
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load regulatory updates. Please try again.</span>
+          <button onClick={load} className="text-red-600 font-medium hover:underline text-xs">Retry</button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
