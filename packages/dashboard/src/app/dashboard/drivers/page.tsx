@@ -210,7 +210,7 @@ export default function DriversPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-[#0F4C81] font-semibold text-sm shrink-0">
-                        {driver.name[0]}
+                        {driver.name?.[0] ?? '?'}
                       </div>
                       <div>
                         <div className="font-medium text-gray-900">{driver.name}</div>

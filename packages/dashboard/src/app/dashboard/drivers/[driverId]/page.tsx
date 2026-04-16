@@ -80,6 +80,7 @@ export default function DriverDetailPage() {
   const [perf, setPerf] = useState<PerformanceData | null>(null);
   const [recentStops, setRecentStops] = useState<Stop[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
 
   const load = useCallback(async () => {
@@ -92,14 +93,16 @@ export default function DriverDetailPage() {
       ]);
       setDriver(driverData);
       setPerf(perfData);
+      setLoadError(false);
 
-      // Recent stops via analytics — fetch from stops endpoint if available
+      // Recent stops — best-effort, non-fatal if fails
       try {
         const resp = await api.get<{ stops: Stop[] }>(`/orgs/${user.orgId}/stops?driverId=${driverId}&limit=10`);
         setRecentStops(resp?.stops ?? []);
       } catch { setRecentStops([]); }
     } catch (e) {
       console.error(e);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -112,6 +115,16 @@ export default function DriverDetailPage() {
   if (loading) return (
     <div className="p-6 space-y-4">
       {[1, 2, 3].map(i => <div key={i} className="h-24 bg-white rounded-xl border border-gray-100 animate-pulse" />)}
+    </div>
+  );
+
+  if (loadError) return (
+    <div className="p-6 text-center">
+      <p className="text-gray-700 font-medium mb-1">Failed to load driver profile</p>
+      <p className="text-gray-400 text-sm mb-4">Check your connection and try again.</p>
+      <button onClick={load} className="text-sm bg-[#0F4C81] text-white px-4 py-2 rounded-lg hover:bg-[#0a3d6b]">
+        Retry
+      </button>
     </div>
   );
 
@@ -142,7 +155,7 @@ export default function DriverDetailPage() {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-full bg-blue-50 flex items-center justify-center text-[#0F4C81] font-bold text-xl shrink-0">
-              {driver.name[0]}
+              {driver.name?.[0] ?? '?'}
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
