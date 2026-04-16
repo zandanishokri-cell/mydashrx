@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { CsvImportModal } from '@/components/CsvImportModal';
+import { NewStopModal } from '@/components/NewStopModal';
 import { Plus, Search, X, RefreshCw, Download, Upload, ChevronUp, ChevronDown, ChevronsUpDown, Filter, ArrowRightLeft, Truck, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 
@@ -89,6 +90,7 @@ export default function StopsPage() {
   const [dateRange, setDateRange] = useState<DateRange>(() => TODAY_RANGE());
   const [page, setPage] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
+  const [newStopOpen, setNewStopOpen] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
@@ -273,9 +275,9 @@ export default function StopsPage() {
             <button onClick={() => setImportOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
               <Upload size={14} /> Import CSV
             </button>
-            <Link href="/dashboard/plans/new" className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[#0F4C81] text-white rounded-lg hover:bg-[#0a3860] transition-colors">
-              <Plus size={14} /> Add stops
-            </Link>
+            <button onClick={() => setNewStopOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[#0F4C81] text-white rounded-lg hover:bg-[#0a3860] transition-colors">
+              <Plus size={14} /> New Stop
+            </button>
           </div>
         </div>
 
@@ -520,6 +522,14 @@ export default function StopsPage() {
           orgId={user.orgId}
           onClose={() => setImportOpen(false)}
           onSuccess={() => { setImportOpen(false); load(true); }}
+        />
+      )}
+
+      {newStopOpen && user && (
+        <NewStopModal
+          orgId={user.orgId}
+          onClose={() => setNewStopOpen(false)}
+          onSuccess={() => { setNewStopOpen(false); load(true); }}
         />
       )}
 

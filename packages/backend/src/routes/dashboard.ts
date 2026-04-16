@@ -130,6 +130,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
         const routeTotals = new Map<string, { total: number; completed: number }>();
         for (const row of stopCounts) {
+          if (!row.routeId) continue; // unassigned stops — skip route totals
           const cur = routeTotals.get(row.routeId) ?? { total: 0, completed: 0 };
           cur.total += row.cnt;
           if (row.status === 'completed') cur.completed += row.cnt;
@@ -191,7 +192,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       estimatedDuration: routes.estimatedDuration,
     }).from(routes).where(and(inArray(routes.planId, planIds), isNull(routes.deletedAt)));
 
-    type StopSlim = { id: string; status: string; routeId: string };
+    type StopSlim = { id: string; status: string; routeId: string | null };
     type RouteWithStops = { id: string; planId: string; driverId: string | null; status: string; stopOrder: unknown; estimatedDuration: number | null; stops: StopSlim[] };
     type PlanWithRoutes = { id: string; date: string; status: string; depotId: string; routes: RouteWithStops[] };
 
@@ -214,7 +215,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         isNull(stops.deletedAt),
         inArray(stops.routeId, routeIds),
       ));
-      for (const s of stopRows) routeMap.get(s.routeId)?.stops.push(s);
+      for (const s of stopRows) if (s.routeId) routeMap.get(s.routeId)?.stops.push(s);
     }
 
     return { plans: [...planMap.values()] };

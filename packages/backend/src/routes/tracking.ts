@@ -147,6 +147,7 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const stopsByRoute = allStops.reduce<Record<string, typeof allStops>>((acc, s) => {
+      if (!s.routeId) return acc;
       (acc[s.routeId] ??= []).push(s);
       return acc;
     }, {});

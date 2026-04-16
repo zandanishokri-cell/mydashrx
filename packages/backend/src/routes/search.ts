@@ -397,4 +397,51 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     const total = stopsRes.length + driversRes.length + leadsRes.length;
     return { stops: stopsRes, drivers: driversRes, leads: leadsRes, total, query: q.trim(), took: Date.now() - start };
   });
+
+  // POST /orgs/:orgId/stops — create a single unassigned stop (no route required)
+  app.post('/stops', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const body = req.body as {
+      recipientName: string;
+      recipientPhone?: string;
+      address: string;
+      unit?: string;
+      rxNumbers?: string[];
+      packageCount?: number;
+      requiresRefrigeration?: boolean;
+      controlledSubstance?: boolean;
+      requiresSignature?: boolean;
+      requiresAgeVerification?: boolean;
+      windowStart?: string;
+      windowEnd?: string;
+      deliveryNotes?: string;
+    };
+
+    if (!body.recipientName?.trim()) return reply.code(400).send({ error: 'recipientName is required' });
+    if (!body.address?.trim()) return reply.code(400).send({ error: 'address is required' });
+
+    const [stop] = await db.insert(stops).values({
+      orgId,
+      recipientName: body.recipientName.trim(),
+      recipientPhone: body.recipientPhone?.trim() ?? '',
+      address: body.address.trim(),
+      unit: body.unit?.trim() || undefined,
+      rxNumbers: body.rxNumbers ?? [],
+      packageCount: body.packageCount ?? 1,
+      requiresRefrigeration: body.requiresRefrigeration ?? false,
+      controlledSubstance: body.controlledSubstance ?? false,
+      requiresSignature: body.requiresSignature ?? true,
+      requiresAgeVerification: body.requiresAgeVerification ?? false,
+      windowStart: body.windowStart ? new Date(body.windowStart) : undefined,
+      windowEnd: body.windowEnd ? new Date(body.windowEnd) : undefined,
+      deliveryNotes: body.deliveryNotes?.trim() || undefined,
+      lat: 0,
+      lng: 0,
+      status: 'pending',
+    }).returning();
+
+    return reply.code(201).send(stop);
+  });
 };

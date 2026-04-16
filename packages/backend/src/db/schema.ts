@@ -168,7 +168,6 @@ export const stops = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     routeId: uuid('route_id')
-      .notNull()
       .references(() => routes.id),
     orgId: uuid('org_id')
       .notNull()

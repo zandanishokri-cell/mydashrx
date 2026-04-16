@@ -110,7 +110,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
 
     const [route] = await db.select({ driverId: routes.driverId })
       .from(routes)
-      .where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt)))
+      .where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt)))
       .limit(1);
 
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
@@ -142,7 +142,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     if (!stop) return reply.code(404).send({ error: 'Not found' });
 
     const [route] = await db.select({ driverId: routes.driverId })
-      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+      .from(routes).where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
     const updates: Record<string, unknown> = { status };
@@ -168,7 +168,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       .from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
     const [route] = await db.select({ driverId: routes.driverId })
-      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+      .from(routes).where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     const data = await req.file();
     if (!data) return reply.code(400).send({ error: 'No file' });
@@ -210,7 +210,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const [stop] = await db.select().from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
     const [route] = await db.select({ driverId: routes.driverId })
-      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+      .from(routes).where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     return stop;
   });
@@ -226,7 +226,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       .from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
     const [route] = await db.select({ driverId: routes.driverId })
-      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+      .from(routes).where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     const [pod] = await db.select().from(proofOfDeliveries).where(eq(proofOfDeliveries.stopId, stopId)).limit(1);
     if (!pod) return reply.code(404).send({ error: 'No POD' });
@@ -246,7 +246,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       .from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stopCheck) return reply.code(404).send({ error: 'Not found' });
     const [routeCheck] = await db.select({ driverId: routes.driverId })
-      .from(routes).where(and(eq(routes.id, stopCheck.routeId), isNull(routes.deletedAt))).limit(1);
+      .from(routes).where(and(eq(routes.id, stopCheck.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!routeCheck || routeCheck.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
     const body = req.body as {
@@ -318,7 +318,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const [stop] = await db.select().from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
     const [route] = await db.select({ driverId: routes.driverId })
-      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+      .from(routes).where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     const schedules: string[] = [];
     if (stop.controlledSubstance) schedules.push('CS');

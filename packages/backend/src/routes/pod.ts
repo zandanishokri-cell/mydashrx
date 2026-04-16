@@ -16,7 +16,7 @@ export const podRoutes: FastifyPluginAsync = async (app) => {
     const [stop] = await db.select().from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Stop not found' });
     const [route] = await db.select({ driverId: routes.driverId })
-      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+      .from(routes).where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
     const schedules: string[] = [];
@@ -45,7 +45,7 @@ export const podRoutes: FastifyPluginAsync = async (app) => {
       .from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stopCheck) return reply.code(404).send({ error: 'Stop not found' });
     const [routeCheck] = await db.select({ driverId: routes.driverId })
-      .from(routes).where(and(eq(routes.id, stopCheck.routeId), isNull(routes.deletedAt))).limit(1);
+      .from(routes).where(and(eq(routes.id, stopCheck.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!routeCheck || routeCheck.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
     const body = req.body as {
@@ -114,7 +114,7 @@ export const podRoutes: FastifyPluginAsync = async (app) => {
       .from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stopCheck) return reply.code(404).send({ error: 'Not found' });
     const [routeCheck] = await db.select({ driverId: routes.driverId })
-      .from(routes).where(and(eq(routes.id, stopCheck.routeId), isNull(routes.deletedAt))).limit(1);
+      .from(routes).where(and(eq(routes.id, stopCheck.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!routeCheck || routeCheck.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     const data = await req.file();
     if (!data) return reply.code(400).send({ error: 'No file uploaded' });

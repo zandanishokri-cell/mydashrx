@@ -167,7 +167,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     if (status === 'arrived') {
       sendDriverArrivalEmail(updated).catch(console.error);
     }
-    if (status === 'completed' || status === 'failed' || status === 'rescheduled') {
+    if ((status === 'completed' || status === 'failed' || status === 'rescheduled') && updated.routeId) {
       checkAndNotifyRouteComplete(updated.orgId, updated.routeId).catch(console.error);
     }
 
