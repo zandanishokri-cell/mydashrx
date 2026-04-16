@@ -276,8 +276,8 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
           </div>
         )}
 
-        {/* Photo upload */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
+        {/* Photo upload — hidden when requiresPhoto=true (POD modal handles capture) */}
+        {!stop.requiresPhoto && <div className="bg-white rounded-2xl p-4 shadow-sm">
           <h3 className="font-semibold text-gray-800 mb-3 text-sm">Proof of Delivery Photo</h3>
           {photoUrl ? (
             <div className="relative">
@@ -309,7 +309,7 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
           )}
           <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-        </div>
+        </div>}
 
         {/* Status actions */}
         {!isDone && (
@@ -418,6 +418,9 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
         <PodCaptureModal
           stopId={stop.id}
           recipientNameHint={stop.recipientName}
+          requiresPhoto={stop.requiresPhoto}
+          packageCount={stop.packageCount}
+          codAmount={stop.codAmount ?? undefined}
           isOnline={isOnline}
           onClose={() => setShowPodModal(false)}
           onSubmitted={() => {

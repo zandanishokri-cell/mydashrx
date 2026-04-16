@@ -16,6 +16,8 @@ interface PodViewerProps {
     deliveryNotes?: string;
     barcodesScanned?: string[];
     packageConfirmed?: boolean;
+    packageCount?: number;
+    codCollected?: { amount: number; method: string; note?: string } | null;
   };
 }
 
@@ -40,6 +42,13 @@ export function PodViewer({ pod }: PodViewerProps) {
         {pod.recipientName && (
           <span className="flex items-center gap-1.5 text-xs text-gray-700 bg-gray-100 px-2.5 py-1 rounded-full">
             <User size={11} /> {pod.recipientName}
+          </span>
+        )}
+
+        {/* Package count */}
+        {pod.packageCount != null && pod.packageCount > 0 && (
+          <span className="flex items-center gap-1.5 text-xs text-gray-700 bg-gray-100 px-2.5 py-1 rounded-full">
+            📦 {pod.packageCount} pkg{pod.packageCount !== 1 ? 's' : ''}
           </span>
         )}
 
@@ -109,6 +118,17 @@ export function PodViewer({ pod }: PodViewerProps) {
         <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 rounded-xl px-3 py-2.5">
           <CheckCircle2 size={13} />
           DOB verified · MAPS confirmation received
+        </div>
+      )}
+
+      {/* COD collected */}
+      {pod.codCollected && (
+        <div className="flex items-center justify-between text-xs bg-yellow-50 text-yellow-800 rounded-xl px-3 py-2.5">
+          <span className="font-medium flex items-center gap-1.5">💵 COD Collected</span>
+          <span className="font-semibold">
+            ${pod.codCollected.amount.toFixed(2)} · {pod.codCollected.method}
+            {pod.codCollected.note ? ` · ${pod.codCollected.note}` : ''}
+          </span>
         </div>
       )}
 
