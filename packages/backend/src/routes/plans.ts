@@ -20,8 +20,10 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:planId', {
     preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin'),
   }, async (req, reply) => {
-    const { planId } = req.params as { orgId: string; planId: string };
-    const [plan] = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
+    const { orgId, planId } = req.params as { orgId: string; planId: string };
+    const [plan] = await db.select().from(plans)
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .limit(1);
     if (!plan) return reply.code(404).send({ error: 'Not found' });
     const planRoutes = await db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
     return { ...plan, routes: planRoutes };
@@ -40,11 +42,11 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:planId/distribute', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
-    const { planId } = req.params as { orgId: string; planId: string };
+    const { orgId, planId } = req.params as { orgId: string; planId: string };
     const [updated] = await db
       .update(plans)
       .set({ status: 'distributed' })
-      .where(eq(plans.id, planId))
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
       .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     return updated;
@@ -53,9 +55,11 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:planId/optimize', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
-    const { planId } = req.params as { orgId: string; planId: string };
+    const { orgId, planId } = req.params as { orgId: string; planId: string };
 
-    const [plan] = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
+    const [plan] = await db.select().from(plans)
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .limit(1);
     if (!plan) return reply.code(404).send({ error: 'Plan not found' });
 
     const [depot] = await db.select().from(depots).where(eq(depots.id, plan.depotId)).limit(1);
@@ -99,8 +103,11 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:planId', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
-    const { planId } = req.params as { orgId: string; planId: string };
-    await db.update(plans).set({ deletedAt: new Date() }).where(eq(plans.id, planId));
+    const { orgId, planId } = req.params as { orgId: string; planId: string };
+    const [deleted] = await db.update(plans).set({ deletedAt: new Date() })
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .returning({ id: plans.id });
+    if (!deleted) return reply.code(404).send({ error: 'Not found' });
     return reply.code(204).send();
   });
 };

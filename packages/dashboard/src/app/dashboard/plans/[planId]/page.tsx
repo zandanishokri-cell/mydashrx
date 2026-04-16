@@ -233,7 +233,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-[#0F4C81] font-semibold text-sm">
-                      {driver?.name[0] ?? '?'}
+                      {driver?.name?.[0] ?? '?'}
                     </div>
                     <div>
                       <span className="font-medium text-gray-900 text-sm">{driver?.name ?? 'Unknown Driver'}</span>
@@ -243,7 +243,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                   </div>
                   <div className="flex items-center gap-3">
                     {route.estimatedDuration && (
-                      <span className="text-xs text-gray-400">{Math.round(route.estimatedDuration)} min</span>
+                      <span className="text-xs text-gray-400">{Math.round(route.estimatedDuration / 60)} min</span>
                     )}
                     <span className="text-xs text-gray-500">{stops.length} stops{stops.length > 0 ? ` · ${completed} done` : ''}</span>
                     <button onClick={() => setShowAddStop(route.id)} className="flex items-center gap-1 text-xs text-[#0F4C81] hover:underline">
@@ -349,7 +349,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                   className="w-full flex items-center gap-3 px-4 py-3 border border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50 transition-colors text-left"
                 >
                   <div className="w-7 h-7 rounded-full bg-blue-50 flex items-center justify-center text-[#0F4C81] font-semibold text-sm">
-                    {d?.name[0] ?? '?'}
+                    {d?.name?.[0] ?? '?'}
                   </div>
                   <span className="text-sm font-medium text-gray-800">{d?.name ?? 'Unknown'}</span>
                   <span className="text-xs text-gray-400 ml-auto">{(stopsByRoute[r.id] ?? []).length} stops</span>

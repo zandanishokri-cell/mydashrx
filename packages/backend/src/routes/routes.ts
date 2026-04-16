@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { routes, stops } from '../db/schema.js';
+import { routes, stops, plans } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
@@ -16,6 +16,10 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { planId } = req.params as { planId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
+    // Verify plan belongs to this org before allowing route creation
+    const [plan] = await db.select({ orgId: plans.orgId }).from(plans).where(eq(plans.id, planId)).limit(1);
+    if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
     const { driverId } = req.body as { driverId: string };
     if (!driverId) return reply.code(400).send({ error: 'driverId required' });
     const [route] = await db.insert(routes).values({ planId, driverId }).returning();
@@ -25,12 +29,18 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:routeId/status', {
     preHandler: requireRole('driver', 'dispatcher', 'super_admin'),
   }, async (req, reply) => {
-    const { routeId } = req.params as { planId: string; routeId: string };
+    const { planId, routeId } = req.params as { planId: string; routeId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
+    // Verify plan belongs to this org before allowing status mutation
+    const [plan] = await db.select({ orgId: plans.orgId }).from(plans).where(eq(plans.id, planId)).limit(1);
+    if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
     const { status } = req.body as { status: 'pending' | 'active' | 'completed' };
     const updates: Record<string, unknown> = { status };
     if (status === 'active') updates.startedAt = new Date();
     if (status === 'completed') updates.completedAt = new Date();
-    const [updated] = await db.update(routes).set(updates).where(eq(routes.id, routeId)).returning();
+    const [updated] = await db.update(routes).set(updates)
+      .where(and(eq(routes.id, routeId), eq(routes.planId, planId)))
+      .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     return updated;
   });
@@ -49,8 +59,13 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:routeId', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
-    const { routeId } = req.params as { planId: string; routeId: string };
-    await db.update(routes).set({ deletedAt: new Date() }).where(eq(routes.id, routeId));
+    const { planId, routeId } = req.params as { planId: string; routeId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
+    // Verify plan belongs to this org before allowing route deletion
+    const [plan] = await db.select({ orgId: plans.orgId }).from(plans).where(eq(plans.id, planId)).limit(1);
+    if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
+    await db.update(routes).set({ deletedAt: new Date() })
+      .where(and(eq(routes.id, routeId), eq(routes.planId, planId)));
     return reply.code(204).send();
   });
 };
