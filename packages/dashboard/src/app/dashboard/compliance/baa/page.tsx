@@ -55,7 +55,9 @@ export default function BaaPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState('');
   const [confirmDeleteBaaId, setConfirmDeleteBaaId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -90,6 +92,7 @@ export default function BaaPage() {
   const save = async () => {
     if (!user || !form.vendorName || !form.service) return;
     setSaving(true);
+    setSaveError('');
     try {
       const payload = {
         ...form,
@@ -105,7 +108,7 @@ export default function BaaPage() {
       }
       setShowForm(false);
       await load();
-    } catch { /* ignore */ }
+    } catch (err: any) { setSaveError(err?.message ?? 'Save failed. Please try again.'); }
     finally { setSaving(false); }
   };
 
@@ -114,10 +117,11 @@ export default function BaaPage() {
     const id = confirmDeleteBaaId;
     setConfirmDeleteBaaId(null);
     setDeletingId(id);
+    setDeleteError('');
     try {
       await api.del(`/orgs/${user.orgId}/compliance/baa/${id}`);
       await load();
-    } catch { /* ignore */ }
+    } catch (err: any) { setDeleteError(err?.message ?? 'Delete failed. Please try again.'); }
     finally { setDeletingId(null); }
   };
 
@@ -179,6 +183,13 @@ export default function BaaPage() {
           </div>
         );
       })()}
+
+      {deleteError && (
+        <div className="px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
+          {deleteError}
+          <button onClick={() => setDeleteError('')} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
 
       {/* Add/Edit form */}
       {showForm && (
@@ -269,6 +280,7 @@ export default function BaaPage() {
               />
             </div>
           </div>
+          {saveError && <p className="text-red-500 text-xs mt-3">{saveError}</p>}
           <div className="flex items-center gap-2 mt-4">
             <button
               onClick={save}
@@ -278,7 +290,7 @@ export default function BaaPage() {
               <Check size={14} /> {saving ? 'Saving…' : 'Save'}
             </button>
             <button
-              onClick={() => setShowForm(false)}
+              onClick={() => { setShowForm(false); setSaveError(''); }}
               className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600"
             >
               Cancel

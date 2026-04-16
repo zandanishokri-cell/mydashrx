@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import {
   Shield, CheckCircle2, AlertTriangle, XCircle, RefreshCw,
-  FileText, ClipboardList, ChevronRight, Zap, Ban,
+  FileText, ClipboardList, ChevronRight, Zap, Ban, AlertCircle,
 } from 'lucide-react';
 
 interface CategoryStat { status: string; score: number; detail: string; }
@@ -139,6 +139,9 @@ export default function CompliancePage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [checksError, setChecksError] = useState('');
+  const [scanError, setScanError] = useState('');
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanLoadedAt, setScanLoadedAt] = useState<string | null>(null);
@@ -146,10 +149,11 @@ export default function CompliancePage() {
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
+    setLoadError(false);
     try {
       const result = await api.get<DashboardData>(`/orgs/${user.orgId}/compliance/dashboard`);
       setData(result);
-    } catch { setData(null); }
+    } catch { setLoadError(true); }
     finally { setLoading(false); }
   }, [user]);
 
@@ -178,22 +182,24 @@ export default function CompliancePage() {
   const runChecks = async () => {
     if (!user || running) return;
     setRunning(true);
+    setChecksError('');
     try {
       await api.post(`/orgs/${user.orgId}/compliance/checks/run`, {});
       setLastRun(new Date());
       await load();
-    } catch { /* ignore */ }
+    } catch (err: any) { setChecksError(err?.message ?? 'Checks failed. Please try again.'); }
     finally { setRunning(false); }
   };
 
   const runScan = async () => {
     if (!user || scanning) return;
     setScanning(true);
+    setScanError('');
     try {
       const result = await api.post<ScanResult>(`/orgs/${user.orgId}/compliance/scan`, {});
       setScanResult(result);
       setScanLoadedAt(result.scannedAt);
-    } catch { /* ignore */ }
+    } catch (err: any) { setScanError(err?.message ?? 'Scan failed. Please try again.'); }
     finally { setScanning(false); }
   };
 
@@ -233,13 +239,33 @@ export default function CompliancePage() {
         </div>
       </div>
 
+      {checksError && (
+        <div className="flex items-center justify-between bg-red-50 border border-red-100 rounded-xl px-4 py-2.5 text-sm text-red-600">
+          {checksError}
+          <button onClick={() => setChecksError('')} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
+      {scanError && (
+        <div className="flex items-center justify-between bg-red-50 border border-red-100 rounded-xl px-4 py-2.5 text-sm text-red-600">
+          {scanError}
+          <button onClick={() => setScanError('')} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
+
       {loading ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {[1,2,3,4,5,6,7].map(i => <div key={i} className="h-28 bg-white rounded-xl border border-gray-100 animate-pulse" />)}
         </div>
+      ) : loadError ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+          <AlertCircle size={36} className="text-red-400 mx-auto mb-3" />
+          <p className="text-gray-700 font-semibold text-sm mb-1">Failed to load compliance data</p>
+          <p className="text-gray-400 text-sm mb-4">Check your connection and try again.</p>
+          <button onClick={load} className="text-sm bg-[#0F4C81] text-white px-4 py-2 rounded-lg hover:bg-blue-900">Retry</button>
+        </div>
       ) : !data ? (
         <div className="flex items-center justify-center h-64 text-gray-400 text-sm">
-          Failed to load compliance data. Run checks to initialize.
+          No compliance data yet. Run checks to initialize.
         </div>
       ) : (
         <>
