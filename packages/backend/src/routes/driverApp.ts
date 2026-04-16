@@ -4,6 +4,7 @@ import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocatio
 import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification } from '../services/notifications.js';
+import { fireTrigger } from '../services/automation.js';
 import { uploadBuffer } from '../services/storage.js';
 import type { StopStatus } from '@mydash-rx/shared';
 
@@ -372,6 +373,15 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
         }
       })
       .catch(console.error);
+
+    // Fire automation trigger: driver_started_route
+    db.select({ orgId: plans.orgId }).from(plans)
+      .where(eq(plans.id, route.planId)).limit(1)
+      .then(([p]) => {
+        if (p?.orgId) {
+          fireTrigger({ orgId: p.orgId, trigger: 'driver_started_route', resourceId: routeId, data: { routeId, driverId } }).catch(console.error);
+        }
+      }).catch(console.error);
 
     return updated;
   });

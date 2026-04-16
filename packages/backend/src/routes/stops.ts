@@ -44,6 +44,14 @@ export async function checkAndNotifyRouteComplete(orgId: string, routeId: string
     failedCount: failedAddresses.length,
     failedAddresses,
   });
+
+  // Fire automation trigger: route_completed
+  fireTrigger({
+    orgId,
+    trigger: 'route_completed',
+    resourceId: routeId,
+    data: { routeId, driverName, completedCount, totalStops: routeStops.length, failedCount: failedAddresses.length },
+  }).catch(console.error);
 }
 
 export const stopRoutes: FastifyPluginAsync = async (app) => {

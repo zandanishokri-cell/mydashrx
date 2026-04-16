@@ -4,7 +4,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import {
   Zap, Plus, CheckCircle2, XCircle, Clock, RefreshCw,
-  ChevronDown, X, ToggleLeft, ToggleRight, Loader2,
+  X, ToggleLeft, ToggleRight, Loader2, Trash2, AlertCircle,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -241,14 +241,19 @@ export default function AutomationPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState('');
   const [toggling, setToggling] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
+    setLoadError(false);
     try {
       const [r, l] = await Promise.all([
         api.get<Rule[]>(`/orgs/${orgId}/automation/rules`),
@@ -256,9 +261,8 @@ export default function AutomationPage() {
       ]);
       setRules(r);
       setLog(l);
-    } finally {
-      setLoading(false);
-    }
+    } catch { setLoadError(true); }
+    finally { setLoading(false); }
   }, [orgId]);
 
   useEffect(() => { load(); }, [load]);
@@ -278,14 +282,24 @@ export default function AutomationPage() {
 
   const toggleRule = async (rule: Rule) => {
     setToggling(rule.id);
+    setToggleError('');
     try {
-      const updated = await api.patch<Rule>(`/orgs/${orgId}/automation/rules/${rule.id}`, {
-        enabled: !rule.enabled,
-      });
+      const updated = await api.patch<Rule>(`/orgs/${orgId}/automation/rules/${rule.id}`, { enabled: !rule.enabled });
       setRules(rs => rs.map(r => r.id === updated.id ? updated : r));
-    } finally {
-      setToggling(null);
-    }
+    } catch (e: any) { setToggleError(e?.message ?? 'Failed to update rule'); }
+    finally { setToggling(null); }
+  };
+
+  const deleteRule = async () => {
+    if (!confirmDeleteId) return;
+    const id = confirmDeleteId;
+    setConfirmDeleteId(null);
+    setDeleting(id);
+    try {
+      await api.del(`/orgs/${orgId}/automation/rules/${id}`);
+      setRules(rs => rs.filter(r => r.id !== id));
+    } catch (e: any) { setSeedError(e?.message ?? 'Failed to delete rule'); }
+    finally { setDeleting(null); }
   };
 
   const activeCount = rules.filter(r => r.enabled).length;
@@ -341,12 +355,31 @@ export default function AutomationPage() {
         ))}
       </div>
 
-      {seedError && (
-        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
-          {seedError}
-          <button onClick={() => setSeedError('')} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+      {loadError && (
+        <div className="mb-4 bg-white rounded-xl border border-gray-100 p-10 text-center">
+          <AlertCircle size={32} className="text-red-400 mx-auto mb-3" />
+          <p className="text-gray-700 font-semibold text-sm mb-1">Failed to load automation rules</p>
+          <button onClick={load} className="text-sm bg-[#0F4C81] text-white px-4 py-2 rounded-lg hover:bg-[#0d3d6b] mt-2">Retry</button>
         </div>
       )}
+      {(seedError || toggleError) && (
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 flex items-center justify-between">
+          {seedError || toggleError}
+          <button onClick={() => { setSeedError(''); setToggleError(''); }} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
+      {confirmDeleteId && (() => {
+        const name = rules.find(r => r.id === confirmDeleteId)?.name ?? 'this rule';
+        return (
+          <div className="mb-4 px-4 py-2.5 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-800 flex items-center justify-between">
+            <span>Delete <strong>{name}</strong>? This cannot be undone.</span>
+            <div className="flex items-center gap-2 ml-4 shrink-0">
+              <button onClick={() => setConfirmDeleteId(null)} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+              <button onClick={deleteRule} className="text-xs bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600">Delete</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Rules list */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm mb-6">
@@ -387,13 +420,23 @@ export default function AutomationPage() {
                   </div>
                   <p className="text-xs text-gray-400">{actionsSummary(rule.actions)}</p>
                 </div>
-                <div className="text-right shrink-0">
-                  <p className="text-xs text-gray-400">
-                    {rule.runCount} run{rule.runCount !== 1 ? 's' : ''}
-                  </p>
-                  {rule.lastRunAt && (
-                    <p className="text-xs text-gray-300 mt-0.5">{fmt(rule.lastRunAt)}</p>
-                  )}
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="text-right">
+                    <p className="text-xs text-gray-400">
+                      {rule.runCount} run{rule.runCount !== 1 ? 's' : ''}
+                    </p>
+                    {rule.lastRunAt && (
+                      <p className="text-xs text-gray-300 mt-0.5">{fmt(rule.lastRunAt)}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setConfirmDeleteId(rule.id)}
+                    disabled={deleting === rule.id}
+                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                    title="Delete rule"
+                  >
+                    {deleting === rule.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                  </button>
                 </div>
               </div>
             ))}
