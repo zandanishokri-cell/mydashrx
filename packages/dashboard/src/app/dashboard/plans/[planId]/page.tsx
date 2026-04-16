@@ -88,8 +88,8 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     try {
       await api.post(`/orgs/${user!.orgId}/plans/${planId}/optimize`, {});
       await loadPlan();
-    } catch (err: any) {
-      setError(err?.message ?? 'Optimization failed');
+    } catch {
+      setError('Optimization failed. Please try again.');
     } finally {
       setOptimizing(false);
     }
@@ -101,8 +101,8 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     try {
       await api.patch(`/orgs/${user!.orgId}/plans/${planId}/distribute`, {});
       await loadPlan();
-    } catch (err: any) {
-      setError(err?.message ?? 'Failed to distribute');
+    } catch {
+      setError('Failed to distribute. Please try again.');
     } finally {
       setDistributing(false);
     }
