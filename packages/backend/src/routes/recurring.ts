@@ -206,6 +206,7 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
       orgId,
       recipientName: rec.recipientName,
       recipientPhone: rec.recipientPhone ?? '',
+      recipientEmail: rec.recipientEmail ?? undefined,
       address: rec.address,
       lat: rec.lat ?? 0,
       lng: rec.lng ?? 0,

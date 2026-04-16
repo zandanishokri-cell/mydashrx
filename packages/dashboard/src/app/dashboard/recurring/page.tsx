@@ -37,8 +37,8 @@ const SCHEDULE_BADGE: Record<string, { label: string; cls: string }> = {
   custom: { label: 'Custom', cls: 'bg-gray-100 text-gray-600' },
 };
 
-const fmt = (d?: string) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-const today = () => new Date().toISOString().split('T')[0];
+const fmt = (d?: string) => d ? new Date(d.includes('T') ? d : d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 
 interface FormState {
   recipientName: string; address: string; recipientPhone: string; recipientEmail: string;
