@@ -6,6 +6,7 @@ import { isAuthenticated, clearSession, getUser } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { LayoutDashboard, Route, Map, Users, LogOut, Search, BarChart2, Target, Shield, Scale, Menu, X, Zap, CreditCard, Settings2, ChevronDown, Crown, RefreshCw, TrendingUp } from 'lucide-react';
 import NotificationPanel from '@/components/NotificationPanel';
+import { CommandPalette } from '@/components/CommandPalette';
 
 // Which roles can see each nav item. '*' = all authenticated roles.
 const NAV_ROLE_MAP: Record<string, string[]> = {
@@ -53,6 +54,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const onboardingChecked = useRef(false);
   const user = getUser();
@@ -97,17 +99,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Cmd+K / Ctrl+K → navigate to search
+  // Cmd+K / Ctrl+K → open command palette overlay
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        router.push('/dashboard/search');
+        setPaletteOpen(prev => !prev);
       }
+      if (e.key === 'Escape') setPaletteOpen(false);
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [router]);
+  }, []);
 
   // Onboarding check: redirect new orgs with no depots to setup wizard
   useEffect(() => {
@@ -259,6 +262,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       <main className="flex-1 overflow-auto mt-14 md:mt-0">{children}</main>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }

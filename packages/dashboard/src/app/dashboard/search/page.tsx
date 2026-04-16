@@ -57,18 +57,6 @@ export default function SearchPage() {
 
   useEffect(() => { setRecent(loadRecent()); }, []);
 
-  // Cmd+K focuses input
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        inputRef.current?.focus();
-      }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, []);
-
   const doSearch = useCallback(async (q: string) => {
     if (!user || !q.trim()) { setResults(null); return; }
     setLoading(true); setError(false);
