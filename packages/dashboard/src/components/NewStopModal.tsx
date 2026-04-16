@@ -38,6 +38,7 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
   const [form, setForm] = useState<FormState>(DEFAULTS);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [showUpgradeCta, setShowUpgradeCta] = useState(false);
 
   const set = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(f => ({ ...f, [k]: e.target.type === 'checkbox' ? (e.target as HTMLInputElement).checked : e.target.value }));
@@ -46,7 +47,7 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
     e.preventDefault();
     if (!form.recipientName.trim()) { setError('Recipient name is required'); return; }
     if (!form.address.trim()) { setError('Address is required'); return; }
-    setSaving(true); setError('');
+    setSaving(true); setError(''); setShowUpgradeCta(false);
     try {
       await api.post(`/orgs/${orgId}/stops`, {
         recipientName: form.recipientName.trim(),
@@ -66,8 +67,10 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
         requiresPhoto: form.requiresPhoto,
       });
       onSuccess();
-    } catch {
-      setError('Failed to create stop. Please try again.');
+    } catch (e: unknown) {
+      const isLimit = e instanceof Error && e.message.includes('402');
+      setError(isLimit ? 'Monthly stop limit reached for your plan.' : 'Failed to create stop. Please try again.');
+      setShowUpgradeCta(isLimit);
     } finally {
       setSaving(false);
     }
@@ -198,7 +201,14 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
             {error && (
               <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
                 <AlertCircle size={14} className="text-red-500 shrink-0" />
-                <p className="text-sm text-red-700">{error}</p>
+                <div>
+                  <p className="text-sm text-red-700">{error}</p>
+                  {showUpgradeCta && (
+                    <a href="/dashboard/billing" className="text-xs text-amber-600 font-medium hover:underline">
+                      Upgrade your plan to add more stops →
+                    </a>
+                  )}
+                </div>
               </div>
             )}
           </div>

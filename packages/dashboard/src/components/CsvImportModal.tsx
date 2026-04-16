@@ -65,8 +65,12 @@ export function CsvImportModal({ orgId, onClose, onSuccess }: Props) {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) {
-        const msg = await res.text().catch(() => 'Upload failed');
-        setResult({ imported: 0, errors: [{ row: 0, field: '', message: msg || 'Upload failed. Please try again.' }], warnings: [] });
+        if (res.status === 402) {
+          setResult({ imported: 0, errors: [{ row: 0, field: '', message: 'UPGRADE_REQUIRED' }], warnings: [] });
+        } else {
+          const msg = await res.text().catch(() => 'Upload failed');
+          setResult({ imported: 0, errors: [{ row: 0, field: '', message: msg || 'Upload failed. Please try again.' }], warnings: [] });
+        }
         return;
       }
       const data = await res.json() as ImportResult;
@@ -142,7 +146,21 @@ export function CsvImportModal({ orgId, onClose, onSuccess }: Props) {
                 </div>
               )}
 
-              {result.errors.length > 0 && (
+              {result.errors.length > 0 && result.errors[0]?.message === 'UPGRADE_REQUIRED' && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={15} className="text-red-500 shrink-0" />
+                    <div>
+                      <p className="text-sm text-red-800 font-medium">Monthly stop limit reached for your plan.</p>
+                      <a href="/dashboard/billing" className="text-xs text-amber-600 font-medium hover:underline">
+                        Upgrade your plan to import more stops →
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {result.errors.length > 0 && result.errors[0]?.message !== 'UPGRADE_REQUIRED' && (
                 <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
                   <button
                     onClick={() => setErrorsOpen(v => !v)}

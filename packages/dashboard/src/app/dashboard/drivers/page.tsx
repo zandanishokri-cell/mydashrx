@@ -331,11 +331,16 @@ function AddDriverModal({ orgId, onClose, onSaved }: { orgId: string; onClose: (
   const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', vehicleType: 'car' as 'car' | 'van' | 'bicycle', drugCapable: false });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [showUpgradeCta, setShowUpgradeCta] = useState(false);
   const set = (k: string, v: string | boolean) => setForm(f => ({ ...f, [k]: v }));
   const submit = async (e: React.FormEvent) => {
-    e.preventDefault(); setSaving(true); setError('');
+    e.preventDefault(); setSaving(true); setError(''); setShowUpgradeCta(false);
     try { await api.post(`/orgs/${orgId}/drivers`, form); onSaved(); }
-    catch (err: any) { setError(err.message ?? 'Failed to add driver'); }
+    catch (err: unknown) {
+      const isLimit = err instanceof Error && err.message.includes('402');
+      setError(isLimit ? 'Driver limit reached for your plan.' : 'Failed to add driver. Please try again.');
+      setShowUpgradeCta(isLimit);
+    }
     finally { setSaving(false); }
   };
   return (
@@ -354,7 +359,16 @@ function AddDriverModal({ orgId, onClose, onSaved }: { orgId: string; onClose: (
           <input type="checkbox" checked={form.drugCapable} onChange={e => set('drugCapable', e.target.checked)} className="rounded border-gray-300" />
           <span className="text-sm text-gray-700">Rx / Drug Capable</span>
         </label>
-        {error && <p className="text-red-500 text-sm">{error}</p>}
+        {error && (
+          <div>
+            <p className="text-red-500 text-sm">{error}</p>
+            {showUpgradeCta && (
+              <a href="/dashboard/billing" className="text-xs text-amber-600 font-medium hover:underline">
+                Upgrade your plan to add more drivers →
+              </a>
+            )}
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" size="sm" type="button" onClick={onClose}>Cancel</Button>
           <Button size="sm" type="submit" loading={saving}>Add Driver</Button>
