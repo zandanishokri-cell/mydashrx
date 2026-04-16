@@ -105,14 +105,20 @@ function FeatureCell({ value, isMdx }: { value: boolean | string; isMdx?: boolea
 export default function IntelPage() {
   const [user] = useState(getUser);
   const [stats, setStats] = useState<AnalyticsSummary | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState(false);
 
-  useEffect(() => {
+  const loadStats = () => {
     if (!user) return;
+    setStatsLoading(true);
+    setStatsError(false);
     api.get<{ summary: AnalyticsSummary; driverStats: { total: number }[] }>(`/orgs/${user.orgId}/analytics`)
-      .then(res => setStats({ ...res.summary, activeDriverCount: res.driverStats.filter(d => d.total > 0).length }))
-      .catch(() => setStatsError(true));
-  }, [user]);
+      .then(res => setStats({ ...res.summary, activeDriverCount: (res.driverStats ?? []).filter(d => d.total > 0).length }))
+      .catch(() => setStatsError(true))
+      .finally(() => setStatsLoading(false));
+  };
+
+  useEffect(() => { loadStats(); }, [user]); // eslint-disable-line
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8">
@@ -137,6 +143,11 @@ export default function IntelPage() {
         {statsError ? (
           <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
             <AlertCircle size={14} /> Performance data unavailable
+            <button onClick={loadStats} className="ml-auto text-xs font-medium text-amber-700 hover:underline">Retry</button>
+          </div>
+        ) : statsLoading ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[0,1,2,3].map(i => <div key={i} className="bg-white border border-gray-100 rounded-xl p-4 h-20 animate-pulse" />)}
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
