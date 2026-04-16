@@ -1,6 +1,6 @@
 import { db } from '../db/connection.js';
 import { automationRules, automationLog } from '../db/schema.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 
 export interface TriggerContext {
   orgId: string;
@@ -22,7 +22,7 @@ export async function fireTrigger(ctx: TriggerContext): Promise<void> {
     try {
       await executeRule(rule, ctx);
       await db.update(automationRules)
-        .set({ runCount: rule.runCount + 1, lastRunAt: new Date() })
+        .set({ runCount: sql`${automationRules.runCount} + 1`, lastRunAt: new Date() })
         .where(eq(automationRules.id, rule.id));
       await db.insert(automationLog).values({
         orgId: ctx.orgId, ruleId: rule.id, trigger: ctx.trigger,
