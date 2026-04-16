@@ -75,7 +75,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     }
     const daily = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
 
-    // Per-driver stats
+    // Per-driver stats — exclude unassigned stops (routeId=null) from driver breakdown
     const driverStats = await db
       .select({
         driverId: routes.driverId,
@@ -85,12 +85,11 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         failed: sql<number>`sum(case when ${stops.status} = 'failed' then 1 else 0 end)::int`,
       })
       .from(stops)
-      .leftJoin(routes, eq(stops.routeId, routes.id))
+      .innerJoin(routes, eq(stops.routeId, routes.id))
       .leftJoin(drivers, eq(routes.driverId, drivers.id))
       .where(base)
       .groupBy(routes.driverId, drivers.name)
-      .orderBy(sql`count(*) DESC`)
-      .limit(20);
+      .orderBy(sql`count(*) DESC`);
 
     const activeDriverCount = driverStats.filter(d => d.total > 0).length;
     const avgPerDriver = activeDriverCount > 0 ? Math.round(total / activeDriverCount) : 0;

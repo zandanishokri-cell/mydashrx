@@ -279,7 +279,7 @@ export default function AnalyticsPage() {
                 <CheckCircle2 size={16} className="text-gray-400 mb-0.5 shrink-0" />
                 {(() => {
                   const rate = data.summary.onTimeRate;
-                  const pct = rate != null ? Math.round(rate * 100) : null;
+                  const pct = rate != null ? Math.round(rate) : null;
                   const color = pct == null ? 'text-gray-900' : pct >= 90 ? 'text-green-600' : pct >= 70 ? 'text-amber-600' : 'text-red-600';
                   return (
                     <span className={`text-2xl font-bold ${color}`} style={{ fontFamily: 'var(--font-sora)' }}>
