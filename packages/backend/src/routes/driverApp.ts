@@ -114,7 +114,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
 
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
-    const updated = [...((stop.barcodesScanned as string[]) ?? []), barcode.trim()];
+    const existing = Array.isArray(stop.barcodesScanned) ? (stop.barcodesScanned as string[]) : [];
+    const updated = [...existing, barcode.trim()];
     const [result] = await db.update(stops)
       .set({ barcodesScanned: updated, packageConfirmed: true })
       .where(eq(stops.id, stopId))

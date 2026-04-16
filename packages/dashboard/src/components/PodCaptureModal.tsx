@@ -2,17 +2,20 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { X, AlertTriangle, Camera, CheckCircle2, RotateCcw, User, FileText, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/api';
+import { enqueueAction } from '@/lib/offline-queue';
 
 interface Props {
   stopId: string;
   recipientNameHint?: string;
+  isOnline?: boolean;
   onClose: () => void;
   onSubmitted: () => void;
+  onQueued?: () => void;
 }
 
 type Step = 1 | 2 | 3 | 4;
 
-export function PodCaptureModal({ stopId, recipientNameHint, onClose, onSubmitted }: Props) {
+export function PodCaptureModal({ stopId, recipientNameHint, isOnline = true, onClose, onSubmitted, onQueued }: Props) {
   const [step, setStep] = useState<Step>(1);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -106,18 +109,31 @@ export function PodCaptureModal({ stopId, recipientNameHint, onClose, onSubmitte
   const submit = async () => {
     setSubmitting(true);
     setError('');
+    const signatureData = sigPreview ?? canvasRef.current?.toDataURL('image/png') ?? undefined;
+    const podPayload = {
+      packageCount: 1,
+      recipientName,
+      isControlledSubstance: isCS,
+      signatureData,
+      idPhotoUrl: idPhotoDataUrl ?? undefined,
+      idVerified: isCS ? (!!idPhotoDataUrl && dobConfirmed) : false,
+      idDobConfirmed: dobConfirmed,
+      deliveryNotes: '',
+    };
+
+    if (!isOnline) {
+      try {
+        await enqueueAction({ type: 'pod_submit', stopId, payload: podPayload });
+        onQueued?.();
+      } catch {
+        setError('Failed to save offline');
+        setSubmitting(false);
+      }
+      return;
+    }
+
     try {
-      const signatureData = sigPreview ?? canvasRef.current?.toDataURL('image/png') ?? undefined;
-      await api.post(`/driver/me/stops/${stopId}/pod`, {
-        packageCount: 1,
-        recipientName,
-        isControlledSubstance: isCS,
-        signatureData,
-        idPhotoUrl: idPhotoDataUrl ?? undefined,
-        idVerified: isCS ? (!!idPhotoDataUrl && dobConfirmed) : false,
-        idDobConfirmed: dobConfirmed,
-        deliveryNotes: '',
-      });
+      await api.post(`/driver/me/stops/${stopId}/pod`, podPayload);
       onSubmitted();
     } catch (err: any) {
       setError(err?.message ?? 'Submission failed');
@@ -385,7 +401,7 @@ export function PodCaptureModal({ stopId, recipientNameHint, onClose, onSubmitte
                 onClick={submit}
                 className="flex-1 bg-green-500 text-white py-4 rounded-2xl font-bold disabled:opacity-40 min-h-[56px] flex items-center justify-center gap-2"
               >
-                <ShieldCheck size={18} /> {submitting ? 'Submitting…' : 'Submit Delivery'}
+                <ShieldCheck size={18} /> {submitting ? 'Saving…' : isOnline ? 'Submit Delivery' : 'Save Offline'}
               </button>
             </div>
           )}

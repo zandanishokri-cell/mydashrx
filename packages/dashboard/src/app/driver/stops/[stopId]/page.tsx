@@ -2,9 +2,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
+import { enqueueAction } from '@/lib/offline-queue';
 import { PodCaptureModal } from '@/components/PodCaptureModal';
 import { BarcodeScanner } from '@/components/BarcodeScanner';
-import { ArrowLeft, Phone, MapPin, Package, Camera, CheckCircle2, XCircle, Clock, AlertTriangle, Thermometer, PenLine, Upload, ScanBarcode } from 'lucide-react';
+import { ArrowLeft, Phone, MapPin, Package, Camera, CheckCircle2, XCircle, Clock, AlertTriangle, Thermometer, PenLine, Upload, ScanBarcode, WifiOff, RefreshCw } from 'lucide-react';
 
 interface Stop {
   id: string; routeId: string; recipientName: string; address: string;
@@ -41,6 +43,7 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
   const [success, setSuccess] = useState('');
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const { isOnline, pendingCount, syncing, syncQueue, refreshCount } = useOfflineSync();
 
   useEffect(() => {
     api.get<Stop>(`/driver/me/stops/${stopId}`)
@@ -57,6 +60,19 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
   const handleBarcodeScan = async (value: string) => {
     setShowScanner(false);
     setError('');
+
+    if (!isOnline) {
+      try {
+        await enqueueAction({ type: 'barcode_scan', stopId, payload: { barcode: value } });
+        setScannedBarcodes(prev => [...prev, value]);
+        setSuccess(`Barcode saved offline: ${value.slice(0, 20)}${value.length > 20 ? '…' : ''}`);
+        await refreshCount();
+      } catch {
+        setError('Failed to save barcode offline');
+      }
+      return;
+    }
+
     try {
       const result = await api.post<Stop>(`/driver/me/stops/${stopId}/barcode`, { barcode: value });
       setScannedBarcodes(result.barcodesScanned ?? []);
@@ -70,9 +86,25 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
     if (!stop) return;
     setSaving(true);
     setError('');
+    const body: Record<string, unknown> = { status };
+    if (status === 'failed') { body.failureReason = failureReason; body.failureNote = failureNote; }
+
+    if (!isOnline) {
+      try {
+        await enqueueAction({ type: 'status_update', stopId, payload: body });
+        setStop({ ...stop, status });
+        setSuccess('Saved offline — will sync automatically when back online');
+        await refreshCount();
+        if (status === 'completed' || status === 'failed') setTimeout(() => router.back(), 1500);
+      } catch {
+        setError('Failed to save offline');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     try {
-      const body: Record<string, unknown> = { status };
-      if (status === 'failed') { body.failureReason = failureReason; body.failureNote = failureNote; }
       const updated = await api.patch<Stop>(`/driver/me/stops/${stopId}/status`, body);
       setStop(updated);
       setSuccess(status === 'completed' ? 'Delivery marked complete!' : status === 'arrived' ? 'Marked as arrived' : 'Status updated');
@@ -130,6 +162,22 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
 
   return (
     <div className="min-h-screen bg-gray-50 pb-32">
+      {/* Offline / sync banners */}
+      {!isOnline && (
+        <div className="bg-red-500 text-white px-4 py-2.5 flex items-center gap-2 text-sm font-medium">
+          <WifiOff size={15} />
+          <span>No connection — changes saved locally</span>
+        </div>
+      )}
+      {pendingCount > 0 && isOnline && (
+        <div className="bg-amber-500 text-white px-4 py-2.5 flex items-center gap-2 text-sm font-medium">
+          <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
+          <span>{syncing ? `Syncing ${pendingCount} saved action${pendingCount !== 1 ? 's' : ''}…` : `${pendingCount} action${pendingCount !== 1 ? 's' : ''} pending sync`}</span>
+          {!syncing && (
+            <button onClick={syncQueue} className="ml-auto text-amber-100 underline text-xs">Sync now</button>
+          )}
+        </div>
+      )}
       {/* Header */}
       <div className="bg-[#0F4C81] text-white px-5 pt-12 pb-5">
         <button onClick={() => router.back()} className="flex items-center gap-2 text-blue-200 mb-3 text-sm">
@@ -356,11 +404,19 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
         <PodCaptureModal
           stopId={stop.id}
           recipientNameHint={stop.recipientName}
+          isOnline={isOnline}
           onClose={() => setShowPodModal(false)}
           onSubmitted={() => {
             setShowPodModal(false);
             setSuccess('Delivery complete!');
             setStop({ ...stop, status: 'completed' });
+            setTimeout(() => router.back(), 1500);
+          }}
+          onQueued={async () => {
+            setShowPodModal(false);
+            setStop({ ...stop, status: 'completed' });
+            await refreshCount();
+            setSuccess('POD saved offline — will sync when back online');
             setTimeout(() => router.back(), 1500);
           }}
         />
