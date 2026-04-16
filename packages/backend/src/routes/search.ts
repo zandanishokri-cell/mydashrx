@@ -24,7 +24,8 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     const conditions = [eq(stops.orgId, orgId), isNull(stops.deletedAt)];
 
     if (q) {
-      const like = `%${q}%`;
+      const escaped = q.replace(/[%_\\]/g, '\\$&');
+      const like = `%${escaped}%`;
       conditions.push(or(
         ilike(stops.recipientName, like),
         ilike(stops.address, like),
@@ -316,7 +317,8 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     if (!q.trim()) return { stops: [], drivers: [], leads: [], total: 0, query: q, took: 0 };
 
     const start = Date.now();
-    const like = `%${q.trim()}%`;
+    const escaped = q.trim().replace(/[%_\\]/g, '\\$&');
+    const like = `%${escaped}%`;
 
     const [stopsRes, driversRes, leadsRes] = await Promise.all([
       (type === 'all' || type === 'stops') ? db

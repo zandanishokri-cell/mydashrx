@@ -4,7 +4,6 @@ import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
-import { StopDetailModal } from '@/components/StopDetailModal';
 import { Search, Clock, X } from 'lucide-react';
 
 interface StopResult {
@@ -53,7 +52,6 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [recent, setRecent] = useState<string[]>([]);
-  const [selectedStop, setSelectedStop] = useState<any>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -215,7 +213,7 @@ export default function SearchPage() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Stops ({stopsShown.length})</p>
             <div className="space-y-px">
               {stopsShown.map(stop => (
-                <div key={stop.id} onClick={() => setSelectedStop(stop)}
+                <div key={stop.id} onClick={() => router.push(`/dashboard/stops/${stop.id}`)}
                   className="bg-white border border-gray-100 rounded-xl px-4 py-3 hover:border-blue-200 hover:shadow-sm cursor-pointer transition-all flex items-center justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-gray-900 text-sm truncate">{stop.recipientName}</p>
@@ -275,13 +273,6 @@ export default function SearchPage() {
         )}
       </div>
 
-      {selectedStop && (
-        <StopDetailModal
-          stop={selectedStop}
-          onClose={() => setSelectedStop(null)}
-          onUpdated={() => { setSelectedStop(null); doSearch(query); }}
-        />
-      )}
     </div>
   );
 }
