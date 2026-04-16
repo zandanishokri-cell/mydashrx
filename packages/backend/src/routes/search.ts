@@ -87,15 +87,24 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       .limit(limitNum)
       .offset(offset);
 
-    // Filter by depotId after join (drizzle doesn't support nullable join conditions easily)
+    // Filter by depotId/driverId after join (drizzle doesn't support nullable join conditions easily)
     const filtered = depotId ? rows.filter(r => r.depotId === depotId) : rows;
     const driverFiltered = driverId ? filtered.filter(r => r.driverId === driverId) : filtered;
 
-    // Count total
+    // Count total — must use the same join + conditions to get an accurate total,
+    // especially when date filters reference plans.date or depot/driver filters are active.
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(stops)
-      .where(and(...conditions));
+      .leftJoin(routes, eq(stops.routeId, routes.id))
+      .leftJoin(plans, eq(routes.planId, plans.id))
+      .leftJoin(depots, eq(plans.depotId, depots.id))
+      .leftJoin(drivers, eq(routes.driverId, drivers.id))
+      .where(and(
+        ...conditions,
+        ...(depotId ? [sql`${depots.id} = ${depotId}`] : []),
+        ...(driverId ? [sql`${drivers.id} = ${driverId}`] : []),
+      ));
 
     return { stops: driverFiltered, total: count, page: pageNum, limit: limitNum };
   });

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, depots } from '../db/schema.js';
-import { eq, isNull, and } from 'drizzle-orm';
+import { eq, isNull, and, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 function parseCsv(text: string): Array<Record<string, string>> {
@@ -52,8 +52,11 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
     if (rows.length === 0) return reply.code(400).send({ error: 'CSV is empty or has no data rows' });
     if (rows.length > 500) return reply.code(400).send({ error: 'Max 500 rows per import' });
 
-    // Resolve a route to attach stops to
-    const [existingRoute] = await db.select().from(routes)
+    // Resolve a route to attach stops to — scoped to this org via plans join
+    const [existingRoute] = await db
+      .select({ id: routes.id })
+      .from(routes)
+      .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
       .where(and(isNull(routes.deletedAt), eq(routes.status, 'pending')))
       .limit(1);
 

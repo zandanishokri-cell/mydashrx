@@ -38,10 +38,13 @@ interface Props {
 
 const STATUS_OPTIONS = [
   { value: 'pending', label: 'Pending' },
+  { value: 'en_route', label: 'En Route' },
   { value: 'arrived', label: 'Arrived' },
   { value: 'completed', label: 'Completed' },
   { value: 'failed', label: 'Failed' },
 ];
+
+const TERMINAL_STATUSES = ['completed', 'failed', 'rescheduled'];
 
 const FAILURE_REASONS = [
   'Not home', 'Refused delivery', 'Wrong address', 'No safe drop location',
@@ -206,14 +209,20 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
 
         {/* Status update */}
         <div className="space-y-3">
+          {TERMINAL_STATUSES.includes(stop.status) && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              This stop is in a terminal state ({stop.status}) and its status cannot be changed.
+            </p>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
             <div className="flex gap-2 flex-wrap">
               {STATUS_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
-                  onClick={() => setStatus(opt.value)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                  onClick={() => !TERMINAL_STATUSES.includes(stop.status) && setStatus(opt.value)}
+                  disabled={TERMINAL_STATUSES.includes(stop.status)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                     status === opt.value
                       ? 'bg-[#0F4C81] text-white border-[#0F4C81]'
                       : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
@@ -271,7 +280,7 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
           </Button>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-            <Button size="sm" onClick={save} loading={saving} disabled={!dirty}>
+            <Button size="sm" onClick={save} loading={saving} disabled={!dirty || TERMINAL_STATUSES.includes(stop.status)}>
               Save Changes
             </Button>
           </div>

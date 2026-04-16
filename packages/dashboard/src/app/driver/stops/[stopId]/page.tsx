@@ -329,9 +329,14 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
                 </label>
               )}
 
+              {stop.requiresPhoto && !photoUrl && (
+                <p className="text-xs text-orange-600 bg-orange-50 border border-orange-100 rounded-xl px-3 py-2">
+                  A delivery photo is required before completing this stop.
+                </p>
+              )}
               <button
                 onClick={() => setShowPodModal(true)}
-                disabled={saving || (stop.requiresAgeVerification && !ageVerified)}
+                disabled={saving || (stop.requiresAgeVerification && !ageVerified) || (stop.requiresPhoto && !photoUrl)}
                 className="w-full bg-green-500 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-50 hover:bg-green-600 transition-colors min-h-[56px]"
               >
                 <CheckCircle2 size={16} /> Mark Delivered
