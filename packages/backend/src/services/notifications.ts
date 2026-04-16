@@ -1,7 +1,7 @@
 import twilio from 'twilio';
 import { db } from '../db/connection.js';
-import { notificationLogs, organizations, users } from '../db/schema.js';
-import { eq, and, isNull, inArray, or } from 'drizzle-orm';
+import { notificationLogs, organizations, users, drivers, routes } from '../db/schema.js';
+import { eq, and, isNull, inArray } from 'drizzle-orm';
 
 const SMS_TEMPLATES: Record<string, (d: Record<string, string>) => string> = {
   route_dispatched: (d) =>
@@ -14,8 +14,19 @@ const SMS_TEMPLATES: Record<string, (d: Record<string, string>) => string> = {
     `Your prescription has been delivered. Questions? Call ${d.pharmacyPhone}`,
   stop_failed: (d) =>
     `We couldn't complete your delivery. Please call ${d.pharmacyPhone} to reschedule.`,
+  stop_rescheduled: (d) =>
+    `We were unable to deliver today. Your prescription will be rescheduled. Questions? Call ${d.pharmacyPhone}`,
   eta_updated: (d) =>
     `Your delivery ETA updated to ~${d.etaMin} min. Track: ${d.trackingUrl}`,
+};
+
+// Maps stop status DB values → SMS template keys.
+// sendStopNotification is called with the raw DB status value; this resolves it to the template.
+const STATUS_TO_SMS_EVENT: Record<string, string> = {
+  arrived: 'stop_arrived',
+  completed: 'stop_completed',
+  failed: 'stop_failed',
+  rescheduled: 'stop_rescheduled',
 };
 
 let twilioClient: ReturnType<typeof twilio> | null = null;
@@ -32,26 +43,38 @@ export async function sendStopNotification(
     orgId: string;
     recipientPhone: string;
     trackingToken: unknown;
+    routeId?: string | null;
     status?: string;
   },
   event: string,
   extra: Record<string, string> = {},
 ): Promise<void> {
-  const template = SMS_TEMPLATES[event];
+  const resolvedEvent = STATUS_TO_SMS_EVENT[event] ?? event;
+  const template = SMS_TEMPLATES[resolvedEvent];
   if (!template || !stop.recipientPhone) return;
 
-  const [org] = await db
-    .select({ name: organizations.name })
-    .from(organizations)
-    .where(eq(organizations.id, stop.orgId))
-    .limit(1);
+  // Fetch org name + driver name in parallel (org phone on depots, not orgs — use fallback)
+  const [orgRow, driverRow] = await Promise.all([
+    db.select({ name: organizations.name })
+      .from(organizations).where(eq(organizations.id, stop.orgId)).limit(1)
+      .then(r => r[0]),
+    stop.routeId
+      ? db.select({ name: drivers.name })
+          .from(drivers)
+          .innerJoin(routes, eq(routes.driverId, drivers.id))
+          .where(eq(routes.id, stop.routeId))
+          .limit(1)
+          .then(r => r[0])
+      : Promise.resolve(undefined),
+  ]);
 
   const trackingUrl = `${process.env.DASHBOARD_URL ?? 'https://app.mydashrx.com'}/track/${String(stop.trackingToken)}`;
 
   const body = template({
-    pharmacyName: org?.name ?? 'Your Pharmacy',
-    pharmacyPhone: 'your pharmacy',
-    driverName: 'Your driver',
+    pharmacyName: orgRow?.name ?? 'Your Pharmacy',
+    pharmacyPhone: 'your pharmacy', // depot phone deferred — org table has no phone field
+
+    driverName: driverRow?.name ?? 'Your driver',
     trackingUrl,
     stopsAway: '2',
     etaMin: '20',
@@ -66,7 +89,7 @@ export async function sendStopNotification(
     });
     await db.insert(notificationLogs).values({
       stopId: stop.id,
-      event,
+      event: resolvedEvent,
       channel: 'sms',
       recipient: stop.recipientPhone,
       status: 'sent',
@@ -75,7 +98,7 @@ export async function sendStopNotification(
   } catch (err) {
     await db.insert(notificationLogs).values({
       stopId: stop.id,
-      event,
+      event: resolvedEvent,
       channel: 'sms',
       recipient: stop.recipientPhone,
       status: 'failed',
