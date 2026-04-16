@@ -1,7 +1,7 @@
 import twilio from 'twilio';
 import { db } from '../db/connection.js';
-import { notificationLogs, organizations, users, drivers, routes } from '../db/schema.js';
-import { eq, and, isNull, inArray } from 'drizzle-orm';
+import { notificationLogs, organizations, users, drivers, routes, plans } from '../db/schema.js';
+import { eq, and, isNull, isNotNull, inArray } from 'drizzle-orm';
 
 const SMS_TEMPLATES: Record<string, (d: Record<string, string>) => string> = {
   route_dispatched: (d) =>
@@ -244,4 +244,58 @@ export async function sendRouteCompleteSummaryEmail(params: {
       }),
     })
   ));
+}
+
+export async function sendRouteReadyNotifications(planId: string, orgId: string): Promise<void> {
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_FROM_NUMBER) return;
+
+  const [planRow] = await db
+    .select({ date: plans.date })
+    .from(plans)
+    .where(and(eq(plans.id, planId), eq(plans.orgId, orgId)))
+    .limit(1);
+  if (!planRow) return;
+
+  const [orgRow] = await db
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+  const pharmacyName = orgRow?.name ?? 'Your pharmacy';
+
+  const assignedRoutes = await db
+    .select({ driverId: routes.driverId, stopOrder: routes.stopOrder })
+    .from(routes)
+    .where(and(eq(routes.planId, planId), isNull(routes.deletedAt), isNotNull(routes.driverId)));
+
+  if (assignedRoutes.length === 0) return;
+
+  const driverIds = assignedRoutes.map(r => r.driverId).filter((id): id is string => !!id);
+
+  const driverRows = await db
+    .select({ id: drivers.id, name: drivers.name, phone: drivers.phone })
+    .from(drivers)
+    .where(and(inArray(drivers.id, driverIds), isNull(drivers.deletedAt)));
+
+  const stopCountByDriver = new Map<string, number>(
+    assignedRoutes.map(r => [r.driverId!, (r.stopOrder as string[]).length])
+  );
+
+  await Promise.all(
+    driverRows
+      .filter(d => d.phone?.trim())
+      .map(async (driver) => {
+        const stopCount = stopCountByDriver.get(driver.id) ?? 0;
+        const body = `Hi ${driver.name.split(' ')[0]}, your ${pharmacyName} delivery route for ${planRow.date} is ready — ${stopCount} stop${stopCount !== 1 ? 's' : ''}. Open the app to start your route.`;
+        try {
+          await getClient().messages.create({
+            from: process.env.TWILIO_FROM_NUMBER!,
+            to: driver.phone!,
+            body,
+          });
+        } catch (err) {
+          console.error(`[route-ready-sms] driver ${driver.id} failed:`, err);
+        }
+      })
+  );
 }

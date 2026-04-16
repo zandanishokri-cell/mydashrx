@@ -4,6 +4,7 @@ import { plans, routes, stops, depots } from '../db/schema.js';
 import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { optimizeRoute } from '../services/routeOptimizer.js';
+import { sendRouteReadyNotifications } from '../services/notifications.js';
 
 export const planRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
@@ -68,6 +69,8 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
       .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
+    // Notify assigned drivers — fire-and-forget, non-blocking
+    sendRouteReadyNotifications(planId, orgId).catch(console.error);
     return updated;
   });
 
