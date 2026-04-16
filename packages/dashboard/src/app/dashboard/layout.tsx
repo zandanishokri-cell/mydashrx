@@ -70,6 +70,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (!isAuthenticated()) router.replace('/login');
   }, [router]);
 
+  useEffect(() => {
+    if (user && (user as any).mustChangePassword) {
+      router.replace('/change-password');
+    }
+  }, [user, router]);
+
   // Role-based portal redirects — drivers and pharmacists have dedicated portals
   useEffect(() => {
     if (!user) return;

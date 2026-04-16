@@ -7,6 +7,7 @@ export interface User {
   role: Role;
   orgId: string;
   depotIds: string[];
+  mustChangePassword?: boolean;
 }
 
 export interface JWTPayload {

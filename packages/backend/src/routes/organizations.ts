@@ -151,6 +151,7 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
         role: body.role as any,
         depotIds: body.depotIds ?? [],
         passwordHash,
+        mustChangePassword: true,
       })
       .returning({ id: users.id, orgId: users.orgId, email: users.email, name: users.name, role: users.role, depotIds: users.depotIds, createdAt: users.createdAt });
 

@@ -77,6 +77,7 @@ export const users = pgTable(
     role: roleEnum('role').notNull(),
     depotIds: jsonb('depot_ids').notNull().default('[]'),
     notificationPreferences: jsonb('notification_preferences').notNull().default('{"route_completed":true,"stop_failed":true,"stop_assigned":true}'),
+    mustChangePassword: boolean('must_change_password').notNull().default(false),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },

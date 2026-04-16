@@ -19,7 +19,11 @@ export default function LoginPage() {
     try {
       const tokens = await api.post<AuthTokens>('/auth/login', { email, password });
       setSession(tokens);
-      router.replace('/dashboard');
+      if ((tokens.user as any).mustChangePassword) {
+        router.replace('/change-password');
+      } else {
+        router.replace('/dashboard');
+      }
     } catch {
       setError('Invalid email or password');
     } finally {

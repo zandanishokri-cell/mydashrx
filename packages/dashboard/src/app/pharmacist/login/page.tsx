@@ -25,7 +25,11 @@ export default function PharmacistLoginPage() {
         return;
       }
       setSession(tokens);
-      router.replace('/pharmacist/queue');
+      if ((tokens.user as any).mustChangePassword) {
+        router.replace('/change-password');
+      } else {
+        router.replace('/pharmacist/queue');
+      }
     } catch {
       setError('Invalid email or password');
     } finally {

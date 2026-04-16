@@ -48,7 +48,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const tokens = signTokens(app, payload);
     return reply.send({
       ...tokens,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, ...(driverId ? { driverId } : {}) },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
     });
   });
 
@@ -127,6 +127,24 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const payload = req.user as { sub: string };
     const user = await findUserById(payload.sub);
     if (!user) return reply.code(404).send({ error: 'User not found' });
-    return { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds };
+    return { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword };
+  });
+
+  app.post('/change-password', async (req, reply) => {
+    try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
+    const payload = req.user as { sub: string };
+    const { newPassword } = req.body as { newPassword?: string };
+    if (!newPassword || newPassword.length < 8) return reply.code(400).send({ error: 'Password must be at least 8 characters' });
+
+    const user = await findUserById(payload.sub);
+    if (!user) return reply.code(404).send({ error: 'User not found' });
+
+    const newHash = await hashPassword(newPassword);
+    const [updated] = await db.update(users)
+      .set({ passwordHash: newHash, mustChangePassword: false })
+      .where(eq(users.id, payload.sub))
+      .returning({ id: users.id, name: users.name, email: users.email, role: users.role, orgId: users.orgId, depotIds: users.depotIds, mustChangePassword: users.mustChangePassword });
+
+    return { user: updated };
   });
 };
