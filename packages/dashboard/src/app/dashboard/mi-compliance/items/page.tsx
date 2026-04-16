@@ -17,6 +17,13 @@ interface ComplianceItem {
   legalRef: string | null;
 }
 
+const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD local
+
+function isOverdue(dueDate: string | null, status: string): boolean {
+  if (!dueDate || status === 'compliant') return false;
+  return dueDate.split('T')[0] < todayStr;
+}
+
 const CATEGORIES = [
   { key: '',                  label: 'All' },
   { key: 'maps_reporting',    label: 'MAPS Reporting' },
@@ -237,9 +244,16 @@ function ComplianceItemsContent() {
                     <td className="py-3 px-4">
                       <p className="text-gray-900 font-medium leading-snug">{item.itemName}</p>
                       {item.dueDate && (
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          Due: {new Date(item.dueDate).toLocaleDateString()}
-                        </p>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {isOverdue(item.dueDate, item.status) ? (
+                            <>
+                              <span className="text-xs font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full">OVERDUE</span>
+                              <span className="text-xs text-red-400">{new Date(item.dueDate + 'T00:00:00').toLocaleDateString()}</span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-gray-400">Due: {new Date(item.dueDate + 'T00:00:00').toLocaleDateString()}</span>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="py-3 px-4 text-xs text-gray-500 whitespace-nowrap">{item.legalRef ?? '—'}</td>

@@ -16,6 +16,13 @@ interface MiItem {
   legalRef: string | null;
 }
 
+const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD local
+
+function isOverdue(dueDate: string | null, status: string): boolean {
+  if (!dueDate || status === 'compliant') return false;
+  return dueDate.split('T')[0] < todayStr;
+}
+
 const STATUS_CYCLE: Record<string, string> = {
   pending: 'compliant',
   compliant: 'warning',
@@ -83,7 +90,7 @@ export default function MiCompliancePage() {
   }, {});
 
   const compliantCount = items.filter(i => i.status === 'compliant').length;
-  const overdueItems = items.filter(i => i.dueDate && new Date(i.dueDate) < new Date() && i.status !== 'compliant');
+  const overdueItems = items.filter(i => isOverdue(i.dueDate, i.status));
 
   return (
     <div className="p-6 space-y-5">
@@ -155,9 +162,9 @@ export default function MiCompliancePage() {
               </div>
               <div className="divide-y divide-gray-50">
                 {categoryItems.map(item => {
-                  const isOverdue = item.dueDate && new Date(item.dueDate) < new Date() && item.status !== 'compliant';
+                  const itemIsOverdue = isOverdue(item.dueDate, item.status);
                   return (
-                    <div key={item.id} className={`px-5 py-4 flex items-start gap-4 ${isOverdue ? 'bg-red-50/30' : ''}`}>
+                    <div key={item.id} className={`px-5 py-4 flex items-start gap-4 ${itemIsOverdue ? 'bg-red-50/30' : ''}`}>
                       <button
                         onClick={() => cycleStatus(item)}
                         disabled={saving === item.id}
@@ -172,7 +179,7 @@ export default function MiCompliancePage() {
                           <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${STATUS_BADGE[item.status] ?? 'bg-gray-100 text-gray-600'}`}>
                             {STATUS_LABEL[item.status] ?? item.status}
                           </span>
-                          {isOverdue && (
+                          {itemIsOverdue && (
                             <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-600">
                               Overdue
                             </span>
@@ -184,8 +191,8 @@ export default function MiCompliancePage() {
                             <span className="text-[11px] text-gray-400 font-mono">{item.legalRef}</span>
                           )}
                           {item.dueDate && item.status !== 'compliant' && (
-                            <span className={`text-[11px] ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
-                              Due {new Date(item.dueDate).toLocaleDateString()}
+                            <span className={`text-[11px] ${itemIsOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                              Due {new Date(item.dueDate + 'T00:00:00').toLocaleDateString()}
                             </span>
                           )}
                           {item.completedAt && (
