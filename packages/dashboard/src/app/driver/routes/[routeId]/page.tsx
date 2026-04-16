@@ -20,17 +20,19 @@ const statusColor: Record<string, string> = {
   arrived: 'text-yellow-500',
   completed: 'text-green-500',
   failed: 'text-red-500',
+  rescheduled: 'text-orange-400',
 };
 
 const statusIcon = (s: string) => {
   if (s === 'completed') return <CheckCircle2 size={20} className="text-green-500" />;
   if (s === 'failed') return <XCircle size={20} className="text-red-400" />;
+  if (s === 'rescheduled') return <Clock size={20} className="text-orange-400" />;
   if (s === 'arrived') return <Clock size={20} className="text-yellow-500" />;
   return <MapPin size={20} className="text-gray-300" />;
 };
 
 const statusLabel: Record<string, string> = {
-  pending: 'Pending', en_route: 'En Route', arrived: 'Arrived', completed: 'Done', failed: 'Failed',
+  pending: 'Pending', en_route: 'En Route', arrived: 'Arrived', completed: 'Done', failed: 'Failed', rescheduled: 'Rescheduled',
 };
 
 const fmtETA = (remainingStops: number): string => {
@@ -45,7 +47,9 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
   const [stops, setStops] = useState<Stop[]>([]);
   const [routeStatus, setRouteStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState('');
   const [locationStatus, setLocationStatus] = useState<'off' | 'active' | 'denied'>('off');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -59,7 +63,7 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
         setRouteStatus(routeData.status);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => { setLoading(false); setLoadError('Failed to load route. Pull to refresh.'); });
   };
 
   useEffect(() => { load(); }, []); // eslint-disable-line
@@ -94,10 +98,13 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
 
   const startRoute = async () => {
     setStarting(true);
+    setStartError('');
     try {
       const r = await api.patch<{ status: string }>(`/driver/me/routes/${routeId}/start`, {});
       setRouteStatus(r.status);
       // useEffect on routeStatus handles startLocationPing() when status becomes 'active'
+    } catch {
+      setStartError('Failed to start route. Please try again.');
     } finally { setStarting(false); }
   };
 
@@ -175,6 +182,12 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
       </div>
 
       <div className="px-4 py-4">
+        {loadError && (
+          <div className="bg-red-50 border border-red-100 rounded-2xl px-4 py-3 mb-4 text-sm text-red-600">{loadError}</div>
+        )}
+        {startError && (
+          <div className="bg-red-50 border border-red-100 rounded-2xl px-4 py-3 mb-4 text-sm text-red-600">{startError}</div>
+        )}
         {/* All deliveries complete celebration */}
         {allDone && (
           <div className="bg-green-50 border border-green-200 rounded-2xl p-5 mb-4 text-center">
