@@ -138,6 +138,13 @@ function OrgTab({ orgId }: { orgId: string }) {
     finally { setSaving(false); }
   };
 
+  if (!org && error) return (
+    <div className="flex flex-col items-center justify-center py-20 gap-3">
+      <AlertCircle className="text-red-400" size={24} />
+      <p className="text-sm text-gray-500">{error}</p>
+    </div>
+  );
+
   if (!org) return (
     <div className="flex items-center justify-center py-20">
       <Loader2 className="animate-spin text-gray-400" size={24} />
@@ -237,10 +244,14 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
   const [savingRole, setSavingRole] = useState(false);
   const [removeError, setRemoveError] = useState('');
   const [saveRoleError, setSaveRoleError] = useState('');
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(() => {
-    setLoading(true);
-    api.get<OrgUser[]>(`/orgs/${orgId}/users`).then(setMembers).finally(() => setLoading(false));
+    setLoading(true); setLoadError(false);
+    api.get<OrgUser[]>(`/orgs/${orgId}/users`)
+      .then(setMembers)
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false));
   }, [orgId]);
 
   useEffect(() => { load(); }, [load]);
@@ -290,6 +301,14 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
   };
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-gray-400" size={24} /></div>;
+
+  if (loadError) return (
+    <div className="flex flex-col items-center justify-center py-20 gap-3">
+      <AlertCircle className="text-red-400" size={24} />
+      <p className="text-sm text-gray-500">Failed to load team members</p>
+      <button onClick={load} className="text-sm text-[#0F4C81] hover:underline">Retry</button>
+    </div>
+  );
 
   return (
     <div>
@@ -489,10 +508,14 @@ function DepotsTab({ orgId }: { orgId: string }) {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [deleteError, setDeleteError] = useState('');
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(() => {
-    setLoading(true);
-    api.get<Depot[]>(`/orgs/${orgId}/depots`).then(setDepots).finally(() => setLoading(false));
+    setLoading(true); setLoadError(false);
+    api.get<Depot[]>(`/orgs/${orgId}/depots`)
+      .then(setDepots)
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false));
   }, [orgId]);
 
   useEffect(() => { load(); }, [load]);
@@ -577,6 +600,14 @@ function DepotsTab({ orgId }: { orgId: string }) {
   );
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-gray-400" size={24} /></div>;
+
+  if (loadError) return (
+    <div className="flex flex-col items-center justify-center py-20 gap-3">
+      <AlertCircle className="text-red-400" size={24} />
+      <p className="text-sm text-gray-500">Failed to load depots</p>
+      <button onClick={load} className="text-sm text-[#0F4C81] hover:underline">Retry</button>
+    </div>
+  );
 
   return (
     <div>

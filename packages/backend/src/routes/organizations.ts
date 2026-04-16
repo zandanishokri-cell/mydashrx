@@ -88,7 +88,17 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     const body = req.body as Partial<{ name: string; role: string; depotIds: string[] }>;
     const updates: Record<string, unknown> = {};
     if (body.name !== undefined) updates.name = body.name;
-    if (body.role !== undefined) updates.role = body.role;
+    if (body.role !== undefined) {
+      const ASSIGNABLE_ROLES = ['pharmacy_admin', 'dispatcher', 'pharmacist', 'driver'];
+      if (!ASSIGNABLE_ROLES.includes(body.role)) {
+        return reply.code(400).send({ error: `Invalid role. Must be one of: ${ASSIGNABLE_ROLES.join(', ')}` });
+      }
+      // pharmacy_admin cannot assign pharmacy_admin role (only super_admin can promote to admin)
+      if (user.role === 'pharmacy_admin' && body.role === 'pharmacy_admin') {
+        return reply.code(403).send({ error: 'Insufficient permissions to assign this role' });
+      }
+      updates.role = body.role;
+    }
     if (body.depotIds !== undefined) updates.depotIds = body.depotIds;
     const [updated] = await db
       .update(users)
