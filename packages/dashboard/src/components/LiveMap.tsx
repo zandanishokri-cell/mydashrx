@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import 'leaflet/dist/leaflet.css';
+import { useEffect, useRef, useState } from 'react';
 
 interface DriverMarker {
   id: string;
@@ -69,7 +70,8 @@ export function LiveMap({
   const mapRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<any[]>([]);
-  const hasFitRef = useRef(false); // track whether initial bounds fit has fired
+  const hasFitRef = useRef(false);
+  const [mapReady, setMapReady] = useState(false); // signals map init complete
 
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return;
@@ -90,10 +92,12 @@ export function LiveMap({
         maxZoom: 19,
       }).addTo(map);
       mapRef.current = map;
+      setMapReady(true); // trigger marker effect after map is ready
     });
 
     return () => {
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+      markersRef.current = []; // prevent stale refs on remount
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -146,7 +150,7 @@ export function LiveMap({
         hasFitRef.current = true;
       }
     });
-  }, [drivers, stops, highlightedDriverId, onMarkerClick]);
+  }, [mapReady, drivers, stops, highlightedDriverId, onMarkerClick]);
 
   // When a driver is selected, pan to them so the user sees their route
   useEffect(() => {
@@ -162,10 +166,5 @@ export function LiveMap({
     });
   }, [highlightedDriverId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return (
-    <>
-      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-      <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
-    </>
-  );
+  return <div ref={containerRef} style={{ height: '100%', width: '100%' }} />;
 }

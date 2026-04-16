@@ -81,6 +81,8 @@ export default function MapPage() {
   const [highlightedDriverId, setHighlightedDriverId] = useState<string | null>(null);
   const [routeStops, setRouteStops] = useState<StopMarker[]>([]);
   const [stopsLoading, setStopsLoading] = useState(false);
+  const [stopsError, setStopsError] = useState(false);
+  const lastFetchedRouteIdRef = useRef<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -110,19 +112,24 @@ export default function MapPage() {
     };
   }, [load]);
 
-  // Fetch stop pins for highlighted driver's route
+  // Fetch stop pins only when the highlighted route actually changes — not on every 15s poll
   useEffect(() => {
-    if (!highlightedDriverId || !user || !liveData) { setRouteStops([]); return; }
+    if (!highlightedDriverId || !user || !liveData) {
+      setRouteStops([]); setStopsError(false); lastFetchedRouteIdRef.current = null; return;
+    }
     const route = liveData.activeRoutes.find((r) => r.driverId === highlightedDriverId);
-    if (!route) { setRouteStops([]); return; }
-    setStopsLoading(true);
+    if (!route) { setRouteStops([]); lastFetchedRouteIdRef.current = null; return; }
+    // Skip re-fetch if same route — liveData updates every 15s, route stops rarely change
+    if (lastFetchedRouteIdRef.current === route.routeId) return;
+    lastFetchedRouteIdRef.current = route.routeId;
+    setStopsLoading(true); setStopsError(false);
     api.get<{ stops: RouteStopResponse[] }>(`/orgs/${user.orgId}/tracking/route/${route.routeId}`)
       .then((data) => setRouteStops(
         data.stops
           .filter((s) => s.lat != null && s.lng != null)
           .map((s) => ({ id: s.stopId, lat: s.lat!, lng: s.lng!, recipientName: s.recipientName, address: s.address, status: s.status, sequenceNumber: s.sequenceNumber }))
       ))
-      .catch(() => setRouteStops([]))
+      .catch(() => { setRouteStops([]); setStopsError(true); })
       .finally(() => setStopsLoading(false));
   }, [highlightedDriverId, liveData, user]);
 
@@ -160,12 +167,19 @@ export default function MapPage() {
         </div>
       </div>
 
-      {/* Error banner */}
+      {/* Error banners — two states: no data yet (red) vs stale data (amber) */}
       {error && !liveData && (
         <div className="flex items-center gap-2 px-5 py-2.5 bg-red-50 border-b border-red-100 shrink-0">
           <WifiOff size={14} className="text-red-500 shrink-0" />
           <span className="text-sm text-red-700">Could not load live tracking data.</span>
           <button onClick={load} className="ml-auto text-xs font-medium text-red-600 hover:underline">Retry</button>
+        </div>
+      )}
+      {error && liveData && (
+        <div className="flex items-center gap-2 px-5 py-2.5 bg-amber-50 border-b border-amber-100 shrink-0">
+          <AlertTriangle size={14} className="text-amber-500 shrink-0" />
+          <span className="text-sm text-amber-700">Refresh failed — showing last known positions.</span>
+          <button onClick={load} className="ml-auto text-xs font-medium text-amber-600 hover:underline">Retry</button>
         </div>
       )}
 
@@ -191,6 +205,11 @@ export default function MapPage() {
           <div className="px-4 py-3 border-b border-gray-50 flex items-center justify-between">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Active Routes</p>
             {stopsLoading && <span className="text-xs text-gray-400 animate-pulse">Loading stops…</span>}
+            {stopsError && !stopsLoading && (
+              <span className="text-xs text-amber-600 flex items-center gap-1">
+                <AlertTriangle size={10} /> Stops unavailable
+              </span>
+            )}
           </div>
 
           {(liveData?.activeRoutes ?? []).length === 0 ? (
