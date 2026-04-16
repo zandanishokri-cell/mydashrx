@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { Search, Plus, Phone, Mail, ExternalLink, ChevronLeft, ChevronRight, UserSearch } from 'lucide-react';
+import { Search, Plus, Phone, Mail, ExternalLink, ChevronLeft, ChevronRight, UserSearch, AlertCircle } from 'lucide-react';
 
 interface Lead {
   id: string; name: string; city: string; state: string; address: string;
@@ -43,6 +43,7 @@ export default function LeadsPage() {
   const [data, setData] = useState<LeadsResponse | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [status, setStatus] = useState('all');
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
@@ -51,6 +52,7 @@ export default function LeadsPage() {
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
+    setLoadError(false);
     try {
       const params = new URLSearchParams({ page: String(page), limit: '25' });
       if (status !== 'all') params.set('status', status);
@@ -61,7 +63,7 @@ export default function LeadsPage() {
       ]);
       setData(leadsData);
       setStats(statsData);
-    } catch { setData(null); }
+    } catch { setLoadError(true); }
     finally { setLoading(false); }
   }, [user, status, search, page]);
 
@@ -150,11 +152,18 @@ export default function LeadsPage() {
             <div key={i} className="h-40 bg-white rounded-xl border border-gray-100 animate-pulse" />
           ))}
         </div>
+      ) : loadError ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+          <AlertCircle size={36} className="text-red-400 mx-auto mb-3" />
+          <p className="text-gray-700 font-semibold text-sm mb-1">Failed to load leads</p>
+          <p className="text-gray-400 text-sm mb-4">Check your connection and try again.</p>
+          <button onClick={load} className="text-sm bg-[#0F4C81] text-white px-4 py-2 rounded-lg hover:bg-[#0a3d6b]">Retry</button>
+        </div>
       ) : !data?.leads.length ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <UserSearch size={48} className="text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-800 font-semibold text-sm mb-1">No leads yet</p>
-          <p className="text-gray-400 text-sm">Leads will appear here as patients are added.</p>
+          <p className="text-gray-800 font-semibold text-sm mb-1">{search || status !== 'all' ? 'No leads match your filters' : 'No leads yet'}</p>
+          <p className="text-gray-400 text-sm">{search || status !== 'all' ? 'Try adjusting your search or filter.' : 'Use "Search Pharmacies" to find and import prospects.'}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

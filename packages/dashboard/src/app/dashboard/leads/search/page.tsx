@@ -111,7 +111,9 @@ export default function LeadSearchPage() {
     // Mark imported
     setResults(prev => prev.map(r => selected.has(r.googlePlaceId) ? { ...r, alreadyImported: true } : r));
     setSelected(new Set());
-    showToast(`Imported ${count} lead${count !== 1 ? 's' : ''} successfully`);
+    showToast(count > 0
+      ? `Imported ${count} lead${count !== 1 ? 's' : ''} successfully`
+      : 'Import failed — no leads were saved. Try again.');
   };
 
   const importable = results.filter(r => !r.alreadyImported);

@@ -207,7 +207,7 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
                 {lead.website
                   ? <a href={lead.website} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-1.5 text-[#0F4C81] hover:underline truncate">
-                      <ExternalLink size={12} /> {new URL(lead.website).hostname}
+                      <ExternalLink size={12} /> {(() => { try { return new URL(lead.website!).hostname; } catch { return lead.website!; } })()}
                     </a>
                   : <span className="text-gray-400">—</span>}
               </div>
