@@ -252,12 +252,20 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
     const { stopIds: explicitStopIds } = req.body as { stopIds?: string[] };
 
+    if (explicitStopIds && explicitStopIds.length > 500) {
+      return reply.code(400).send({ error: 'explicitStopIds must not exceed 500 items' });
+    }
+
     // Verify plan ownership
-    const [plan] = await db.select({ id: plans.id, date: plans.date, depotId: plans.depotId })
+    const [plan] = await db.select({ id: plans.id, date: plans.date, depotId: plans.depotId, status: plans.status })
       .from(plans)
       .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
       .limit(1);
     if (!plan) return reply.code(404).send({ error: 'Plan not found' });
+
+    if (plan.status === 'distributed' || plan.status === 'completed') {
+      return reply.code(409).send({ error: `Cannot auto-distribute a plan with status '${plan.status}'` });
+    }
 
     // Get plan routes (only non-deleted)
     const planRouteRows = await db.select({ id: routes.id })
@@ -322,41 +330,37 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     let totalAssigned = 0;
     const byRoute: { routeId: string; stopCount: number }[] = [];
 
-    await Promise.all(
-      routeIds.map(async (routeId) => {
-        const stopIdsForRoute = assignment.get(routeId) ?? [];
-        if (stopIdsForRoute.length === 0) return;
+    for (const routeId of routeIds) {
+      const stopIdsForRoute = assignment.get(routeId) ?? [];
+      if (stopIdsForRoute.length === 0) continue;
 
-        // Get current max sequenceNumber for this route to append without collision
-        const [maxSeq] = await db
-          .select({ max: sql<number>`COALESCE(MAX(${stops.sequenceNumber}), -1)` })
-          .from(stops)
-          .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)));
-        let seq = (maxSeq?.max ?? -1) + 1;
+      const [maxSeq] = await db
+        .select({ max: sql<number>`COALESCE(MAX(${stops.sequenceNumber}), -1)` })
+        .from(stops)
+        .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)));
+      let seq = (maxSeq?.max ?? -1) + 1;
 
-        await Promise.all(
-          stopIdsForRoute.map((stopId) =>
-            db.update(stops)
-              .set({ routeId, sequenceNumber: seq++ })
-              .where(and(eq(stops.id, stopId), eq(stops.orgId, orgId), isNull(stops.deletedAt)))
-          )
-        );
+      await Promise.all(
+        stopIdsForRoute.map((stopId) =>
+          db.update(stops)
+            .set({ routeId, sequenceNumber: seq++ })
+            .where(and(eq(stops.id, stopId), eq(stops.orgId, orgId), isNull(stops.deletedAt)))
+        )
+      );
 
-        // Update route stopOrder array
-        const existingStops = await db.select({ id: stops.id })
-          .from(stops)
-          .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
-          .orderBy(stops.sequenceNumber);
+      const existingStops = await db.select({ id: stops.id })
+        .from(stops)
+        .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+        .orderBy(stops.sequenceNumber);
 
-        await db.update(routes)
-          .set({ stopOrder: existingStops.map((s) => s.id) })
-          .where(eq(routes.id, routeId));
+      await db.update(routes)
+        .set({ stopOrder: existingStops.map((s) => s.id) })
+        .where(eq(routes.id, routeId));
 
-        totalAssigned += stopIdsForRoute.length;
-        byRoute.push({ routeId, stopCount: stopIdsForRoute.length });
-      })
-    );
+      totalAssigned += stopIdsForRoute.length;
+      byRoute.push({ routeId, stopCount: stopIdsForRoute.length });
+    }
 
-    return { assigned: totalAssigned, byRoute };
+    return { assigned: totalAssigned, byRoute, depotFallback: !depot };
   });
 };
