@@ -132,9 +132,11 @@ export default function MapPage() {
     }
     const route = liveData.activeRoutes.find((r) => r.driverId === highlightedDriverId);
     if (!route) { setRouteStops([]); lastFetchedRouteIdRef.current = null; return; }
-    // Skip re-fetch if same route — liveData updates every 15s, route stops rarely change
-    if (lastFetchedRouteIdRef.current === route.routeId) return;
-    lastFetchedRouteIdRef.current = route.routeId;
+    // Cache key: routeId + stopsCompleted — re-fetch when a stop is delivered (pin color changes)
+    // but skip on pure liveData polls where nothing changed
+    const cacheKey = `${route.routeId}:${route.stopsCompleted}`;
+    if (lastFetchedRouteIdRef.current === cacheKey) return;
+    lastFetchedRouteIdRef.current = cacheKey;
     setStopsLoading(true); setStopsError(false);
     api.get<{ stops: RouteStopResponse[] }>(`/orgs/${user.orgId}/tracking/route/${route.routeId}`)
       .then((data) => setRouteStops(
@@ -147,7 +149,7 @@ export default function MapPage() {
   }, [highlightedDriverId, liveData, user]);
 
   const driverMarkers = (liveData?.activeRoutes ?? [])
-    .filter((r) => r.currentLat && r.currentLng)
+    .filter((r) => r.currentLat != null && r.currentLng != null)
     .map((r) => ({
       id: r.driverId,
       name: r.driverName,

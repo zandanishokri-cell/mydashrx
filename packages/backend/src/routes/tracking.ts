@@ -276,7 +276,7 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { lat, lng } = req.body as { lat: number; lng: number };
-    if (!lat || !lng) return reply.code(400).send({ error: 'lat/lng required' });
+    if (lat == null || lng == null) return reply.code(400).send({ error: 'lat/lng required' });
     // Use driverId from JWT — never from body (prevents GPS spoofing of other drivers)
     const jwtUser = req.user as { sub: string; driverId?: string };
     const driverId = jwtUser.driverId ?? jwtUser.sub;
