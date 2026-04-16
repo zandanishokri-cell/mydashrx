@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { stops, routes, drivers, plans } from '../db/schema.js';
 import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { todayInTz } from '../utils/date.js';
 
 // HIPAA-safe: "Smith, J." format
 const hipaaName = (full: string) => {
@@ -123,8 +124,7 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
       .where(and(inArray(stops.routeId, routeIds), isNull(stops.deletedAt)));
 
     // Count completed stops across all of today's org routes
-    const d = new Date();
-    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const today = todayInTz();
     const todayPlanRows = await db
       .select({ id: plans.id })
       .from(plans)
