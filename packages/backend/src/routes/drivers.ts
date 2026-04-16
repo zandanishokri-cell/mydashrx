@@ -82,6 +82,14 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
       passwordHash, drugCapable: body.drugCapable ?? false,
       vehicleType: body.vehicleType ?? 'car',
     }).returning();
+
+    // Proactive usage alert at 80% threshold (fire-and-forget, needs wiring to in-app notification system)
+    checkDriverLimit(orgId).then(usage => {
+      if (usage.limit && usage.current / usage.limit >= 0.8 && usage.current / usage.limit < 1.0) {
+        console.info(`[usage-alert] Org ${orgId}: ${usage.current}/${usage.limit} drivers active (${Math.round(usage.current / usage.limit * 100)}%)`);
+      }
+    }).catch(() => {});
+
     const { passwordHash: _, ...safe } = driver;
     return reply.code(201).send(safe);
   });
