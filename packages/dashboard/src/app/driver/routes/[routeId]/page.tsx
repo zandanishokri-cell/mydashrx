@@ -9,7 +9,7 @@ interface Stop {
   recipientPhone: string; status: string; sequenceNumber: number | null;
   requiresRefrigeration: boolean; controlledSubstance: boolean;
   requiresSignature: boolean; rxNumbers: string[]; packageCount: number;
-  deliveryNotes?: string;
+  deliveryNotes?: string; priority?: string;
 }
 
 const ETA_PER_STOP_MIN = 8;
@@ -265,6 +265,8 @@ export default function DriverRoutePage({ params }: { params: { routeId: string 
                       <Navigation size={10} className="shrink-0" /> {stop.address}
                     </p>
                     <div className="flex items-center gap-2 flex-wrap">
+                      {stop.priority === 'urgent' && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">🚨 URGENT</span>}
+                      {stop.priority === 'high' && <span className="text-xs bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full font-medium">High</span>}
                       <span className="text-xs text-gray-400">{stop.packageCount} pkg</span>
                       {stop.rxNumbers?.length > 0 && <span className="text-xs text-gray-400">Rx ×{stop.rxNumbers.length}</span>}
                       {stop.requiresRefrigeration && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">❄ Cold</span>}
