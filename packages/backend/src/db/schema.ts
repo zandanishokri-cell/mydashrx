@@ -197,6 +197,8 @@ export const stops = pgTable(
     failureNote: text('failure_note'),
     arrivedAt: timestamp('arrived_at'),
     completedAt: timestamp('completed_at'),
+    returnedAt: timestamp('returned_at'),
+    redeliveryScheduledAt: timestamp('redelivery_scheduled_at'),
     approachNotifiedAt: timestamp('approach_notified_at'),
     trackingToken: uuid('tracking_token').notNull().defaultRandom().unique(),
     sequenceNumber: integer('sequence_number').notNull().default(0),
