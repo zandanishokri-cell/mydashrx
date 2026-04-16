@@ -3,7 +3,7 @@ import {
   stops, proofOfDeliveries, baaRegistry, auditLogs, organizations,
   drivers, routes, plans, recurringDeliveries, complianceChecks, miComplianceItems,
 } from '../db/schema.js';
-import { eq, and, isNull, lt, gt, ne, or, count, sql, inArray } from 'drizzle-orm';
+import { eq, and, isNull, lt, gt, ne, or, count, sql, inArray, notInArray } from 'drizzle-orm';
 
 export type Severity = 'P0' | 'P1' | 'P2' | 'P3';
 
@@ -121,7 +121,8 @@ async function hipaaChecks(orgId: string): Promise<ComplianceFinding[]> {
     resourceIds: [], blocksDeployment: false,
   });
 
-  // P1: CS stops (any non-deleted, non-returned status) with requiresSignature disabled
+  // P1: Non-terminal CS stops with requiresSignature disabled — only flag stops that haven't been delivered yet
+  // Terminal statuses (completed/failed/rescheduled) can't be retroactively fixed, so we exclude them
   const csNoSig = await db
     .select({ id: stops.id })
     .from(stops)
@@ -130,7 +131,7 @@ async function hipaaChecks(orgId: string): Promise<ComplianceFinding[]> {
       eq(stops.controlledSubstance, true),
       eq(stops.requiresSignature, false),
       isNull(stops.deletedAt),
-      ne(stops.status, 'returned'),
+      notInArray(stops.status, ['completed', 'failed', 'rescheduled']),
     ));
   if (csNoSig.length > 0) findings.push({
     orgId, severity: 'P1', category: 'hipaa',
@@ -221,6 +222,8 @@ async function michiganChecks(orgId: string): Promise<ComplianceFinding[]> {
     JOIN stops s ON s.route_id = r.id
     JOIN drivers d ON d.id = r.driver_id
     WHERE p.org_id = ${orgId}
+      AND p.deleted_at IS NULL
+      AND r.deleted_at IS NULL
       AND s.controlled_substance = true
       AND s.deleted_at IS NULL
       AND d.drug_capable = false
