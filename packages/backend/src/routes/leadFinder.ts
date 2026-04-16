@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { leadProspects, leadOutreachLog, users } from '../db/schema.js';
 import { eq, and, isNull, ilike, or, sql, desc } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { generateOutreachDraft } from '../services/aiDraft.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface GooglePlaceResult {
@@ -366,5 +367,38 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return { log, messageId: resendMessageId, status: emailStatus };
+  });
+
+  // POST /orgs/:orgId/leads/:leadId/draft-outreach — AI-generated first-contact draft
+  app.post('/:leadId/draft-outreach', { preHandler: auth }, async (req, reply) => {
+    const { orgId, leadId } = req.params as { orgId: string; leadId: string };
+
+    const [lead] = await db
+      .select({
+        name: leadProspects.name,
+        city: leadProspects.city,
+        state: leadProspects.state,
+        rating: leadProspects.rating,
+        reviewCount: leadProspects.reviewCount,
+        businessType: leadProspects.businessType,
+        ownerName: leadProspects.ownerName,
+      })
+      .from(leadProspects)
+      .where(and(eq(leadProspects.id, leadId), eq(leadProspects.orgId, orgId), isNull(leadProspects.deletedAt)))
+      .limit(1);
+
+    if (!lead) return reply.code(404).send({ error: 'Lead not found' });
+
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return reply.code(503).send({ error: 'AI draft generation not configured — set ANTHROPIC_API_KEY' });
+    }
+
+    try {
+      const draft = await generateOutreachDraft(lead);
+      return draft;
+    } catch (err) {
+      console.error('AI draft generation failed:', err);
+      return reply.code(502).send({ error: 'Failed to generate draft. Please try again.' });
+    }
   });
 };
