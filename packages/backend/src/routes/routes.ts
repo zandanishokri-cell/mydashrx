@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { routes, stops, plans } from '../db/schema.js';
+import { routes, stops, plans, drivers } from '../db/schema.js';
 import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
@@ -28,6 +28,10 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
     const { driverId } = req.body as { driverId: string };
     if (!driverId) return reply.code(400).send({ error: 'driverId required' });
+    // Verify driver belongs to same org — prevents attaching a foreign-org driver to this plan
+    const [driver] = await db.select({ id: drivers.id }).from(drivers)
+      .where(and(eq(drivers.id, driverId), eq(drivers.orgId, userOrgId), isNull(drivers.deletedAt))).limit(1);
+    if (!driver) return reply.code(400).send({ error: 'Invalid driverId' });
     const [route] = await db.insert(routes).values({ planId, driverId }).returning();
     return reply.code(201).send(route);
   });
