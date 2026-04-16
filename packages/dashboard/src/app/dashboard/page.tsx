@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { SkeletonCard } from '@/components/ui/Skeleton';
 import { Package, Truck, CheckCircle, Calendar, RefreshCw, Plus, Map, Activity, AlertCircle } from 'lucide-react';
+import { localDateStr } from '@/lib/dateUtils';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string | null; status: string; stopOrder: string[]; estimatedDuration: number | null; stops: Stop[]; }
@@ -46,7 +47,7 @@ export default function CommandCenter() {
   const [error, setError] = useState('');
   const [depotId, setDepotId] = useState('');
   const [user] = useState(getUser);
-  const today = new Date().toISOString().split('T')[0];
+  const today = localDateStr();
   const summaryTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const driversTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const plansTimer = useRef<ReturnType<typeof setInterval> | null>(null);

@@ -9,6 +9,7 @@ import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker
 import { CsvImportModal } from '@/components/CsvImportModal';
 import { NewStopModal } from '@/components/NewStopModal';
 import { Plus, Search, X, RefreshCw, Download, Upload, ChevronUp, ChevronDown, ChevronsUpDown, Filter, ArrowRightLeft, Truck, AlertCircle } from 'lucide-react';
+import { localDateStr } from '@/lib/dateUtils';
 import Link from 'next/link';
 
 interface RouteOption {
@@ -66,15 +67,14 @@ const STATUS_TABS = [
 
 // Date range presets
 const TODAY_RANGE = (): DateRange => {
-  const t = new Date().toISOString().split('T')[0];
+  const t = localDateStr();
   return { from: t, to: t };
 };
 
-const defaultRange = (): DateRange => {
-  const to = new Date().toISOString().split('T')[0];
-  const from = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0];
-  return { from, to };
-};
+const defaultRange = (): DateRange => ({
+  from: localDateStr(new Date(Date.now() - 90 * 86400000)),
+  to: localDateStr(),
+});
 
 export default function StopsPage() {
   const router = useRouter();

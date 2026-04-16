@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { stops, routes, plans, drivers } from '../db/schema.js';
 import { eq, and, isNull, isNotNull, sql, inArray, desc } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { todayInTz } from '../utils/date.js';
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/dashboard/summary
@@ -11,8 +12,6 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const q = req.query as { depotId?: string };
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
 
     // Today's plans → routes → stops in a single joined query
     const todayPlans = await db
@@ -21,7 +20,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       .where(and(
         eq(plans.orgId, orgId),
         isNull(plans.deletedAt),
-        eq(plans.date, todayStart.toISOString().split('T')[0]),
+        eq(plans.date, todayInTz()),
         q.depotId ? eq(plans.depotId, q.depotId) : undefined,
       ));
 
@@ -87,7 +86,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayInTz();
 
     const allDrivers = await db
       .select({
@@ -165,7 +164,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const q = req.query as { date?: string; depotId?: string };
-    const today = q.date ?? new Date().toISOString().split('T')[0];
+    const today = q.date ?? todayInTz();
 
     const planRows = await db.select({
       id: plans.id,

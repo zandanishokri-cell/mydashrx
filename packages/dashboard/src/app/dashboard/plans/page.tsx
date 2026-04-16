@@ -6,6 +6,7 @@ import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { Plus, Calendar, ChevronLeft, ChevronRight, Zap, Route, AlertCircle, X } from 'lucide-react';
+import { localDateStr } from '@/lib/dateUtils';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; }
@@ -26,7 +27,7 @@ function getWeekRange(offset: number) {
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    days.push(d.toISOString().split('T')[0]);
+    days.push(localDateStr(d));
   }
   return days;
 }
@@ -39,12 +40,12 @@ export default function PlansPage() {
   const [optimizeToast, setOptimizeToast] = useState('');
   const [depotId, setDepotId] = useState('');
   const [weekOffset, setWeekOffset] = useState(0);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => localDateStr());
   const [user] = useState(getUser);
   const [loadError, setLoadError] = useState(false);
 
   const weekDays = getWeekRange(weekOffset);
-  const today = new Date().toISOString().split('T')[0];
+  const today = localDateStr();
 
   const load = useCallback(async () => {
     if (!user) return;
