@@ -76,6 +76,12 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
       signedAt?: string; expiresAt?: string; documentUrl?: string;
       notes?: string; touchesPhi?: boolean;
     };
+    if (!body.vendorName?.trim()) return reply.code(400).send({ error: 'vendorName is required' });
+    if (!body.service?.trim()) return reply.code(400).send({ error: 'service is required' });
+    const VALID_BAA_STATUSES = ['signed', 'pending', 'not_required', 'expired'];
+    if (body.baaStatus !== undefined && !VALID_BAA_STATUSES.includes(body.baaStatus)) {
+      return reply.code(400).send({ error: `Invalid baaStatus. Must be one of: ${VALID_BAA_STATUSES.join(', ')}` });
+    }
     const [row] = await db.insert(baaRegistry).values({
       orgId,
       vendorName: body.vendorName,

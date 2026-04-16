@@ -121,7 +121,7 @@ async function hipaaChecks(orgId: string): Promise<ComplianceFinding[]> {
     resourceIds: [], blocksDeployment: false,
   });
 
-  // P1: CS stops with requiresSignature disabled
+  // P1: CS stops (any non-deleted, non-returned status) with requiresSignature disabled
   const csNoSig = await db
     .select({ id: stops.id })
     .from(stops)
@@ -130,6 +130,7 @@ async function hipaaChecks(orgId: string): Promise<ComplianceFinding[]> {
       eq(stops.controlledSubstance, true),
       eq(stops.requiresSignature, false),
       isNull(stops.deletedAt),
+      ne(stops.status, 'returned'),
     ));
   if (csNoSig.length > 0) findings.push({
     orgId, severity: 'P1', category: 'hipaa',
@@ -284,16 +285,15 @@ const SCANNER_CHECK_NAMES = [
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
-async function persistFindings(findings: ComplianceFinding[]): Promise<void> {
-  if (!findings.length) return;
-  const orgIds = [...new Set(findings.map(f => f.orgId))];
-  for (const orgId of orgIds) {
-    // Only delete scanner-generated rows — preserves manual check data from POST /checks/run
+async function persistFindings(findings: ComplianceFinding[], scannedOrgIds: string[]): Promise<void> {
+  // Always delete stale scanner rows for every scanned org — even if org has zero violations
+  for (const orgId of scannedOrgIds) {
     await db.delete(complianceChecks).where(and(
       eq(complianceChecks.orgId, orgId),
       inArray(complianceChecks.checkName, SCANNER_CHECK_NAMES),
     ));
   }
+  if (!findings.length) return;
   await db.insert(complianceChecks).values(
     findings.map(f => ({
       orgId: f.orgId,
@@ -329,7 +329,7 @@ export async function runComplianceScan(opts: { orgId?: string; persistResults?:
     findings.push(...hipaa, ...mi);
   }
 
-  if (persistResults) await persistFindings(findings);
+  if (persistResults) await persistFindings(findings, orgIds);
   return findings;
 }
 
