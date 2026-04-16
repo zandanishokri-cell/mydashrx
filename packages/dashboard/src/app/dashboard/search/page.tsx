@@ -53,35 +53,44 @@ export default function SearchPage() {
   const [error, setError] = useState(false);
   const [recent, setRecent] = useState<string[]>([]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchGenRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setRecent(loadRecent()); }, []);
+  useEffect(() => {
+    setRecent(loadRecent());
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, []);
 
-  const doSearch = useCallback(async (q: string) => {
+  const doSearch = useCallback(async (q: string, gen: number) => {
     if (!user || !q.trim()) { setResults(null); return; }
     setLoading(true); setError(false);
     try {
       // Always fetch all types so tab counts stay accurate without re-fetching
       const params = new URLSearchParams({ q: q.trim(), type: 'all' });
       const data = await api.get<SearchResponse>(`/orgs/${user.orgId}/search?${params}`);
+      if (gen !== searchGenRef.current) return; // superseded by newer search or clear
       setResults(data);
       saveRecent(q.trim());
       setRecent(loadRecent());
-    } catch { setResults(null); setError(true); }
-    finally { setLoading(false); }
+    } catch {
+      if (gen !== searchGenRef.current) return;
+      setResults(null); setError(true);
+    }
+    finally { if (gen === searchGenRef.current) setLoading(false); }
   }, [user]);
 
   const handleInput = (v: string) => {
     setQuery(v);
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    const gen = ++searchGenRef.current; // invalidate any in-flight request
     if (!v.trim()) { setResults(null); setError(false); return; }
-    debounceRef.current = setTimeout(() => doSearch(v), 350);
+    debounceRef.current = setTimeout(() => doSearch(v, gen), 350);
   };
 
   // Tab change: filter client-side — no re-fetch, no stale counts
   const handleTabChange = (t: TabType) => { setTab(t); };
 
-  const useRecent = (q: string) => { setQuery(q); doSearch(q); };
+  const applyRecent = (q: string) => { setQuery(q); doSearch(q, ++searchGenRef.current); };
   const clearRecent = () => { localStorage.removeItem(RECENT_KEY); setRecent([]); };
 
   const stopsShown = tab === 'all' || tab === 'stops' ? results?.stops ?? [] : [];
@@ -117,7 +126,7 @@ export default function SearchPage() {
             className="w-full pl-10 pr-10 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 bg-white"
           />
           {query && (
-            <button onClick={() => { setQuery(''); setResults(null); setError(false); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+            <button onClick={() => handleInput('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
               <X size={14} />
             </button>
           )}
@@ -155,7 +164,7 @@ export default function SearchPage() {
             </div>
             <div className="flex flex-wrap gap-2">
               {recent.map(r => (
-                <button key={r} onClick={() => useRecent(r)}
+                <button key={r} onClick={() => applyRecent(r)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-600 hover:border-blue-200 hover:text-blue-600 transition-colors">
                   <Clock size={11} className="text-gray-400" /> {r}
                 </button>
