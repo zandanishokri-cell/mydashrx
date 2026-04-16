@@ -91,6 +91,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
   const [reassignTargetId, setReassignTargetId] = useState('');
   const [reassigning, setReassigning] = useState(false);
   const [reassignError, setReassignError] = useState<string | null>(null);
+  const [openReassignError, setOpenReassignError] = useState('');
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -132,6 +133,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
 
   const openReassign = async () => {
     if (!stop?.planId || !user) return;
+    setOpenReassignError('');
     try {
       const [planRoutesData, driversData] = await Promise.all([
         api.get<{ id: string; driverId: string }[]>(`/plans/${stop.planId}/routes`),
@@ -144,7 +146,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
       setPlanRoutes(others);
       setReassignTargetId(others[0]?.id ?? '');
       setShowReassign(true);
-    } catch { /* silent — button just won't work */ }
+    } catch { setOpenReassignError('Failed to load routes. Please try again.'); }
   };
 
   const confirmReassign = async () => {
@@ -452,12 +454,17 @@ function StopDetailContent({ stopId }: { stopId: string }) {
           )}
           {stop.routeId && stop.planId && !['completed', 'failed', 'rescheduled'].includes(stop.status) &&
            user && user.role !== 'driver' && user.role !== 'pharmacist' && (
-            <button
-              onClick={openReassign}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-sm hover:bg-gray-50 transition-colors"
-            >
-              <Truck size={15} /> Reassign Driver
-            </button>
+            <>
+              <button
+                onClick={openReassign}
+                className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-sm hover:bg-gray-50 transition-colors"
+              >
+                <Truck size={15} /> Reassign Driver
+              </button>
+              {openReassignError && (
+                <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} />{openReassignError}</p>
+              )}
+            </>
           )}
           {stop.trackingToken && (
             <a

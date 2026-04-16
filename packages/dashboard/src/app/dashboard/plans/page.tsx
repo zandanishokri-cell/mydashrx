@@ -85,7 +85,7 @@ export default function PlansPage() {
       setOptimizeToast(`${result.optimized} route${result.optimized !== 1 ? 's' : ''} optimized`);
       setTimeout(() => setOptimizeToast(''), 3000);
       await load();
-    } catch { /* silently fail — user can retry from detail page */ }
+    } catch { setOptimizeToast('Optimization failed. Please try again.'); setTimeout(() => setOptimizeToast(''), 3000); }
     finally { setOptimizingId(null); }
   };
 
