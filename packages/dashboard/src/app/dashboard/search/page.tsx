@@ -69,18 +69,19 @@ export default function SearchPage() {
     return () => document.removeEventListener('keydown', handler);
   }, []);
 
-  const doSearch = useCallback(async (q: string, t = tab) => {
+  const doSearch = useCallback(async (q: string) => {
     if (!user || !q.trim()) { setResults(null); return; }
     setLoading(true); setError(false);
     try {
-      const params = new URLSearchParams({ q: q.trim(), type: t });
+      // Always fetch all types so tab counts stay accurate without re-fetching
+      const params = new URLSearchParams({ q: q.trim(), type: 'all' });
       const data = await api.get<SearchResponse>(`/orgs/${user.orgId}/search?${params}`);
       setResults(data);
       saveRecent(q.trim());
       setRecent(loadRecent());
     } catch { setResults(null); setError(true); }
     finally { setLoading(false); }
-  }, [user, tab]);
+  }, [user]);
 
   const handleInput = (v: string) => {
     setQuery(v);
@@ -89,10 +90,8 @@ export default function SearchPage() {
     debounceRef.current = setTimeout(() => doSearch(v), 350);
   };
 
-  const handleTabChange = (t: TabType) => {
-    setTab(t);
-    if (query.trim()) doSearch(query, t);
-  };
+  // Tab change: filter client-side — no re-fetch, no stale counts
+  const handleTabChange = (t: TabType) => { setTab(t); };
 
   const useRecent = (q: string) => { setQuery(q); doSearch(q); };
   const clearRecent = () => { localStorage.removeItem(RECENT_KEY); setRecent([]); };
@@ -124,7 +123,6 @@ export default function SearchPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             ref={inputRef}
-            autoFocus
             value={query}
             onChange={e => handleInput(e.target.value)}
             placeholder="Search stops, drivers, leads..."
