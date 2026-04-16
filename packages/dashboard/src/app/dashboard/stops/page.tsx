@@ -32,6 +32,7 @@ interface Stop {
   planDate?: string; planStatus?: string; depotId?: string; depotName?: string;
   driverId?: string; driverName?: string; planId?: string;
   windowStart?: string; windowEnd?: string;
+  priority: string;
 }
 
 type Urgency = 'overdue' | 'due-soon' | 'normal';
@@ -53,6 +54,11 @@ const URGENCY_BADGE: Record<Urgency, string | null> = {
   overdue: 'text-red-600 bg-red-100 border-red-200',
   'due-soon': 'text-amber-700 bg-amber-50 border-amber-200',
   normal: null,
+};
+
+const PRIORITY_BADGE: Record<string, { label: string; classes: string } | undefined> = {
+  urgent: { label: 'URGENT', classes: 'bg-red-100 text-red-700 font-semibold' },
+  high:   { label: 'HIGH',   classes: 'bg-amber-100 text-amber-700 font-semibold' },
 };
 
 const STATUS_TABS = [
@@ -496,7 +502,12 @@ export default function StopsPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
-                      <span className="text-gray-700 truncate block max-w-[140px]">{stop.recipientName}</span>
+                      <p className="text-gray-700 truncate max-w-[140px]">{stop.recipientName}</p>
+                      {stop.priority !== 'normal' && PRIORITY_BADGE[stop.priority] && (
+                        <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded mt-0.5 ${PRIORITY_BADGE[stop.priority]!.classes}`}>
+                          {PRIORITY_BADGE[stop.priority]!.label}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 hidden lg:table-cell text-gray-500 truncate max-w-[160px]">{stop.depotName ?? '—'}</td>
                     <td className="px-4 py-3 hidden lg:table-cell text-gray-500">{stop.driverName ?? '—'}</td>

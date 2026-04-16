@@ -203,6 +203,7 @@ export const stops = pgTable(
     approachNotifiedAt: timestamp('approach_notified_at'),
     trackingToken: uuid('tracking_token').notNull().defaultRandom().unique(),
     sequenceNumber: integer('sequence_number').notNull().default(0),
+    priority: text('priority').notNull().default('normal'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },

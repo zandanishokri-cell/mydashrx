@@ -73,6 +73,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
           requiresPhoto: stops.requiresPhoto,
           codAmount: stops.codAmount,
           sequenceNumber: stops.sequenceNumber,
+          priority: stops.priority,
           arrivedAt: stops.arrivedAt,
           completedAt: stops.completedAt,
           failureReason: stops.failureReason,
@@ -145,6 +146,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
         createdAt: stops.createdAt,
         trackingToken: stops.trackingToken,
         sequenceNumber: stops.sequenceNumber,
+        priority: stops.priority,
         lat: stops.lat,
         lng: stops.lng,
         routeId: stops.routeId,
@@ -425,6 +427,32 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     return { stops: stopsRes, drivers: driversRes, leads: leadsRes, total, query: q.trim(), took: Date.now() - start };
   });
 
+  // PATCH /orgs/:orgId/stops/:stopId — update stop fields (priority, notes, etc.)
+  app.patch('/stops/:stopId', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, stopId } = req.params as { orgId: string; stopId: string };
+    const body = req.body as Record<string, unknown>;
+    const toUpdate: Record<string, unknown> = {};
+
+    const VALID_PRIORITIES = ['urgent', 'high', 'normal'];
+    if (body.priority !== undefined) {
+      if (!VALID_PRIORITIES.includes(body.priority as string)) {
+        return reply.code(400).send({ error: 'Invalid priority. Must be: urgent, high, or normal' });
+      }
+      toUpdate.priority = body.priority;
+    }
+
+    if (Object.keys(toUpdate).length === 0) return reply.code(400).send({ error: 'No valid fields' });
+
+    const [updated] = await db.update(stops)
+      .set(toUpdate)
+      .where(and(eq(stops.id, stopId), eq(stops.orgId, orgId), isNull(stops.deletedAt)))
+      .returning();
+    if (!updated) return reply.code(404).send({ error: 'Not found' });
+    return updated;
+  });
+
   // POST /orgs/:orgId/stops — create a single unassigned stop (no route required)
   app.post('/stops', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
@@ -446,6 +474,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       windowStart?: string;
       windowEnd?: string;
       deliveryNotes?: string;
+      priority?: string;
     };
 
     if (!body.recipientName?.trim()) return reply.code(400).send({ error: 'recipientName is required' });
@@ -480,6 +509,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       windowStart: body.windowStart ? new Date(body.windowStart) : undefined,
       windowEnd: body.windowEnd ? new Date(body.windowEnd) : undefined,
       deliveryNotes: body.deliveryNotes?.trim() || undefined,
+      priority: ['urgent', 'high', 'normal'].includes(body.priority ?? '') ? body.priority! : 'normal',
       lat: geo.lat,
       lng: geo.lng,
       status: 'pending',

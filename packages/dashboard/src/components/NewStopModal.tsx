@@ -25,6 +25,7 @@ interface FormState {
   requiresSignature: boolean;
   requiresAgeVerification: boolean;
   requiresPhoto: boolean;
+  priority: string;
 }
 
 const DEFAULTS: FormState = {
@@ -32,6 +33,7 @@ const DEFAULTS: FormState = {
   rxNumbers: '', packageCount: '1', windowStart: '', windowEnd: '',
   deliveryNotes: '', requiresRefrigeration: false, controlledSubstance: false,
   requiresSignature: true, requiresAgeVerification: false, requiresPhoto: false,
+  priority: 'normal',
 };
 
 export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
@@ -65,6 +67,7 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
         requiresSignature: form.requiresSignature,
         requiresAgeVerification: form.requiresAgeVerification,
         requiresPhoto: form.requiresPhoto,
+        priority: form.priority,
       });
       onSuccess();
     } catch (e: unknown) {
@@ -174,6 +177,20 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
                 rows={2} placeholder="Ring doorbell, leave at door, etc."
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/20"
               />
+            </div>
+
+            {/* Priority */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Priority</label>
+              <select
+                value={form.priority}
+                onChange={e => setForm(p => ({ ...p, priority: e.target.value }))}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+              >
+                <option value="normal">Normal</option>
+                <option value="high">High — time-sensitive</option>
+                <option value="urgent">Urgent — deliver ASAP</option>
+              </select>
             </div>
 
             {/* Flags */}

@@ -60,6 +60,7 @@ interface StopDetail {
   barcodesScanned?: string[];
   packageConfirmed?: boolean;
   timeline?: TimelineEvent[];
+  priority: string;
   notifications?: NotificationLog[];
 }
 
@@ -414,6 +415,28 @@ function StopDetailContent({ stopId }: { stopId: string }) {
               </span>
             )}
           </div>
+
+          {/* Priority */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500">Priority</span>
+                <select
+                  value={stop.priority}
+                  onChange={async e => {
+                    const newPriority = e.target.value;
+                    try {
+                      await api.patch(`/orgs/${user!.orgId}/stops/${stopId}`, { priority: newPriority });
+                      setStop(prev => prev ? { ...prev, priority: newPriority } : prev);
+                    } catch {
+                      // non-blocking — UI will show old value if this fails
+                    }
+                  }}
+                  className="text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#0F4C81]/30"
+                >
+                  <option value="normal">Normal</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </div>
 
           {/* Notes */}
           <div>
