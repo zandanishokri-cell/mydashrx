@@ -4,6 +4,7 @@ import { drivers, stops, routes, plans } from '../db/schema.js';
 import { eq, and, isNull, sql, gte, lte, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { hashPassword } from '../services/auth.js';
+import { checkDriverLimit } from '../utils/usageLimits.js';
 import { todayInTz } from '../utils/date.js';
 
 export const driverRoutes: FastifyPluginAsync = async (app) => {
@@ -65,6 +66,15 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     if (!body.password || body.password.length < 8) return reply.code(400).send({ error: 'Password must be at least 8 characters' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
       return reply.code(400).send({ error: 'Invalid email address' });
+    }
+    const limitCheck = await checkDriverLimit(orgId);
+    if (!limitCheck.allowed) {
+      return reply.code(402).send({
+        error: 'Driver limit reached',
+        message: `Your plan allows ${limitCheck.limit} active drivers. You have ${limitCheck.current}. Upgrade to add more drivers.`,
+        current: limitCheck.current,
+        limit: limitCheck.limit,
+      });
     }
     const passwordHash = await hashPassword(body.password);
     const [driver] = await db.insert(drivers).values({

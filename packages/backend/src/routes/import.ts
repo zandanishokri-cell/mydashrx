@@ -5,6 +5,7 @@ import { eq, isNull, and, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { todayInTz } from '../utils/date.js';
 import { geocodeAddress } from '../utils/geocode.js';
+import { checkStopLimit } from '../utils/usageLimits.js';
 
 function parseCsv(text: string): Array<Record<string, string>> {
   const lines = text.trim().split('\n');
@@ -100,6 +101,17 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (toInsert.length === 0) return reply.code(400).send({ error: 'No valid rows to import', errors });
+
+    const limitCheck = await checkStopLimit(orgId, toInsert.length);
+    if (!limitCheck.allowed) {
+      return reply.code(402).send({
+        error: 'Stop limit exceeded',
+        message: `Importing ${toInsert.length} stops would exceed your plan limit of ${limitCheck.limit}/month (currently at ${limitCheck.current}). You can import up to ${Math.max(0, (limitCheck.limit ?? 0) - limitCheck.current)} more stops this month.`,
+        current: limitCheck.current,
+        limit: limitCheck.limit,
+        wouldExceedBy: limitCheck.wouldExceedBy,
+      });
+    }
 
     const inserted = await db.insert(stops).values(toInsert).returning({ id: stops.id });
 

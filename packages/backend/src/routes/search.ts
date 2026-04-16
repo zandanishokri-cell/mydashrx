@@ -5,6 +5,7 @@ import { eq, and, isNull, ilike, or, gte, lte, sql, inArray, ne } from 'drizzle-
 import { requireRole } from '../middleware/requireRole.js';
 import { checkAndNotifyRouteComplete } from './stops.js';
 import { geocodeAddress } from '../utils/geocode.js';
+import { checkStopLimit } from '../utils/usageLimits.js';
 
 export const searchRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/stops — filterable stop list (used by Stops page + Search page)
@@ -435,6 +436,16 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
     if (!body.recipientName?.trim()) return reply.code(400).send({ error: 'recipientName is required' });
     if (!body.address?.trim()) return reply.code(400).send({ error: 'address is required' });
+
+    const limitCheck = await checkStopLimit(orgId);
+    if (!limitCheck.allowed) {
+      return reply.code(402).send({
+        error: 'Stop limit reached',
+        message: `Your plan allows ${limitCheck.limit} stops per month. You've used ${limitCheck.current}. Upgrade to add more stops.`,
+        current: limitCheck.current,
+        limit: limitCheck.limit,
+      });
+    }
 
     const geo = await geocodeAddress(body.address.trim());
 

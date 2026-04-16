@@ -4,6 +4,7 @@ import { organizations, users, drivers } from '../db/schema.js';
 import { eq, isNull, and } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import bcrypt from 'bcryptjs';
+import { checkDriverLimit } from '../utils/usageLimits.js';
 
 export const organizationRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs — super_admin only
@@ -178,6 +179,15 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
 
     let driverId: string | undefined;
     if (body.role === 'driver') {
+      const driverLimitCheck = await checkDriverLimit(orgId);
+      if (!driverLimitCheck.allowed) {
+        return reply.code(402).send({
+          error: 'Driver limit reached',
+          message: `Your plan allows ${driverLimitCheck.limit} active drivers. You have ${driverLimitCheck.current}. Upgrade to add more drivers.`,
+          current: driverLimitCheck.current,
+          limit: driverLimitCheck.limit,
+        });
+      }
       const [driverRecord] = await db.insert(drivers).values({
         orgId,
         name: body.name,
