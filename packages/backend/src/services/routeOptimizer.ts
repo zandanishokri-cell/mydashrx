@@ -93,17 +93,15 @@ export async function optimizeRoute(
       return { stopIds: [stops[0].id], totalDistance: distKm, totalDuration: durMin, legs: [{ distanceKm: distKm, durationMin: durMin }] };
     }
 
-    const intermediate = stops.slice(0, -1);
-    const destination = stops[stops.length - 1];
+    // All N stops as waypoints — depot as both origin and destination (return-to-depot circuit)
+    // This lets Google freely optimize the order of ALL stops.
     const params: Record<string, string> = {
       origin: `${originLat},${originLng}`,
-      destination: `${destination.lat},${destination.lng}`,
-      key: process.env.GOOGLE_MAPS_API_KEY,
+      destination: `${originLat},${originLng}`,
+      waypoints: `optimize:true|${stops.map((s) => `${s.lat},${s.lng}`).join('|')}`,
+      key: process.env.GOOGLE_MAPS_API_KEY!,
       departure_time: 'now',
     };
-    if (intermediate.length > 0) {
-      params.waypoints = `optimize:true|${intermediate.map((s) => `${s.lat},${s.lng}`).join('|')}`;
-    }
 
     const res = await fetch(`https://maps.googleapis.com/maps/api/directions/json?` + new URLSearchParams(params));
     const data = (await res.json()) as any;
@@ -111,19 +109,22 @@ export async function optimizeRoute(
     if (!data.routes?.[0]) throw new Error('No route returned');
 
     const route = data.routes[0];
-    const waypointOrder: number[] = route.waypoint_order ?? [];
-    const orderedIntermediate = waypointOrder.map((i: number) => intermediate[i]);
-    const orderedStops = [...orderedIntermediate, destination];
-    const legs = route.legs.map((leg: any) => ({
+    // Fall back to identity order if Google omits waypoint_order (shouldn't happen but be safe)
+    const waypointOrder: number[] = route.waypoint_order ?? stops.map((_: StopPoint, i: number) => i);
+    const orderedStops = waypointOrder.map((i: number) => stops[i]);
+
+    // route.legs has N+1 entries: depot→s1→...→sN→depot
+    // We only report the N delivery legs (exclude the final return-to-depot leg).
+    const deliveryLegs = (route.legs as any[]).slice(0, stops.length).map((leg: any) => ({
       distanceKm: leg.distance.value / 1000,
       durationMin: Math.ceil((leg.duration_in_traffic?.value ?? leg.duration.value) / 60),
     }));
 
     return {
       stopIds: orderedStops.map((s) => s.id),
-      totalDistance: legs.reduce((sum: number, l: any) => sum + l.distanceKm, 0),
-      totalDuration: legs.reduce((sum: number, l: any) => sum + l.durationMin, 0),
-      legs,
+      totalDistance: deliveryLegs.reduce((sum, l) => sum + l.distanceKm, 0),
+      totalDuration: deliveryLegs.reduce((sum, l) => sum + l.durationMin, 0),
+      legs: deliveryLegs,
     };
   } catch {
     // Google Maps failed — fall back to nearest-neighbor
