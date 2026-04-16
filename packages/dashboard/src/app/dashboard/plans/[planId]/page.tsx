@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { AddStopModal } from '@/components/AddStopModal';
 import { StopDetailModal } from '@/components/StopDetailModal';
-import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical } from 'lucide-react';
+import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
@@ -40,6 +40,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [optimizing, setOptimizing] = useState(false);
   const [distributing, setDistributing] = useState(false);
   const [error, setError] = useState('');
+  const [windowViolations, setWindowViolations] = useState<{ stopId: string; address: string; windowEnd: string; estimatedArrival: string }[]>([]);
 
   const [showAddStop, setShowAddStop] = useState<string | null>(null);
   const [showAddRoute, setShowAddRoute] = useState(false);
@@ -85,8 +86,16 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const optimize = async () => {
     setOptimizing(true);
     setError('');
+    setWindowViolations([]);
     try {
-      await api.post(`/orgs/${user!.orgId}/plans/${planId}/optimize`, {});
+      const result = await api.post<{
+        optimized: number;
+        windowViolations: { stopId: string; address: string; windowEnd: string; estimatedArrival: string }[];
+        departureAssumption: string;
+      }>(`/orgs/${user!.orgId}/plans/${planId}/optimize`, {});
+      if (result.windowViolations?.length > 0) {
+        setWindowViolations(result.windowViolations);
+      }
       await loadPlan();
     } catch {
       setError('Optimization failed. Please try again.');
@@ -211,6 +220,35 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
       )}
 
       {error && <div className="bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm mb-4">{error}</div>}
+
+      {windowViolations.length > 0 && (
+        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle size={15} className="text-amber-500 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-amber-900">
+                  {windowViolations.length} delivery window{windowViolations.length !== 1 ? 's' : ''} may be missed
+                </p>
+                <p className="text-xs text-amber-700 mt-0.5">These stops are estimated to arrive after their delivery deadline. Resequence manually before distributing.</p>
+                <div className="mt-2 space-y-1">
+                  {windowViolations.slice(0, 3).map((v) => (
+                    <p key={v.stopId} className="text-xs text-amber-800">
+                      <strong>{v.address.split(',')[0]}</strong>
+                      {' '}— window closes {new Date(v.windowEnd).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })},
+                      {' '}arriving ~{new Date(v.estimatedArrival).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </p>
+                  ))}
+                  {windowViolations.length > 3 && (
+                    <p className="text-xs text-amber-600">+{windowViolations.length - 3} more</p>
+                  )}
+                </div>
+              </div>
+            </div>
+            <button onClick={() => setWindowViolations([])} className="text-amber-400 hover:text-amber-600 shrink-0">✕</button>
+          </div>
+        </div>
+      )}
 
       {routes.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
