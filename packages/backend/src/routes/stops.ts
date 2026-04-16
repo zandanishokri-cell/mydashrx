@@ -59,10 +59,11 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'driver', 'super_admin'),
   }, async (req) => {
     const { routeId } = req.params as { routeId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
     return db
       .select()
       .from(stops)
-      .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+      .where(and(eq(stops.routeId, routeId), eq(stops.orgId, userOrgId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
   });
 

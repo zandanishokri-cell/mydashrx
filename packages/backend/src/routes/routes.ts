@@ -7,8 +7,12 @@ import { requireRole } from '../middleware/requireRole.js';
 export const routeRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'driver'),
-  }, async (req) => {
+  }, async (req, reply) => {
     const { planId } = req.params as { planId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
+    // Verify plan belongs to this org before listing routes
+    const [plan] = await db.select({ orgId: plans.orgId }).from(plans).where(eq(plans.id, planId)).limit(1);
+    if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
     return db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
   });
 
@@ -49,10 +53,11 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'driver'),
   }, async (req) => {
     const { routeId } = req.params as { planId: string; routeId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
     return db
       .select()
       .from(stops)
-      .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+      .where(and(eq(stops.routeId, routeId), eq(stops.orgId, userOrgId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
   });
 
