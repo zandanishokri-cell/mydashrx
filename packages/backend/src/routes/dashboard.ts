@@ -86,6 +86,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
+    const q = req.query as { depotId?: string };
     const today = todayInTz();
 
     const allDrivers = await db
@@ -103,11 +104,16 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
     if (allDrivers.length === 0) return { drivers: [] };
 
-    // Today's plans → routes → stop counts
+    // Today's plans → routes → stop counts (depot-scoped when depotId provided)
     const todayPlans = await db
       .select({ id: plans.id })
       .from(plans)
-      .where(and(eq(plans.orgId, orgId), isNull(plans.deletedAt), eq(plans.date, today)));
+      .where(and(
+        eq(plans.orgId, orgId),
+        isNull(plans.deletedAt),
+        eq(plans.date, today),
+        q.depotId ? eq(plans.depotId, q.depotId) : undefined,
+      ));
 
     const planIds = todayPlans.map(p => p.id);
     const driverRouteMap = new Map<string, { routeId: string; routeStatus: string; totalStops: number; completedStops: number }>();

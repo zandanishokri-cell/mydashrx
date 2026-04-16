@@ -47,7 +47,6 @@ export default function CommandCenter() {
   const [error, setError] = useState('');
   const [depotId, setDepotId] = useState('');
   const [user] = useState(getUser);
-  const today = localDateStr();
   const summaryTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const driversTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const plansTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -76,11 +75,13 @@ export default function CommandCenter() {
   const loadDrivers = useCallback(() => {
     if (!user) return;
     let cancelled = false;
-    api.get<{ drivers: DriverStatus[] }>(`/orgs/${user.orgId}/dashboard/drivers`)
+    const params = new URLSearchParams();
+    if (depotId) params.set('depotId', depotId);
+    api.get<{ drivers: DriverStatus[] }>(`/orgs/${user.orgId}/dashboard/drivers?${params}`)
       .then(res => { if (!cancelled) { setDriversList(res.drivers); setDriversLoading(false); setDriversError(false); } })
       .catch(() => { if (!cancelled) { setDriversLoading(false); setDriversError(true); } });
     return () => { cancelled = true; };
-  }, [user]);
+  }, [user, depotId]);
 
   useEffect(() => {
     let cancelCurrent = loadDrivers();
@@ -94,7 +95,7 @@ export default function CommandCenter() {
     else setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams({ date: today });
+      const params = new URLSearchParams({ date: localDateStr() });
       if (depotId) params.set('depotId', depotId);
       const data = await api.get<{ plans: PlanWithRoutes[] }>(`/orgs/${user.orgId}/dashboard/today?${params}`);
       setPlans(data.plans);
@@ -105,7 +106,7 @@ export default function CommandCenter() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user, today, depotId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user, depotId]);
 
   useEffect(() => {
     load();
@@ -115,7 +116,6 @@ export default function CommandCenter() {
 
   const handleRefresh = () => { load(true); loadSummary(); loadDrivers(); };
 
-  const allRoutes = plans.flatMap(p => p.routes);
   const completedStops = stops.filter(s => s.status === 'completed').length;
   const failedStops = stops.filter(s => s.status === 'failed').length;
   const rescheduledStops = stops.filter(s => s.status === 'rescheduled').length;
@@ -286,7 +286,13 @@ export default function CommandCenter() {
         </div>
       )}
 
-      {error && <div className="bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm mb-4 border border-red-100">{error}</div>}
+      {error && (
+        <div className="flex items-center gap-2 bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm mb-4 border border-red-100">
+          <AlertCircle size={14} className="shrink-0" />
+          <span>{error}</span>
+          <button onClick={() => load()} className="ml-auto underline hover:no-underline text-xs shrink-0">Retry</button>
+        </div>
+      )}
 
       {/* Today's Plans */}
       <div>
