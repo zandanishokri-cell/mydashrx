@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { stops, routes, plans, depots } from '../db/schema.js';
 import { eq, isNull, and, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { todayInTz } from '../utils/date.js';
 
 function parseCsv(text: string): Array<Record<string, string>> {
   const lines = text.trim().split('\n');
@@ -64,7 +65,7 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
     if (!routeId) {
       const [depot] = await db.select({ id: depots.id }).from(depots).limit(1);
       if (!depot) return reply.code(400).send({ error: 'No depot configured. Set up a depot first.' });
-      const today = new Date().toISOString().split('T')[0];
+      const today = todayInTz();
       const [plan] = await db.insert(plans).values({ orgId, depotId: depot.id, date: today }).returning();
       const [newRoute] = await db.insert(routes).values({ planId: plan.id }).returning();
       routeId = newRoute.id;

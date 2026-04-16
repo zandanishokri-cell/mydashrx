@@ -1,6 +1,7 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { localDateStr } from '@/lib/dateUtils';
 
 export interface DateRange {
   from: string; // YYYY-MM-DD
@@ -28,7 +29,7 @@ const PRESET_LABELS: Record<DatePreset, string> = {
 
 function getPresetRange(preset: Exclude<DatePreset, 'custom'>): DateRange {
   const today = new Date();
-  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  const fmt = localDateStr;
   const todayStr = fmt(today);
   switch (preset) {
     case 'today': return { from: todayStr, to: todayStr };

@@ -4,6 +4,7 @@ import { drivers, stops, routes, plans } from '../db/schema.js';
 import { eq, and, isNull, sql, gte, lte, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { hashPassword } from '../services/auth.js';
+import { todayInTz } from '../utils/date.js';
 
 export const driverRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
@@ -150,8 +151,8 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const query = req.query as { from?: string; to?: string };
 
-    const to = query.to ?? new Date().toISOString().split('T')[0];
-    const from = query.from ?? new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+    const to = query.to ?? todayInTz();
+    const from = query.from ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.now() - 30 * 86400000));
     const fromTs = new Date(from + 'T00:00:00Z');
     const toTs = new Date(to + 'T23:59:59Z');
 
@@ -195,7 +196,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     // Daily breakdown
     const dailyMap = new Map<string, { total: number; completed: number; failed: number }>();
     for (const s of driverStops) {
-      const date = s.createdAt.toISOString().split('T')[0];
+      const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(s.createdAt);
       const entry = dailyMap.get(date) ?? { total: 0, completed: 0, failed: 0 };
       entry.total++;
       if (s.status === 'completed') entry.completed++;

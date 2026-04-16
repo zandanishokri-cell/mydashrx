@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers, proofOfDeliveries } from '../db/schema.js';
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { todayInTz } from '../utils/date.js';
 
 export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
   // GET /pharmacy/my-depot — get this pharmacy's depot info
@@ -94,7 +95,7 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'recipientName and address required' });
     }
 
-    const date = body.deliveryDate ?? new Date().toISOString().split('T')[0];
+    const date = body.deliveryDate ?? todayInTz();
 
     // Find or create a draft plan for this depot+date
     let [plan] = await db.select().from(plans)

@@ -6,6 +6,7 @@ import { getUser } from '@/lib/auth';
 import { Button } from '@/components/ui/Button';
 import { FormField, SelectField } from '@/components/ui/FormField';
 import { ArrowLeft } from 'lucide-react';
+import { localDateStr } from '@/lib/dateUtils';
 
 interface Depot { id: string; name: string; address: string; }
 
@@ -14,7 +15,7 @@ export default function NewPlanPage() {
   const [user] = useState(getUser);
   const [depots, setDepots] = useState<Depot[]>([]);
   const [depotId, setDepotId] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(() => localDateStr());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 

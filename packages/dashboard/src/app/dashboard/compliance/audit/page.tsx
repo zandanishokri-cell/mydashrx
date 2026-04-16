@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Download, Search, ChevronLeft, ChevronRight as ChevRight, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
+import { localDateStr } from '@/lib/dateUtils';
 
 interface AuditLog {
   id: string;
@@ -25,8 +26,8 @@ interface AuditResponse {
   pageSize: number;
 }
 
-const defaultFrom = () => new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-const defaultTo = () => new Date().toISOString().split('T')[0];
+const defaultFrom = () => localDateStr(new Date(Date.now() - 7 * 86400000));
+const defaultTo = () => localDateStr();
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
