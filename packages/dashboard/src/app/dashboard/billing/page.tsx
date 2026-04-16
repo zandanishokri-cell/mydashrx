@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { CreditCard, CheckCircle2, Zap, Building2, TrendingUp, AlertCircle } from 'lucide-react';
+import { CreditCard, CheckCircle2, Zap, Building2, TrendingUp, AlertCircle, Check, X } from 'lucide-react';
 
 interface PlanDetails {
   name: string;
@@ -106,6 +106,9 @@ export default function BillingPage() {
   const [portalLoading, setPortalLoading] = useState(false);
   const [actionError, setActionError] = useState('');
   const [loadError, setLoadError] = useState(false);
+  const [showUpgradeSuccess, setShowUpgradeSuccess] = useState(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('success') === '1'
+  );
   const user = getUser();
   const orgId = user?.orgId;
 
@@ -181,6 +184,17 @@ export default function BillingPage() {
 
   return (
     <div className="p-5 md:p-6 max-w-5xl mx-auto space-y-6">
+      {/* Payment success banner */}
+      {showUpgradeSuccess && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+          <Check size={16} className="shrink-0 text-emerald-500" />
+          <span className="flex-1 font-medium">Payment successful — your plan has been upgraded!</span>
+          <button onClick={() => { setShowUpgradeSuccess(false); window.history.replaceState({}, '', '/dashboard/billing'); }}
+            className="text-emerald-400 hover:text-emerald-600 transition-colors">
+            <X size={14} />
+          </button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
