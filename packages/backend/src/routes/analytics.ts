@@ -3,10 +3,11 @@ import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers } from '../db/schema.js';
 import { eq, and, isNull, gte, lte, sql, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { requireOrg } from '../middleware/requireOrg.js';
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: [requireOrg, requireRole('dispatcher', 'pharmacy_admin', 'super_admin')],
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { depotId, from, to } = req.query as { depotId?: string; from?: string; to?: string };
@@ -45,8 +46,11 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     const total = Object.values(byStatus).reduce((s, v) => s + v, 0);
     const completed = byStatus['completed'] ?? 0;
     const failed = byStatus['failed'] ?? 0;
-    const successRate = total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
-    const failureRate = total > 0 ? Math.round((failed / total) * 1000) / 10 : 0;
+    const returned = byStatus['returned'] ?? 0;
+    // successRate/failureRate denominators only count terminal statuses (completed + failed + returned)
+    const terminalTotal = completed + failed + returned;
+    const successRate = terminalTotal > 0 ? Math.round((completed / terminalTotal) * 1000) / 10 : 0;
+    const failureRate = terminalTotal > 0 ? Math.round((failed / terminalTotal) * 1000) / 10 : 0;
 
     // Failure reasons
     const failureReasons = await db
@@ -92,11 +96,12 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       .groupBy(routes.driverId, drivers.name)
       .orderBy(sql`count(*) DESC`);
 
-    const activeDriverCount = driverStats.filter(d => d.total > 0).length;
+    const driverStatsNamed = driverStats.map(d => ({ ...d, driverName: d.driverName ?? 'Unknown Driver' }));
+    const activeDriverCount = driverStatsNamed.filter(d => d.total > 0).length;
     const avgPerDriver = activeDriverCount > 0 ? Math.round(total / activeDriverCount) : 0;
 
     // Top performers: top 3 by completion rate (min 1 delivery)
-    const topPerformers = driverStats
+    const topPerformers = driverStatsNamed
       .filter(d => d.total > 0)
       .map(d => ({ ...d, completionRate: Math.round((d.completed / d.total) * 100) }))
       .sort((a, b) => b.completionRate - a.completionRate)
@@ -124,11 +129,11 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       ? Math.round(deliveryTimeResult.avgMin * 10) / 10
       : null;
 
-    // onTimeRate: windowEnd exists in schema — completed before windowEnd
+    // onTimeRate: completed within the delivery window (not just before windowEnd)
     const [onTimeResult] = await db
       .select({
-        onTime: sql<number>`sum(case when ${stops.completedAt} <= ${stops.windowEnd} then 1 else 0 end)::int`,
-        withWindow: sql<number>`sum(case when ${stops.windowEnd} is not null and ${stops.completedAt} is not null then 1 else 0 end)::int`,
+        onTime: sql<number>`sum(case when ${stops.completedAt} >= ${stops.windowStart} and ${stops.completedAt} <= ${stops.windowEnd} then 1 else 0 end)::int`,
+        withWindow: sql<number>`sum(case when ${stops.windowStart} is not null and ${stops.windowEnd} is not null and ${stops.completedAt} is not null then 1 else 0 end)::int`,
       })
       .from(stops)
       .where(and(base, eq(stops.status, 'completed')));
@@ -157,7 +162,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       byStatus,
       daily,
       failureReasons: failureReasons.map(r => ({ reason: r.reason ?? 'Unknown', count: r.cnt })),
-      drivers: driverStats,
+      drivers: driverStatsNamed,
       depots: depotStats,
       topPerformers,
       weekOverWeekChange,

@@ -153,8 +153,8 @@ export default function IntelPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
               { icon: Truck, label: 'Deliveries', value: stats ? String(stats.total) : '—', sub: stats ? `${stats.completed} completed` : '' },
-              { icon: BarChart2, label: 'Success Rate', value: stats ? `${stats.successRate}%` : '—', sub: stats?.successRate != null && stats.successRate >= 90 ? '✓ Excellent' : stats ? 'Below target' : '' },
-              { icon: Clock, label: 'Avg Delivery', value: stats?.avgDeliveryTime != null ? `${stats.avgDeliveryTime}m` : '—', sub: 'door-to-door' },
+              { icon: BarChart2, label: 'Success Rate', value: stats ? `${stats.successRate}%` : '—', sub: stats?.successRate != null && stats.total >= 10 ? (stats.successRate >= 90 ? '✓ Excellent' : 'Below target') : '' },
+              { icon: Clock, label: 'Avg Delivery', value: stats?.avgDeliveryTime != null ? `${stats.avgDeliveryTime}m` : '—', sub: 'Avg stop duration' },
               { icon: TrendingUp, label: 'On-Time Rate', value: stats?.onTimeRate != null ? `${stats.onTimeRate}%` : '—', sub: stats?.onTimeRate != null && stats.onTimeRate >= 90 ? '✓ Top tier' : stats?.onTimeRate != null ? 'Needs attention' : 'No window data' },
             ].map(({ icon: Icon, label, value, sub }) => (
               <div key={label} className="bg-white border border-gray-100 rounded-xl p-4">
