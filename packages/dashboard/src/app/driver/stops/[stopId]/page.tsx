@@ -6,7 +6,7 @@ import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { enqueueAction } from '@/lib/offline-queue';
 import { PodCaptureModal } from '@/components/PodCaptureModal';
 import { BarcodeScanner } from '@/components/BarcodeScanner';
-import { ArrowLeft, Phone, MapPin, Package, Camera, CheckCircle2, XCircle, Clock, AlertTriangle, Thermometer, PenLine, Upload, ScanBarcode, WifiOff, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Phone, MapPin, Package, Camera, CheckCircle2, XCircle, Clock, AlertTriangle, Thermometer, PenLine, Upload, ScanBarcode, WifiOff, RefreshCw, Loader2 } from 'lucide-react';
 
 interface Stop {
   id: string; routeId: string; recipientName: string; address: string;
@@ -17,6 +17,7 @@ interface Stop {
   codAmount?: number; arrivedAt?: string; completedAt?: string;
   failureReason?: string; failureNote?: string;
   barcodesScanned?: string[]; packageConfirmed?: boolean;
+  returnedAt?: string | null;
 }
 
 const FAILURE_REASONS = [
@@ -41,6 +42,8 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
   const [ageVerified, setAgeVerified] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { isOnline, pendingCount, syncing, syncQueue, refreshCount } = useOfflineSync();
@@ -159,6 +162,19 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
   );
 
   const isDone = stop.status === 'completed' || stop.status === 'failed' || stop.status === 'rescheduled';
+
+  const confirmReturn = async () => {
+    setConfirming(true);
+    setConfirmError('');
+    try {
+      await api.post(`/driver/me/stops/${stop.id}/return-confirm`, {});
+      setStop(s => s ? { ...s, returnedAt: new Date().toISOString() } : s);
+    } catch {
+      setConfirmError('Failed to confirm return. Please try again.');
+    } finally {
+      setConfirming(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 pb-32">
@@ -393,6 +409,33 @@ export default function StopDetailPage({ params }: { params: { stopId: string } 
               <><CheckCircle2 size={32} className="text-green-500 mx-auto mb-2" /><p className="font-semibold text-green-700">Delivery Complete</p></>
             ) : (
               <><XCircle size={32} className="text-red-400 mx-auto mb-2" /><p className="font-semibold text-red-600">Delivery Failed</p>{stop.failureReason && <p className="text-sm text-red-400 mt-1">{stop.failureReason}</p>}</>
+            )}
+          </div>
+        )}
+
+        {/* Return confirm CTA — failed stops only */}
+        {stop.status === 'failed' && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+            <p className="text-sm font-medium text-amber-800">
+              {stop.returnedAt
+                ? `✓ Returned to pharmacy at ${new Date(stop.returnedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : stop.controlledSubstance
+                  ? '⚠ Controlled substance — confirm return to pharmacy'
+                  : 'Delivery failed — confirm package returned to pharmacy'
+              }
+            </p>
+            {!stop.returnedAt && (
+              <>
+                {confirmError && <p className="text-xs text-red-600">{confirmError}</p>}
+                <button
+                  onClick={confirmReturn}
+                  disabled={confirming}
+                  className="w-full py-2.5 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {confirming && <Loader2 size={14} className="animate-spin" />}
+                  Confirm Returned to Pharmacy
+                </button>
+              </>
             )}
           </div>
         )}
