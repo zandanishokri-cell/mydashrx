@@ -332,6 +332,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
             ilike(stops.recipientName, like),
             ilike(stops.address, like),
             ilike(stops.recipientPhone, like),
+            sql`${stops.rxNumbers}::text ILIKE ${like}`,
           )!,
         ))
         .orderBy(sql`${stops.createdAt} DESC`)

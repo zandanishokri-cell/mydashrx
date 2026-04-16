@@ -51,6 +51,7 @@ export default function SearchPage() {
   const [tab, setTab] = useState<TabType>('all');
   const [results, setResults] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
   const [recent, setRecent] = useState<string[]>([]);
   const [selectedStop, setSelectedStop] = useState<any>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,21 +73,21 @@ export default function SearchPage() {
 
   const doSearch = useCallback(async (q: string, t = tab) => {
     if (!user || !q.trim()) { setResults(null); return; }
-    setLoading(true);
+    setLoading(true); setError(false);
     try {
       const params = new URLSearchParams({ q: q.trim(), type: t });
       const data = await api.get<SearchResponse>(`/orgs/${user.orgId}/search?${params}`);
       setResults(data);
       saveRecent(q.trim());
       setRecent(loadRecent());
-    } catch { setResults(null); }
+    } catch { setResults(null); setError(true); }
     finally { setLoading(false); }
   }, [user, tab]);
 
   const handleInput = (v: string) => {
     setQuery(v);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!v.trim()) { setResults(null); return; }
+    if (!v.trim()) { setResults(null); setError(false); return; }
     debounceRef.current = setTimeout(() => doSearch(v), 350);
   };
 
@@ -132,7 +133,7 @@ export default function SearchPage() {
             className="w-full pl-10 pr-10 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 bg-white"
           />
           {query && (
-            <button onClick={() => { setQuery(''); setResults(null); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+            <button onClick={() => { setQuery(''); setResults(null); setError(false); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
               <X size={14} />
             </button>
           )}
@@ -193,11 +194,18 @@ export default function SearchPage() {
           </div>
         )}
 
+        {/* Search error */}
+        {!loading && error && (
+          <div className="text-center py-12 text-sm text-red-500">
+            <p>Search failed — check your connection and try again.</p>
+          </div>
+        )}
+
         {/* No results */}
-        {!loading && results && results.total === 0 && (
+        {!loading && !error && results && results.total === 0 && (
           <div className="text-center py-16 text-gray-400 text-sm">
             <p>No results for <strong className="text-gray-600">"{results.query}"</strong></p>
-            <p className="text-xs mt-1">Try searching by address, driver name, or pharmacy</p>
+            <p className="text-xs mt-1">Try searching by address, name, Rx#, or phone number</p>
           </div>
         )}
 
@@ -228,7 +236,7 @@ export default function SearchPage() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Drivers ({driversShown.length})</p>
             <div className="space-y-px">
               {driversShown.map(d => (
-                <div key={d.id} onClick={() => router.push('/dashboard/drivers')}
+                <div key={d.id} onClick={() => router.push(`/dashboard/drivers/${d.id}`)}
                   className="bg-white border border-gray-100 rounded-xl px-4 py-3 hover:border-blue-200 hover:shadow-sm cursor-pointer transition-all flex items-center gap-3">
                   <div className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOTS[d.status] ?? 'bg-gray-300'}`} />
                   <div className="min-w-0 flex-1">
@@ -248,7 +256,7 @@ export default function SearchPage() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Leads ({leadsShown.length})</p>
             <div className="space-y-px">
               {leadsShown.map(lead => (
-                <div key={lead.id} onClick={() => router.push('/dashboard/leads')}
+                <div key={lead.id} onClick={() => router.push(`/dashboard/leads/${lead.id}`)}
                   className="bg-white border border-gray-100 rounded-xl px-4 py-3 hover:border-blue-200 hover:shadow-sm cursor-pointer transition-all flex items-center justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-gray-900 text-sm">{lead.name}</p>
