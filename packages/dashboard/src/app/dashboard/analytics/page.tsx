@@ -23,10 +23,11 @@ interface AnalyticsData {
   weekOverWeekChange: number | null;
 }
 
+const localDateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 const defaultRange = (): DateRange => {
-  const to = new Date().toISOString().split('T')[0];
-  const from = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-  return { from, to };
+  const now = new Date();
+  return { from: localDateStr(new Date(now.getTime() - 7 * 86400000)), to: localDateStr(now) };
 };
 
 const BAR_COLORS = ['#0F4C81', '#00B8A9', '#F6A623', '#ef4444', '#8b5cf6', '#6b7280'];

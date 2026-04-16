@@ -12,7 +12,8 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     const { depotId, from, to } = req.query as { depotId?: string; from?: string; to?: string };
 
     // Default: last 7 days
-    const fromDate = from ? new Date(from) : new Date(Date.now() - 7 * 86400000);
+    // Use 'T00:00:00' (no Z) so date-only strings parse as local midnight, matching toDate which also uses local time
+    const fromDate = from ? new Date(from + 'T00:00:00') : new Date(Date.now() - 7 * 86400000);
     const toDate = to ? new Date(to + 'T23:59:59') : new Date();
 
     // Depot filter: scope stops to routes belonging to the requested depot
@@ -135,7 +136,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       ? Math.round(((onTimeResult!.onTime ?? 0) / onTimeResult!.withWindow) * 1000) / 10
       : null;
 
-    // Depot breakdown
+    // Depot breakdown — INNER JOIN excludes unassigned stops (routeId=null) to prevent "Unknown" phantom row
     const depotStats = await db
       .select({
         depotId: plans.depotId,
@@ -144,8 +145,8 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         completed: sql<number>`sum(case when ${stops.status} = 'completed' then 1 else 0 end)::int`,
       })
       .from(stops)
-      .leftJoin(routes, eq(stops.routeId, routes.id))
-      .leftJoin(plans, eq(routes.planId, plans.id))
+      .innerJoin(routes, eq(stops.routeId, routes.id))
+      .innerJoin(plans, eq(routes.planId, plans.id))
       .leftJoin(depots, eq(plans.depotId, depots.id))
       .where(base)
       .groupBy(plans.depotId, depots.name)
