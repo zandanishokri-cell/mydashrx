@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
-import { Plus, Calendar, ChevronLeft, ChevronRight, Zap, Route } from 'lucide-react';
+import { Plus, Calendar, ChevronLeft, ChevronRight, Zap, Route, AlertCircle, X } from 'lucide-react';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; }
@@ -41,13 +41,14 @@ export default function PlansPage() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [user] = useState(getUser);
+  const [loadError, setLoadError] = useState(false);
 
   const weekDays = getWeekRange(weekOffset);
   const today = new Date().toISOString().split('T')[0];
 
   const load = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    setLoading(true); setLoadError(false);
     try {
       const [allPlans, allDrivers] = await Promise.all([
         api.get<Plan[]>(`/orgs/${user.orgId}/plans`),
@@ -63,7 +64,7 @@ export default function PlansPage() {
         })
       );
       setPlans(withMeta);
-    } catch { setPlans([]); }
+    } catch { setPlans([]); setLoadError(true); }
     finally { setLoading(false); }
   }, [user, depotId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -112,6 +113,12 @@ export default function PlansPage() {
       {optimizeToast && (
         <div className="fixed bottom-4 right-4 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
           <Zap size={14} className="text-[#00B8A9]" /> {optimizeToast}
+        </div>
+      )}
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 mb-5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load routes. Please try again.</span>
+          <button onClick={load} className="text-red-600 font-medium hover:underline text-xs">Retry</button>
         </div>
       )}
       <div className="flex items-center justify-between mb-5">

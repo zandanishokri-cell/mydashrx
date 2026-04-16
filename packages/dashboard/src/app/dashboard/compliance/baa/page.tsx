@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { Plus, Pencil, Trash2, X, Check, ChevronLeft } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Check, ChevronLeft, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 
 interface BaaEntry {
@@ -59,14 +59,15 @@ export default function BaaPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState('');
   const [confirmDeleteBaaId, setConfirmDeleteBaaId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    setLoading(true); setLoadError(false);
     try {
       const rows = await api.get<BaaEntry[]>(`/orgs/${user.orgId}/compliance/baa`);
       setEntries(rows);
-    } catch { setEntries([]); }
+    } catch { setEntries([]); setLoadError(true); }
     finally { setLoading(false); }
   }, [user]);
 
@@ -127,13 +128,13 @@ export default function BaaPage() {
 
   const seedDefaults = async () => {
     if (!user) return;
-    setSaving(true);
+    setSaving(true); setSaveError('');
     try {
       for (const v of DEFAULT_VENDORS) {
         await api.post(`/orgs/${user.orgId}/compliance/baa`, v);
       }
       await load();
-    } catch { /* ignore */ }
+    } catch (err: any) { setSaveError(err?.message ?? 'Failed to seed defaults. Please try again.'); }
     finally { setSaving(false); }
   };
 
@@ -170,6 +171,13 @@ export default function BaaPage() {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load BAA entries. Please try again.</span>
+          <button onClick={load} className="text-red-600 font-medium hover:underline text-xs">Retry</button>
+        </div>
+      )}
 
       {confirmDeleteBaaId && (() => {
         const name = entries.find(e => e.id === confirmDeleteBaaId)?.vendorName ?? 'this entry';

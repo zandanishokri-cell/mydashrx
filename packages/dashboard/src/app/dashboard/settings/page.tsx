@@ -235,6 +235,8 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
   const [editingRoleFor, setEditingRoleFor] = useState<string | null>(null);
   const [editRoleValue, setEditRoleValue] = useState<Role>('dispatcher');
   const [savingRole, setSavingRole] = useState(false);
+  const [removeError, setRemoveError] = useState('');
+  const [saveRoleError, setSaveRoleError] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -264,19 +266,22 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
     try {
       await api.del(`/orgs/${orgId}/users/${removeTarget.id}`);
       setMembers(prev => prev.filter(m => m.id !== removeTarget.id));
-    } catch { /* ignore */ }
-    setRemoveTarget(null);
+      setRemoveTarget(null);
+    } catch (err: any) {
+      setRemoveError(err?.message ?? 'Failed to remove user');
+      setRemoveTarget(null);
+    }
   };
 
   const startEditRole = (m: OrgUser) => { setEditingRoleFor(m.id); setEditRoleValue(m.role); };
-  const cancelEditRole = () => { setEditingRoleFor(null); setSavingRole(false); };
+  const cancelEditRole = () => { setEditingRoleFor(null); setSavingRole(false); setSaveRoleError(''); };
   const saveEditRole = async (userId: string) => {
-    setSavingRole(true);
+    setSavingRole(true); setSaveRoleError('');
     try {
       const updated = await api.patch<OrgUser>(`/orgs/${orgId}/users/${userId}`, { role: editRoleValue });
       setMembers(prev => prev.map(m => m.id === userId ? { ...m, role: updated.role } : m));
       setEditingRoleFor(null);
-    } catch { /* ignore */ }
+    } catch (err: any) { setSaveRoleError(err?.message ?? 'Failed to update role'); }
     finally { setSavingRole(false); }
   };
 
@@ -288,6 +293,12 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
 
   return (
     <div>
+      {(removeError || saveRoleError) && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />{removeError || saveRoleError}</span>
+          <button onClick={() => { setRemoveError(''); setSaveRoleError(''); }} className="text-red-400 hover:text-red-600"><X size={14} /></button>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">{members.length} member{members.length !== 1 ? 's' : ''}</p>
         <button
@@ -477,6 +488,7 @@ function DepotsTab({ orgId }: { orgId: string }) {
   const [form, setForm] = useState({ name: '', address: '', phone: '', lat: '', lng: '' });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -517,8 +529,11 @@ function DepotsTab({ orgId }: { orgId: string }) {
     try {
       await api.del(`/orgs/${orgId}/depots/${deleteTarget.id}`);
       setDepots(prev => prev.filter(d => d.id !== deleteTarget.id));
-    } catch { /* ignore */ }
-    setDeleteTarget(null);
+      setDeleteTarget(null);
+    } catch (err: any) {
+      setDeleteError(err?.message ?? 'Failed to delete depot');
+      setDeleteTarget(null);
+    }
   };
 
   const DepotForm = ({ isEdit }: { isEdit?: boolean }) => (
@@ -565,6 +580,12 @@ function DepotsTab({ orgId }: { orgId: string }) {
 
   return (
     <div>
+      {deleteError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />{deleteError}</span>
+          <button onClick={() => setDeleteError('')} className="text-red-400 hover:text-red-600"><X size={14} /></button>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">{depots.length} depot{depots.length !== 1 ? 's' : ''}</p>
         <button

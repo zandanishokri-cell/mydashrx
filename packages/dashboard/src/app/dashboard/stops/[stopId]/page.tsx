@@ -14,7 +14,7 @@ const LeafletMap = dynamic(() => import('@/components/ui/LeafletMap'), {
 import {
   ArrowLeft, Phone, MapPin, Package, Thermometer, AlertTriangle,
   PenLine, Clock, CheckCircle2, XCircle, Truck, User, FileCheck,
-  Flag, RotateCcw, FileEdit, ChevronRight,
+  Flag, RotateCcw, FileEdit, ChevronRight, AlertCircle, X,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -82,6 +82,7 @@ function StopDetailContent({ stopId }: { stopId: string }) {
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
+  const [saveNotesError, setSaveNotesError] = useState('');
   const [rescheduling, setRescheduling] = useState(false);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
   const [showPod, setShowPod] = useState(false);
@@ -108,12 +109,12 @@ function StopDetailContent({ stopId }: { stopId: string }) {
 
   const saveNotes = async () => {
     if (!stop || !user || !stop.routeId) return;
-    setSavingNotes(true);
+    setSavingNotes(true); setSaveNotesError('');
     try {
       await api.patch(`/routes/${stop.routeId}/stops/${stop.id}`, { deliveryNotes: notesValue });
       setStop(s => s ? { ...s, deliveryNotes: notesValue } : s);
       setEditingNotes(false);
-    } catch { /* silent */ }
+    } catch (err: any) { setSaveNotesError(err?.message ?? 'Failed to save notes'); }
     finally { setSavingNotes(false); }
   };
 
@@ -359,6 +360,9 @@ function StopDetailContent({ stopId }: { stopId: string }) {
                 >
                   {savingNotes ? 'Saving…' : 'Save Notes'}
                 </button>
+                {saveNotesError && (
+                  <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} />{saveNotesError}</p>
+                )}
               </div>
             ) : (
               <p className="text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2 min-h-[36px]">

@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { CsvImportModal } from '@/components/CsvImportModal';
-import { Plus, Search, X, RefreshCw, Download, Upload, ChevronUp, ChevronDown, ChevronsUpDown, Filter, ArrowRightLeft, Truck } from 'lucide-react';
+import { Plus, Search, X, RefreshCw, Download, Upload, ChevronUp, ChevronDown, ChevronsUpDown, Filter, ArrowRightLeft, Truck, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 
 interface RouteOption {
@@ -91,6 +91,7 @@ export default function StopsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const [sortKey, setSortKey] = useState<'urgency' | 'status' | 'date' | 'driver' | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -152,7 +153,7 @@ export default function StopsPage() {
 
   const exportCsv = async () => {
     if (!user || exporting) return;
-    setExporting(true);
+    setExporting(true); setExportError('');
     try {
       const params = new URLSearchParams({ page: '1', limit: '10000' });
       if (search) params.set('q', search);
@@ -178,7 +179,7 @@ export default function StopsPage() {
       a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
       a.download = `stops-${new Date().toISOString().split('T')[0]}.csv`;
       a.click();
-    } catch { /* silent */ }
+    } catch (err: any) { setExportError(err?.message ?? 'Export failed. Please try again.'); }
     finally { setExporting(false); }
   };
 
@@ -266,6 +267,9 @@ export default function StopsPage() {
               <Download size={14} className={exporting ? 'animate-pulse' : ''} />
               {exporting ? 'Exporting…' : 'Export CSV'}
             </button>
+            {exportError && (
+              <span className="flex items-center gap-1 text-xs text-red-500"><AlertCircle size={12} />{exportError}</span>
+            )}
             <button onClick={() => setImportOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
               <Upload size={14} /> Import CSV
             </button>

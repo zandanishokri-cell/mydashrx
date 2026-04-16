@@ -232,14 +232,15 @@ export default function RecurringPage() {
   const [generating, setGenerating] = useState(false);
   const [genToast, setGenToast] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    setLoading(true); setLoadError(false);
     try {
       const data = await api.get<RecurringDelivery[]>(`/orgs/${user.orgId}/recurring`);
       setItems(data);
-    } catch { setItems([]); }
+    } catch { setItems([]); setLoadError(true); }
     finally { setLoading(false); }
   }, [user]);
 
@@ -310,6 +311,13 @@ export default function RecurringPage() {
       {genToast && (
         <div className="fixed bottom-4 right-4 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
           <RefreshCw size={13} className="text-[#00B8A9]" /> {genToast}
+        </div>
+      )}
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 mb-5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load recurring deliveries. Please try again.</span>
+          <button onClick={load} className="text-red-600 font-medium hover:underline text-xs">Retry</button>
         </div>
       )}
 

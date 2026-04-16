@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { ArrowLeft, X, Phone, Mail, ExternalLink, ChevronRight } from 'lucide-react';
+import { ArrowLeft, X, Phone, Mail, ExternalLink, ChevronRight, AlertCircle } from 'lucide-react';
 
 interface Lead {
   id: string; name: string; city: string; state: string; address: string;
@@ -56,14 +56,16 @@ export default function PipelinePage() {
   const [outreach, setOutreach] = useState<OutreachEntry[]>([]);
   const [loadingOutreach, setLoadingOutreach] = useState(false);
   const [movingTo, setMovingTo] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [outreachError, setOutreachError] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    setLoading(true); setLoadError(false);
     try {
       const data = await api.get<Pipeline>(`/orgs/${user.orgId}/leads/pipeline`);
       setPipeline(data);
-    } catch { setPipeline(null); }
+    } catch { setPipeline(null); setLoadError(true); }
     finally { setLoading(false); }
   }, [user]);
 
@@ -71,11 +73,11 @@ export default function PipelinePage() {
 
   const openLead = async (lead: Lead) => {
     setSelectedLead(lead);
-    setLoadingOutreach(true);
+    setLoadingOutreach(true); setOutreachError(false);
     try {
       const data = await api.get<{ lead: Lead; outreach: OutreachEntry[] }>(`/orgs/${user!.orgId}/leads/${lead.id}`);
       setOutreach(data.outreach);
-    } catch { setOutreach([]); }
+    } catch { setOutreach([]); setOutreachError(true); }
     finally { setLoadingOutreach(false); }
   };
 
@@ -105,6 +107,13 @@ export default function PipelinePage() {
           <p className="text-sm text-gray-500 mt-0.5">Kanban view of your lead pipeline</p>
         </div>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load pipeline. Please try again.</span>
+          <button onClick={load} className="text-red-600 font-medium hover:underline text-xs">Retry</button>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex gap-4 overflow-x-auto pb-4">
@@ -224,11 +233,14 @@ export default function PipelinePage() {
             {/* Outreach history */}
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Outreach History</p>
+              {outreachError && (
+                <p className="text-xs text-red-500 flex items-center gap-1 mb-2"><AlertCircle size={12} />Failed to load outreach history</p>
+              )}
               {loadingOutreach ? (
                 <div className="space-y-2">
                   {[1,2].map(i => <div key={i} className="h-12 bg-gray-50 rounded-lg animate-pulse" />)}
                 </div>
-              ) : outreach.length === 0 ? (
+              ) : outreach.length === 0 && !outreachError ? (
                 <p className="text-sm text-gray-400">No outreach yet</p>
               ) : (
                 <div className="space-y-2">
