@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import {
   ArrowLeft, Phone, Mail, ExternalLink, Star, Calendar,
-  Tag, Save, Send, X, Clock
+  Tag, Save, Send, X, Clock, Sparkles
 } from 'lucide-react';
 
 interface Lead {
@@ -58,6 +58,7 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [generatingDraft, setGeneratingDraft] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -130,6 +131,23 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
     const newTags = tags.filter(tag => tag !== t);
     setTags(newTags);
     save({ tags: newTags }).catch(() => setTags(prev));
+  };
+
+  const generateDraft = async () => {
+    if (!lead || generatingDraft) return;
+    setGeneratingDraft(true);
+    try {
+      const draft = await api.post<{ subject: string; body: string }>(
+        `/orgs/${user!.orgId}/leads/${lead.id}/draft-outreach`,
+        {},
+      );
+      setEmailSubject(draft.subject);
+      setEmailBody(draft.body);
+    } catch {
+      showToast('Failed to generate draft. Please try again.');
+    } finally {
+      setGeneratingDraft(false);
+    }
   };
 
   const sendEmail = async () => {
@@ -384,9 +402,28 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
               <h3 className="font-semibold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>
                 Send Email to {lead.name}
               </h3>
-              <button onClick={() => setShowEmailModal(false)} className="p-1 text-gray-400 hover:text-gray-600">
-                <X size={18} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={generateDraft}
+                  disabled={generatingDraft}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50 transition-colors"
+                >
+                  {generatingDraft ? (
+                    <>
+                      <span className="animate-spin inline-block w-3 h-3 border border-violet-500 border-t-transparent rounded-full" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={12} />
+                      Generate Draft
+                    </>
+                  )}
+                </button>
+                <button onClick={() => setShowEmailModal(false)} className="p-1 text-gray-400 hover:text-gray-600">
+                  <X size={18} />
+                </button>
+              </div>
             </div>
             <div className="p-5 space-y-4">
               {!lead.email && (
