@@ -17,8 +17,14 @@ interface RecurringDelivery {
   dayOfMonth?: number;
   nextDeliveryDate?: string;
   lastDeliveryDate?: string;
+  endDate?: string;
   rxNumber?: string;
   isControlled: boolean;
+  requiresSignature: boolean;
+  requiresRefrigeration: boolean;
+  windowStartTime?: string;
+  windowEndTime?: string;
+  customIntervalDays?: number;
   enabled: boolean;
   depotId?: string;
   createdAt: string;
@@ -37,14 +43,18 @@ const today = () => new Date().toISOString().split('T')[0];
 interface FormState {
   recipientName: string; address: string; recipientPhone: string; recipientEmail: string;
   notes: string; schedule: 'weekly' | 'biweekly' | 'monthly' | 'custom';
-  dayOfWeek: string; dayOfMonth: string; nextDeliveryDate: string;
+  dayOfWeek: string; dayOfMonth: string; nextDeliveryDate: string; endDate: string;
   rxNumber: string; isControlled: boolean;
+  requiresSignature: boolean; requiresRefrigeration: boolean;
+  windowStartTime: string; windowEndTime: string; customIntervalDays: string;
 }
 
 const emptyForm = (): FormState => ({
   recipientName: '', address: '', recipientPhone: '', recipientEmail: '',
   notes: '', schedule: 'weekly', dayOfWeek: '', dayOfMonth: '',
-  nextDeliveryDate: today(), rxNumber: '', isControlled: false,
+  nextDeliveryDate: today(), endDate: '', rxNumber: '',
+  isControlled: false, requiresSignature: true, requiresRefrigeration: false,
+  windowStartTime: '', windowEndTime: '', customIntervalDays: '',
 });
 
 function PatientModal({ initial, onSave, onClose }: {
@@ -62,8 +72,14 @@ function PatientModal({ initial, onSave, onClose }: {
     dayOfWeek: initial.dayOfWeek?.toString() ?? '',
     dayOfMonth: initial.dayOfMonth?.toString() ?? '',
     nextDeliveryDate: initial.nextDeliveryDate ? initial.nextDeliveryDate.split('T')[0] : today(),
+    endDate: initial.endDate ? initial.endDate.split('T')[0] : '',
     rxNumber: initial.rxNumber ?? '',
     isControlled: initial.isControlled,
+    requiresSignature: initial.requiresSignature,
+    requiresRefrigeration: initial.requiresRefrigeration,
+    windowStartTime: initial.windowStartTime ?? '',
+    windowEndTime: initial.windowEndTime ?? '',
+    customIntervalDays: initial.customIntervalDays?.toString() ?? '',
   } : emptyForm());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -73,6 +89,10 @@ function PatientModal({ initial, onSave, onClose }: {
   const handleSave = async () => {
     if (!form.recipientName.trim()) { setError('Patient name is required'); return; }
     if (!form.address.trim()) { setError('Address is required'); return; }
+    if (form.schedule === 'custom' && form.customIntervalDays) {
+      const n = parseInt(form.customIntervalDays);
+      if (isNaN(n) || n < 1) { setError('Custom interval must be a positive number of days'); return; }
+    }
     setSaving(true);
     try { await onSave(form); } catch { setError('Save failed. Please try again.'); }
     finally { setSaving(false); }
@@ -90,6 +110,7 @@ function PatientModal({ initial, onSave, onClose }: {
           {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
 
           <div className="grid grid-cols-2 gap-3">
+            {/* Patient info */}
             <div className="col-span-2">
               <label className="block text-xs font-medium text-gray-600 mb-1">Patient Name *</label>
               <input value={form.recipientName} onChange={e => set('recipientName', e.target.value)}
@@ -115,6 +136,8 @@ function PatientModal({ initial, onSave, onClose }: {
               <input value={form.rxNumber} onChange={e => set('rxNumber', e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="RX-001" />
             </div>
+
+            {/* Schedule */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Schedule</label>
               <select value={form.schedule} onChange={e => set('schedule', e.target.value)}
@@ -122,23 +145,67 @@ function PatientModal({ initial, onSave, onClose }: {
                 <option value="weekly">Weekly</option>
                 <option value="biweekly">Biweekly</option>
                 <option value="monthly">Monthly</option>
-                <option value="custom">Custom</option>
+                <option value="custom">Custom interval</option>
               </select>
             </div>
+
+            {/* Custom interval days — only shown for custom schedule */}
+            {form.schedule === 'custom' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Interval (days)</label>
+                <input
+                  type="number" min="1" value={form.customIntervalDays}
+                  onChange={e => set('customIntervalDays', e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  placeholder="e.g. 10"
+                />
+              </div>
+            )}
+
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Next Delivery Date</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">First Delivery Date</label>
               <input type="date" value={form.nextDeliveryDate} onChange={e => set('nextDeliveryDate', e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100" />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">End Date <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input type="date" value={form.endDate} onChange={e => set('endDate', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100" />
+            </div>
+
+            {/* Delivery window */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Window Start <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input type="time" value={form.windowStartTime} onChange={e => set('windowStartTime', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Window End <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input type="time" value={form.windowEndTime} onChange={e => set('windowEndTime', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100" />
+            </div>
+
+            {/* Notes */}
             <div className="col-span-2">
               <label className="block text-xs font-medium text-gray-600 mb-1">Delivery Notes</label>
               <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={2}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 resize-none" placeholder="Ring doorbell, leave at door…" />
             </div>
-            <div className="col-span-2 flex items-center gap-2">
-              <input type="checkbox" id="isControlled" checked={form.isControlled} onChange={e => set('isControlled', e.target.checked)}
-                className="rounded border-gray-300" />
-              <label htmlFor="isControlled" className="text-sm text-gray-700">Controlled substance</label>
+
+            {/* Checkboxes */}
+            <div className="col-span-2 flex flex-col gap-2.5">
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input type="checkbox" checked={form.isControlled} onChange={e => set('isControlled', e.target.checked)} className="rounded border-gray-300" />
+                <span className="text-sm text-gray-700">Controlled substance</span>
+              </label>
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input type="checkbox" checked={form.requiresRefrigeration} onChange={e => set('requiresRefrigeration', e.target.checked)} className="rounded border-gray-300" />
+                <span className="text-sm text-gray-700">Requires refrigeration</span>
+              </label>
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input type="checkbox" checked={form.requiresSignature} onChange={e => set('requiresSignature', e.target.checked)} className="rounded border-gray-300" />
+                <span className="text-sm text-gray-700">Requires signature on delivery</span>
+              </label>
             </div>
           </div>
         </div>
@@ -190,8 +257,14 @@ export default function RecurringPage() {
       dayOfWeek: form.dayOfWeek ? parseInt(form.dayOfWeek) : undefined,
       dayOfMonth: form.dayOfMonth ? parseInt(form.dayOfMonth) : undefined,
       nextDeliveryDate: form.nextDeliveryDate || undefined,
+      endDate: form.endDate || undefined,
       rxNumber: form.rxNumber || undefined,
       isControlled: form.isControlled,
+      requiresSignature: form.requiresSignature,
+      requiresRefrigeration: form.requiresRefrigeration,
+      windowStartTime: form.windowStartTime || undefined,
+      windowEndTime: form.windowEndTime || undefined,
+      customIntervalDays: form.customIntervalDays ? parseInt(form.customIntervalDays) : undefined,
     };
 
     if (editing) {
@@ -288,17 +361,26 @@ export default function RecurringPage() {
         <div className="grid gap-3">
           {items.map(item => {
             const badge = SCHEDULE_BADGE[item.schedule] ?? SCHEDULE_BADGE.custom;
+            const scheduleLabel = item.schedule === 'custom' && item.customIntervalDays
+              ? `Every ${item.customIntervalDays}d`
+              : badge.label;
             return (
               <div key={item.id} className={`bg-white rounded-xl border transition-all ${item.enabled ? 'border-gray-100 hover:shadow-sm' : 'border-gray-100 opacity-60'}`}>
                 <div className="p-4 flex items-start gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span className="font-semibold text-gray-900 text-sm">{item.recipientName}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge.cls}`}>{badge.label}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge.cls}`}>{scheduleLabel}</span>
                       {item.isControlled && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 font-medium flex items-center gap-1">
                           <AlertCircle size={10} /> Controlled
                         </span>
+                      )}
+                      {item.requiresRefrigeration && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-medium">❄ Cold</span>
+                      )}
+                      {!item.requiresSignature && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">No sig</span>
                       )}
                       {item.rxNumber && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 flex items-center gap-1">
@@ -307,15 +389,18 @@ export default function RecurringPage() {
                       )}
                     </div>
                     <p className="text-xs text-gray-500 truncate">{item.address}</p>
-                    <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
+                    <div className="flex items-center gap-4 mt-2 text-xs text-gray-400 flex-wrap">
                       <span>Next: <span className="text-gray-600 font-medium">{fmt(item.nextDeliveryDate)}</span></span>
                       {item.lastDeliveryDate && <span>Last: {fmt(item.lastDeliveryDate)}</span>}
+                      {item.endDate && <span>Ends: <span className="text-amber-600">{fmt(item.endDate)}</span></span>}
+                      {item.windowStartTime && item.windowEndTime && (
+                        <span>Window: {item.windowStartTime.slice(0,5)}–{item.windowEndTime.slice(0,5)}</span>
+                      )}
                       {item.recipientPhone && <span>{item.recipientPhone}</span>}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {/* Enable/disable toggle */}
                     <button
                       onClick={() => toggleEnabled(item)}
                       title={item.enabled ? 'Disable' : 'Enable'}
