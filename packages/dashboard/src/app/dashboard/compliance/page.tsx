@@ -35,8 +35,16 @@ interface ScanFinding {
 interface ScanResult {
   scannedAt: string;
   findings: ScanFinding[];
+  score?: number;
   summary: { total: number; violations: number; P0: number; P1: number; P2: number; P3: number };
   blocksDeployment: boolean;
+}
+
+interface ScorePoint {
+  score: number;
+  violationCount: number;
+  p0Count: number;
+  scannedAt: string;
 }
 
 interface LatestScanRow {
@@ -97,6 +105,50 @@ function statusScoreColor(score: number) {
   if (score >= 80) return '#10b981';
   if (score >= 50) return '#f59e0b';
   return '#ef4444';
+}
+
+function ScoreSparkline({ data }: { data: ScorePoint[] }) {
+  if (data.length < 2) return null;
+
+  const W = 200, H = 48, PAD = 4;
+  const scores = data.map(d => d.score);
+  const minS = Math.min(...scores, 0);
+  const maxS = Math.max(...scores, 100);
+  const range = maxS - minS || 1;
+
+  const x = (i: number) => PAD + (i / (data.length - 1)) * (W - PAD * 2);
+  const y = (s: number) => PAD + ((maxS - s) / range) * (H - PAD * 2);
+
+  const pathD = scores.map((s, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(s).toFixed(1)}`).join(' ');
+  const areaD = `${pathD} L ${x(scores.length - 1).toFixed(1)} ${H} L ${x(0).toFixed(1)} ${H} Z`;
+
+  const last = data[data.length - 1];
+  const prev = data.length >= 2 ? data[data.length - 2] : null;
+  const delta = prev ? last.score - prev.score : 0;
+
+  return (
+    <div className="flex items-center gap-3">
+      <svg width={W} height={H} className="shrink-0">
+        <defs>
+          <linearGradient id="sparkGrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#0F4C81" stopOpacity="0.15" />
+            <stop offset="100%" stopColor="#0F4C81" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={areaD} fill="url(#sparkGrad)" />
+        <path d={pathD} fill="none" stroke="#0F4C81" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={x(scores.length - 1)} cy={y(last.score)} r="3" fill="#0F4C81" />
+      </svg>
+      <div className="text-right shrink-0">
+        <p className="text-xs text-gray-500">Latest: <span className="font-semibold text-gray-800">{last.score}</span></p>
+        {delta !== 0 && (
+          <p className={`text-xs font-semibold ${delta > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+            {delta > 0 ? '+' : ''}{delta} pts
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ScoreRing({ score }: { score: number }) {
@@ -170,6 +222,7 @@ export default function CompliancePage() {
   const [scanError, setScanError] = useState('');
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [scoreHistory, setScoreHistory] = useState<ScorePoint[]>([]);
   const [scanLoadedAt, setScanLoadedAt] = useState<string | null>(null);
   const [scanLoadError, setScanLoadError] = useState(false);
 
@@ -204,7 +257,15 @@ export default function CompliancePage() {
     } catch { setScanLoadError(true); }
   }, [user]);
 
-  useEffect(() => { load(); loadLatestScan(); }, [load, loadLatestScan]);
+  useEffect(() => {
+    if (!user) return;
+    load();
+    loadLatestScan();
+    // Fetch score history (best-effort — non-fatal if empty)
+    api.get<ScorePoint[]>(`/orgs/${user.orgId}/compliance/score-history`)
+      .then(setScoreHistory)
+      .catch(() => setScoreHistory([]));
+  }, [load, loadLatestScan]);
 
   const runChecks = async () => {
     if (!user || running) return;
@@ -226,6 +287,14 @@ export default function CompliancePage() {
       const result = await api.post<ScanResult>(`/orgs/${user.orgId}/compliance/scan`, {});
       setScanResult(result);
       setScanLoadedAt(result.scannedAt);
+      if (result.score !== undefined) {
+        setScoreHistory(prev => [...prev, {
+          score: result.score!,
+          violationCount: result.summary.violations,
+          p0Count: result.summary.P0,
+          scannedAt: new Date().toISOString(),
+        }]);
+      }
     } catch (err: any) { setScanError(err?.message ?? 'Scan failed. Please try again.'); }
     finally { setScanning(false); }
   };
@@ -306,6 +375,12 @@ export default function CompliancePage() {
                   {data.overallStatus === 'pass' ? 'Compliant' : data.overallStatus === 'warning' ? 'Needs Attention' : 'Non-Compliant'}
                 </p>
                 {lastRun && <p className="text-xs text-gray-400 mt-2">Checks: {lastRun.toLocaleTimeString()}</p>}
+                {scoreHistory.length >= 2 && (
+                  <div className="mt-3">
+                    <p className="text-xs text-gray-400 mb-1.5">30-day trend</p>
+                    <ScoreSparkline data={scoreHistory} />
+                  </div>
+                )}
               </div>
             </div>
             <div className="lg:col-span-3 grid grid-cols-3 gap-4">
