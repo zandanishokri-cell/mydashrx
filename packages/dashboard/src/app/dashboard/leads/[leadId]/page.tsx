@@ -104,6 +104,7 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
   };
 
   const handleStatusChange = (s: string) => {
+    if (s === status) return;
     const prev = status;
     setStatus(s);
     save({ status: s }).catch(() => setStatus(prev)); // rollback on failure

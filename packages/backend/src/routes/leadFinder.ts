@@ -163,48 +163,6 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     return { lead, outreach };
   });
 
-  // PATCH /orgs/:orgId/leads/:leadId
-  app.patch('/:leadId', { preHandler: auth }, async (req, reply) => {
-    const { orgId, leadId } = req.params as { orgId: string; leadId: string };
-    const body = req.body as {
-      status?: string; notes?: string; assignedTo?: string;
-      nextFollowUp?: string; email?: string; phone?: string;
-      ownerName?: string; businessType?: string; tags?: unknown[];
-    };
-
-    const updates: Record<string, unknown> = { updatedAt: new Date() };
-    if (body.status !== undefined) updates.status = body.status;
-    if (body.notes !== undefined) updates.notes = body.notes;
-    if (body.assignedTo !== undefined) updates.assignedTo = body.assignedTo;
-    if (body.nextFollowUp !== undefined) updates.nextFollowUp = body.nextFollowUp ? new Date(body.nextFollowUp) : null;
-    if (body.email !== undefined) updates.email = body.email;
-    if (body.phone !== undefined) updates.phone = body.phone;
-    if (body.ownerName !== undefined) updates.ownerName = body.ownerName;
-    if (body.businessType !== undefined) updates.businessType = body.businessType;
-    if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
-
-    const [lead] = await db.update(leadProspects)
-      .set(updates as any)
-      .where(and(eq(leadProspects.id, leadId), eq(leadProspects.orgId, orgId), isNull(leadProspects.deletedAt)))
-      .returning();
-
-    if (!lead) return reply.code(404).send({ error: 'Lead not found' });
-    return lead;
-  });
-
-  // DELETE /orgs/:orgId/leads/:leadId
-  app.delete('/:leadId', { preHandler: auth }, async (req, reply) => {
-    const { orgId, leadId } = req.params as { orgId: string; leadId: string };
-
-    const [lead] = await db.update(leadProspects)
-      .set({ deletedAt: new Date() })
-      .where(and(eq(leadProspects.id, leadId), eq(leadProspects.orgId, orgId), isNull(leadProspects.deletedAt)))
-      .returning();
-
-    if (!lead) return reply.code(404).send({ error: 'Lead not found' });
-    return reply.code(204).send();
-  });
-
   // POST /orgs/:orgId/leads/search-places
   app.post('/search-places', { preHandler: auth }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
@@ -268,6 +226,55 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     return { results, imported, skipped };
   });
 
+  // PATCH /orgs/:orgId/leads/:leadId
+  app.patch('/:leadId', { preHandler: auth }, async (req, reply) => {
+    const { orgId, leadId } = req.params as { orgId: string; leadId: string };
+    const body = req.body as {
+      status?: string; notes?: string; assignedTo?: string;
+      nextFollowUp?: string; email?: string; phone?: string;
+      ownerName?: string; businessType?: string; tags?: unknown[];
+    };
+
+    const VALID_STATUSES = ['new', 'contacted', 'interested', 'negotiating', 'closed', 'lost'];
+
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (body.status !== undefined) {
+      if (!VALID_STATUSES.includes(body.status)) {
+        return reply.code(400).send({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
+      }
+      updates.status = body.status;
+    }
+    if (body.notes !== undefined) updates.notes = body.notes;
+    if (body.assignedTo !== undefined) updates.assignedTo = body.assignedTo;
+    if (body.nextFollowUp !== undefined) updates.nextFollowUp = body.nextFollowUp ? new Date(body.nextFollowUp) : null;
+    if (body.email !== undefined) updates.email = body.email;
+    if (body.phone !== undefined) updates.phone = body.phone;
+    if (body.ownerName !== undefined) updates.ownerName = body.ownerName;
+    if (body.businessType !== undefined) updates.businessType = body.businessType;
+    if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
+
+    const [lead] = await db.update(leadProspects)
+      .set(updates as any)
+      .where(and(eq(leadProspects.id, leadId), eq(leadProspects.orgId, orgId), isNull(leadProspects.deletedAt)))
+      .returning();
+
+    if (!lead) return reply.code(404).send({ error: 'Lead not found' });
+    return lead;
+  });
+
+  // DELETE /orgs/:orgId/leads/:leadId
+  app.delete('/:leadId', { preHandler: auth }, async (req, reply) => {
+    const { orgId, leadId } = req.params as { orgId: string; leadId: string };
+
+    const [lead] = await db.update(leadProspects)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(leadProspects.id, leadId), eq(leadProspects.orgId, orgId), isNull(leadProspects.deletedAt)))
+      .returning();
+
+    if (!lead) return reply.code(404).send({ error: 'Lead not found' });
+    return reply.code(204).send();
+  });
+
   // POST /orgs/:orgId/leads/:leadId/outreach
   app.post('/:leadId/outreach', { preHandler: auth }, async (req, reply) => {
     const { orgId, leadId } = req.params as { orgId: string; leadId: string };
@@ -325,9 +332,12 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
       status: emailStatus,
     }).returning();
 
-    await db.update(leadProspects)
-      .set({ lastContactedAt: new Date(), updatedAt: new Date() })
-      .where(eq(leadProspects.id, leadId));
+    // Only mark as contacted when email actually sent — failed sends are logged but don't update contact time
+    if (emailStatus === 'sent') {
+      await db.update(leadProspects)
+        .set({ lastContactedAt: new Date(), updatedAt: new Date() })
+        .where(eq(leadProspects.id, leadId));
+    }
 
     return { log, messageId: resendMessageId, status: emailStatus };
   });
