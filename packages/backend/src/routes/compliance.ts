@@ -1,11 +1,19 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { baaRegistry, auditLogs, complianceChecks, miComplianceItems } from '../db/schema.js';
+import { baaRegistry, auditLogs, complianceChecks, miComplianceItems, complianceScoreHistory } from '../db/schema.js';
 import { eq, and, gte, lte, desc, sql, count } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { runComplianceScan, isDeploymentBlocked } from '../compliance/scanner.js';
 
 const ADMIN = requireRole('pharmacy_admin', 'super_admin');
+
+function computeScannerScore(findings: { severity: string; count: number }[]): number {
+  const p0 = findings.filter(f => f.severity === 'P0' && f.count > 0).length;
+  const p1 = findings.filter(f => f.severity === 'P1' && f.count > 0).length;
+  const p2 = findings.filter(f => f.severity === 'P2' && f.count > 0).length;
+  const p3 = findings.filter(f => f.severity === 'P3' && f.count > 0).length;
+  return Math.max(0, 100 - Math.min(100, p0 * 25 + p1 * 10 + p2 * 5 + p3 * 2));
+}
 
 export const complianceRoutes: FastifyPluginAsync = async (app) => {
 
@@ -296,9 +304,19 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
   app.post('/scan', { preHandler: ADMIN }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const findings = await runComplianceScan({ orgId, persistResults: true });
+    const score = computeScannerScore(findings);
+    // Persist score snapshot (fire-and-forget — don't fail the scan if history insert fails)
+    db.insert(complianceScoreHistory).values({
+      orgId,
+      score,
+      violationCount: findings.filter(f => f.count > 0).length,
+      p0Count: findings.filter(f => f.severity === 'P0' && f.count > 0).length,
+      p1Count: findings.filter(f => f.severity === 'P1' && f.count > 0).length,
+    }).catch(console.error);
     return {
       scannedAt: new Date(),
       findings,
+      score,
       summary: {
         total: findings.length,
         violations: findings.filter(f => f.count > 0).length,
@@ -309,6 +327,23 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
       },
       blocksDeployment: isDeploymentBlocked(findings),
     };
+  });
+
+  // GET /orgs/:orgId/compliance/score-history — last 30 scan score data points
+  app.get('/score-history', { preHandler: ADMIN }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    const rows = await db
+      .select({
+        score: complianceScoreHistory.score,
+        violationCount: complianceScoreHistory.violationCount,
+        p0Count: complianceScoreHistory.p0Count,
+        scannedAt: complianceScoreHistory.scannedAt,
+      })
+      .from(complianceScoreHistory)
+      .where(eq(complianceScoreHistory.orgId, orgId))
+      .orderBy(desc(complianceScoreHistory.scannedAt))
+      .limit(30);
+    return rows.reverse(); // chronological order for charting
   });
 
   // ─── Michigan Compliance Checklist ──────────────────────────────────────────
