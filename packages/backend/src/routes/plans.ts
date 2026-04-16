@@ -152,6 +152,8 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
         );
 
         // Compute cumulative arrival time at each stop using optimized legs
+        // 3-minute dwell time per stop accounts for parking + handoff (added AFTER each stop, affects next)
+        const DWELL_TIME_MS = 3 * 60_000;
         const windowViolations: { stopId: string; address: string; windowEnd: string; estimatedArrival: string }[] = [];
         let elapsedMs = 0;
         for (let i = 0; i < optimized.stopIds.length; i++) {
@@ -170,6 +172,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
               });
             }
           }
+          elapsedMs += DWELL_TIME_MS; // service time at this stop — shifts ETA for all subsequent stops
         }
 
         return { routeId: route.id, originalOrder, newOrder: optimized.stopIds, estimatedDuration, windowViolations };
