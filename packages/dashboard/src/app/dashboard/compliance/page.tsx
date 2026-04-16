@@ -62,6 +62,23 @@ const SEV_STYLES: Record<string, { badge: string; border: string; label: string 
   P3: { badge: 'bg-gray-100 text-gray-600 border-gray-200', border: 'border-l-gray-300', label: 'P3 · Low' },
 };
 
+// Maps each scanner checkName to a navigation action so dispatchers can jump directly
+// to the affected resources without manually searching
+const FINDING_ACTIONS: Record<string, { href: string; label: string }> = {
+  hipaa_cs_no_age_verify:         { href: '/dashboard/stops?controlledSubstance=true', label: 'View CS stops' },
+  hipaa_cs_no_pod_id_verify:      { href: '/dashboard/stops?controlledSubstance=true', label: 'View CS stops' },
+  hipaa_cs_no_signature_required: { href: '/dashboard/stops?controlledSubstance=true', label: 'View CS stops' },
+  hipaa_phi_baa_unsigned:         { href: '/dashboard/compliance/baa', label: 'View BAA registry' },
+  hipaa_baa_expiring_soon:        { href: '/dashboard/compliance/baa', label: 'View BAA registry' },
+  hipaa_no_audit_activity:        { href: '/dashboard/compliance/audit', label: 'View audit log' },
+  mi_cs_no_id_photo:              { href: '/dashboard/stops?controlledSubstance=true', label: 'View CS stops' },
+  mi_cs_no_dob_confirmed:         { href: '/dashboard/stops?controlledSubstance=true', label: 'View CS stops' },
+  mi_cs_completed_no_pod:         { href: '/dashboard/stops?status=completed&controlledSubstance=true', label: 'View completed CS stops' },
+  mi_drug_incapable_driver_on_cs_route: { href: '/dashboard/drivers', label: 'View drivers' },
+  mi_recurring_cs_no_signature:   { href: '/dashboard/recurring', label: 'View recurring schedules' },
+  mi_checklist_items_overdue:     { href: '/dashboard/mi-compliance/items', label: 'View MI checklist' },
+};
+
 function statusIcon(status: string, size = 18) {
   if (status === 'pass') return <CheckCircle2 size={size} className="text-emerald-500" />;
   if (status === 'warning') return <AlertTriangle size={size} className="text-amber-500" />;
@@ -123,12 +140,21 @@ function ScanFindingCard({ f }: { f: ScanFinding }) {
       <p className="text-xs text-gray-500 mb-2">{f.description}</p>
       <div className="text-xs text-gray-400 mb-1"><span className="font-medium text-gray-600">Fix:</span> {f.recommendation}</div>
       <div className="text-xs text-gray-400"><span className="font-medium text-gray-600">Legal:</span> {f.legalRef}</div>
-      {f.resourceIds.length > 0 && (
-        <div className="text-xs text-gray-400 mt-1">
-          <span className="font-medium text-gray-600">Affected IDs:</span>{' '}
-          {f.resourceIds.slice(0, 3).join(', ')}{f.resourceIds.length > 3 ? ` +${f.resourceIds.length - 3} more` : ''}
-        </div>
-      )}
+      <div className="flex items-center justify-between mt-2">
+        {f.resourceIds.length > 0 && (
+          <span className="text-xs text-gray-400">
+            {f.resourceIds.length} affected record{f.resourceIds.length !== 1 ? 's' : ''}
+          </span>
+        )}
+        {FINDING_ACTIONS[f.checkName] && (
+          <Link
+            href={FINDING_ACTIONS[f.checkName].href}
+            className="text-xs text-[#0F4C81] hover:underline flex items-center gap-1 ml-auto"
+          >
+            {FINDING_ACTIONS[f.checkName].label} <ChevronRight size={11} />
+          </Link>
+        )}
+      </div>
     </div>
   );
 }
