@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { drivers, stops, routes, plans } from '../db/schema.js';
-import { eq, and, isNull, sql, gte, lte } from 'drizzle-orm';
+import { eq, and, isNull, sql, gte, lte, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { hashPassword } from '../services/auth.js';
 
@@ -32,7 +32,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:driverId', {
     preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin', 'driver'),
   }, async (req, reply) => {
-    const { driverId } = req.params as { orgId: string; driverId: string };
+    const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const [driver] = await db
       .select({
         id: drivers.id, orgId: drivers.orgId, name: drivers.name,
@@ -42,7 +42,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
         currentLng: drivers.currentLng, lastPingAt: drivers.lastPingAt,
       })
       .from(drivers)
-      .where(eq(drivers.id, driverId))
+      .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId), isNull(drivers.deletedAt)))
       .limit(1);
     if (!driver) return reply.code(404).send({ error: 'Not found' });
     return driver;
@@ -69,34 +69,63 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
 
   // GPS ping from driver app
   app.post('/:driverId/ping', { preHandler: requireRole('driver', 'super_admin') }, async (req, reply) => {
-    const { driverId } = req.params as { orgId: string; driverId: string };
+    const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const { lat, lng } = req.body as { lat: number; lng: number };
+    // Drivers can only ping for themselves; super_admin can ping any
+    const jwtUser = (req as any).user;
+    if (jwtUser?.role === 'driver' && jwtUser?.driverId !== driverId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
     await db.update(drivers).set({
       currentLat: lat, currentLng: lng, lastPingAt: new Date(), status: 'on_route',
-    }).where(eq(drivers.id, driverId));
+    }).where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId)));
     return { ok: true };
   });
 
   app.patch('/:driverId/status', { preHandler: requireRole('driver', 'dispatcher', 'super_admin') }, async (req, reply) => {
-    const { driverId } = req.params as { orgId: string; driverId: string };
+    const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const { status } = req.body as { status: 'available' | 'on_route' | 'offline' };
-    const [updated] = await db.update(drivers).set({ status }).where(eq(drivers.id, driverId)).returning();
+    // Drivers can only update their own status
+    const jwtUser = (req as any).user;
+    if (jwtUser?.role === 'driver' && jwtUser?.driverId !== driverId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    const [updated] = await db.update(drivers).set({ status })
+      .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId)))
+      .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     return { id: updated.id, status: updated.status };
   });
 
   app.patch('/:driverId', { preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin') }, async (req, reply) => {
-    const { driverId } = req.params as { orgId: string; driverId: string };
+    const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const body = req.body as { name?: string; phone?: string; vehicleType?: 'car' | 'van' | 'bicycle'; drugCapable?: boolean };
-    const [updated] = await db.update(drivers).set(body).where(eq(drivers.id, driverId)).returning();
+    const [updated] = await db.update(drivers).set(body)
+      .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId)))
+      .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     const { passwordHash: _, ...safe } = updated;
     return safe;
   });
 
   app.delete('/:driverId', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
-    const { driverId } = req.params as { orgId: string; driverId: string };
-    await db.update(drivers).set({ deletedAt: new Date() }).where(eq(drivers.id, driverId));
+    const { orgId, driverId } = req.params as { orgId: string; driverId: string };
+    // Block deletion if driver has an active route (scope to org via plans join)
+    const [activeRoute] = await db
+      .select({ id: routes.id })
+      .from(routes)
+      .innerJoin(plans, and(eq(plans.id, routes.planId), eq(plans.orgId, orgId)))
+      .where(and(
+        eq(routes.driverId, driverId),
+        inArray(routes.status, ['pending', 'active']),
+        isNull(routes.deletedAt),
+      ))
+      .limit(1);
+    if (activeRoute) {
+      return reply.code(409).send({ error: 'Driver has an active route. Reassign or complete the route before removing this driver.' });
+    }
+    await db.update(drivers).set({ deletedAt: new Date() })
+      .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId)));
     return reply.code(204).send();
   });
 

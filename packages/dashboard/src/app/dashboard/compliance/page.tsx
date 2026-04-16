@@ -164,7 +164,7 @@ export default function CompliancePage() {
       const p2 = findings.filter((f) => f.severity === 'P2').length;
       const p3 = findings.filter((f) => f.severity === 'P3').length;
       setScanResult({
-        scannedAt: rows[0].createdAt,
+        scannedAt: rows[0].lastCheckedAt,
         findings,
         summary: { total: findings.length, violations: findings.filter((f) => f.count > 0).length, P0: p0, P1: p1, P2: p2, P3: p3 },
         blocksDeployment: findings.some((f) => f.blocksDeployment && f.count > 0),

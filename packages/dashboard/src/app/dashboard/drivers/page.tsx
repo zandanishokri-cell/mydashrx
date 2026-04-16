@@ -86,7 +86,9 @@ export default function DriversPage() {
       await api.del(`/orgs/${user.orgId}/drivers/${id}`);
       setDeleteError('');
       load();
-    } catch { setDeleteError('Failed to remove driver. Try again.'); }
+    } catch (err: any) {
+      setDeleteError(err?.message ?? 'Failed to remove driver. Try again.');
+    }
   };
 
   const openEdit = (driver: Driver, e: React.MouseEvent) => {

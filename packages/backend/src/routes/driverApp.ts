@@ -128,18 +128,21 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/me/stops/:stopId/status', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string };
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
     const { stopId } = req.params as { stopId: string };
     const { status, failureReason, failureNote } = req.body as {
       status: StopStatus; failureReason?: string; failureNote?: string;
     };
 
     // Verify driver owns this stop's route
-    const [stop] = await db.select().from(stops)
-      .leftJoin(routes, eq(stops.routeId, routes.id))
-      .where(eq(stops.id, stopId))
-      .limit(1);
+    const [stop] = await db.select({ id: stops.id, routeId: stops.routeId })
+      .from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
+
+    const [route] = await db.select({ driverId: routes.driverId })
+      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+    if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
     const updates: Record<string, unknown> = { status };
     if (status === 'arrived') updates.arrivedAt = new Date();
@@ -156,7 +159,16 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.post('/me/stops/:stopId/photo', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
+    const driverUser = req.user as { sub: string; driverId?: string };
+    const driverId = driverUser.driverId ?? driverUser.sub;
     const { stopId } = req.params as { stopId: string };
+    // Verify ownership before accepting file upload
+    const [stop] = await db.select({ id: stops.id, routeId: stops.routeId })
+      .from(stops).where(eq(stops.id, stopId)).limit(1);
+    if (!stop) return reply.code(404).send({ error: 'Not found' });
+    const [route] = await db.select({ driverId: routes.driverId })
+      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+    if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     const data = await req.file();
     if (!data) return reply.code(400).send({ error: 'No file' });
 
@@ -173,10 +185,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       photos.push({ key, url, capturedAt: new Date().toISOString() });
       await db.update(proofOfDeliveries).set({ photos }).where(eq(proofOfDeliveries.stopId, stopId));
     } else {
-      const driverUser = req.user as { sub: string; driverId?: string };
       await db.insert(proofOfDeliveries).values({
         stopId,
-        driverId: driverUser.driverId ?? driverUser.sub,
+        driverId,
         packageCount: 1,
         photos: [{ key, url, capturedAt: new Date().toISOString() }],
         signature: null,
@@ -192,9 +203,14 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.get('/me/stops/:stopId', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
     const { stopId } = req.params as { stopId: string };
     const [stop] = await db.select().from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
+    const [route] = await db.select({ driverId: routes.driverId })
+      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+    if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     return stop;
   });
 
@@ -202,7 +218,15 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.get('/me/stops/:stopId/pod', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
     const { stopId } = req.params as { stopId: string };
+    const [stop] = await db.select({ id: stops.id, routeId: stops.routeId })
+      .from(stops).where(eq(stops.id, stopId)).limit(1);
+    if (!stop) return reply.code(404).send({ error: 'Not found' });
+    const [route] = await db.select({ driverId: routes.driverId })
+      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+    if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     const [pod] = await db.select().from(proofOfDeliveries).where(eq(proofOfDeliveries.stopId, stopId)).limit(1);
     if (!pod) return reply.code(404).send({ error: 'No POD' });
     return pod;
@@ -215,6 +239,14 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const { stopId } = req.params as { stopId: string };
     const user = req.user as { sub: string; driverId?: string };
     const driverId = user.driverId ?? user.sub;
+
+    // Verify driver owns this stop's route
+    const [stopCheck] = await db.select({ id: stops.id, routeId: stops.routeId })
+      .from(stops).where(eq(stops.id, stopId)).limit(1);
+    if (!stopCheck) return reply.code(404).send({ error: 'Not found' });
+    const [routeCheck] = await db.select({ driverId: routes.driverId })
+      .from(routes).where(and(eq(routes.id, stopCheck.routeId), isNull(routes.deletedAt))).limit(1);
+    if (!routeCheck || routeCheck.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
     const body = req.body as {
       packageCount?: number;
@@ -279,9 +311,14 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.get('/me/stops/:stopId/cs-required', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
     const { stopId } = req.params as { stopId: string };
     const [stop] = await db.select().from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
+    const [route] = await db.select({ driverId: routes.driverId })
+      .from(routes).where(and(eq(routes.id, stop.routeId), isNull(routes.deletedAt))).limit(1);
+    if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     const schedules: string[] = [];
     if (stop.controlledSubstance) schedules.push('CS');
     const text = `${stop.deliveryNotes ?? ''} ${JSON.stringify(stop.rxNumbers ?? [])}`;
