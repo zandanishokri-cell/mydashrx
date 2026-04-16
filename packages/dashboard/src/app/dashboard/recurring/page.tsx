@@ -93,6 +93,9 @@ function PatientModal({ initial, onSave, onClose }: {
       const n = parseInt(form.customIntervalDays);
       if (isNaN(n) || n < 1) { setError('Custom interval must be a positive number of days'); return; }
     }
+    if (form.endDate && form.nextDeliveryDate && form.endDate < form.nextDeliveryDate) {
+      setError('End date must be on or after the first delivery date'); return;
+    }
     setSaving(true);
     try { await onSave(form); } catch { setError('Save failed. Please try again.'); }
     finally { setSaving(false); }
@@ -232,6 +235,9 @@ export default function RecurringPage() {
   const [generating, setGenerating] = useState(false);
   const [genToast, setGenToast] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const [toggleError, setToggleError] = useState('');
   const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
@@ -280,15 +286,26 @@ export default function RecurringPage() {
 
   const toggleEnabled = async (item: RecurringDelivery) => {
     if (!user) return;
-    await api.patch(`/orgs/${user.orgId}/recurring/${item.id}`, { enabled: !item.enabled });
-    load();
+    setToggleError('');
+    try {
+      await api.patch(`/orgs/${user.orgId}/recurring/${item.id}`, { enabled: !item.enabled });
+      load();
+    } catch {
+      setToggleError(`Failed to ${item.enabled ? 'disable' : 'enable'} ${item.recipientName}. Please try again.`);
+      setTimeout(() => setToggleError(''), 4000);
+    }
   };
 
   const handleDelete = async (id: string) => {
     if (!user) return;
-    await api.del(`/orgs/${user.orgId}/recurring/${id}`);
-    setDeleteConfirm(null);
-    load();
+    setDeleting(true); setDeleteError('');
+    try {
+      await api.del(`/orgs/${user.orgId}/recurring/${id}`);
+      setDeleteConfirm(null);
+      load();
+    } catch {
+      setDeleteError('Failed to remove patient. Please try again.');
+    } finally { setDeleting(false); }
   };
 
   const generateToday = async () => {
@@ -311,6 +328,11 @@ export default function RecurringPage() {
       {genToast && (
         <div className="fixed bottom-4 right-4 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
           <RefreshCw size={13} className="text-[#00B8A9]" /> {genToast}
+        </div>
+      )}
+      {toggleError && (
+        <div className="fixed bottom-4 left-4 z-50 bg-red-600 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
+          <AlertCircle size={13} /> {toggleError}
         </div>
       )}
 
@@ -452,9 +474,17 @@ export default function RecurringPage() {
             <Trash2 size={28} className="text-red-400 mx-auto mb-3" />
             <p className="text-sm font-semibold text-gray-900 mb-1">Remove patient?</p>
             <p className="text-xs text-gray-500 mb-4">This will stop future deliveries from being generated.</p>
+            {deleteError && (
+              <p className="text-xs text-red-600 flex items-center justify-center gap-1 mb-3">
+                <AlertCircle size={12} /> {deleteError}
+              </p>
+            )}
             <div className="flex gap-2 justify-center">
-              <button onClick={() => setDeleteConfirm(null)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button onClick={() => handleDelete(deleteConfirm)} className="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors">Remove</button>
+              <button onClick={() => { setDeleteConfirm(null); setDeleteError(''); }} disabled={deleting} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+              <button onClick={() => handleDelete(deleteConfirm)} disabled={deleting} className="flex items-center gap-1.5 px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50 transition-colors">
+                {deleting && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                {deleting ? 'Removing…' : 'Remove'}
+              </button>
             </div>
           </div>
         </div>
