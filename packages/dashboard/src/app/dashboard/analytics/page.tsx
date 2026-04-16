@@ -4,7 +4,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
-import { TrendingUp, TrendingDown, Download, Award, Lightbulb, Clock, CheckCircle2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Download, Award, Lightbulb, Clock, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface DriverStat { driverId: string; driverName: string; total: number; completed: number; failed: number; completionRate?: number; }
 
@@ -21,8 +21,6 @@ interface AnalyticsData {
   depots: { depotId: string; depotName: string; total: number; completed: number }[];
   topPerformers: DriverStat[];
   weekOverWeekChange: number | null;
-  avgDeliveryTime: number | null;
-  onTimeRate: number | null;
 }
 
 const defaultRange = (): DateRange => {
@@ -138,12 +136,14 @@ export default function AnalyticsPage() {
   const [user] = useState(getUser);
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [depotId, setDepotId] = useState('');
   const [dateRange, setDateRange] = useState<DateRange>(defaultRange);
 
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
+    setLoadError(false);
     try {
       const params = new URLSearchParams();
       if (dateRange.from) params.set('from', dateRange.from);
@@ -151,7 +151,7 @@ export default function AnalyticsPage() {
       if (depotId) params.set('depotId', depotId);
       const result = await api.get<AnalyticsData>(`/orgs/${user.orgId}/analytics?${params}`);
       setData(result);
-    } catch { setData(null); }
+    } catch { setLoadError(true); }
     finally { setLoading(false); }
   }, [user, depotId, dateRange]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -159,10 +159,45 @@ export default function AnalyticsPage() {
 
   const exportCsv = () => {
     if (!data) return;
-    const rows = data.daily.map(d => [d.date, d.total, d.completed, d.failed]);
-    const csv = [['Date', 'Total', 'Completed', 'Failed'], ...rows].map(r => r.join(',')).join('\n');
+    const sections: string[] = [];
+
+    // Daily summary
+    sections.push('DAILY SUMMARY');
+    sections.push(['Date', 'Total', 'Completed', 'Failed'].join(','));
+    sections.push(...data.daily.map(d => [d.date, d.total, d.completed, d.failed].join(',')));
+
+    // Driver breakdown
+    sections.push('');
+    sections.push('DRIVER BREAKDOWN');
+    sections.push(['Driver', 'Total Stops', 'Completed', 'Failed', 'Completion Rate %'].join(','));
+    sections.push(...data.drivers.map(d => [
+      `"${d.driverName ?? ''}"`,
+      d.total, d.completed, d.failed,
+      d.total > 0 ? Math.round((d.completed / d.total) * 100) : 0,
+    ].join(',')));
+
+    // Failure reasons
+    if (data.failureReasons.length > 0) {
+      sections.push('');
+      sections.push('FAILURE REASONS');
+      sections.push(['Reason', 'Count'].join(','));
+      sections.push(...data.failureReasons.map(r => [`"${r.reason}"`, r.count].join(',')));
+    }
+
+    // Depot breakdown
+    if (data.depots.length > 0) {
+      sections.push('');
+      sections.push('DEPOT BREAKDOWN');
+      sections.push(['Depot', 'Total', 'Completed', 'Success Rate %'].join(','));
+      sections.push(...data.depots.map(d => [
+        `"${d.depotName ?? ''}"`,
+        d.total, d.completed,
+        d.total > 0 ? Math.round((d.completed / d.total) * 100) : 0,
+      ].join(',')));
+    }
+
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.href = URL.createObjectURL(new Blob([sections.join('\n')], { type: 'text/csv' }));
     a.download = `analytics-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
   };
@@ -185,7 +220,16 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {loading || !data ? (
+      {loadError ? (
+        <div className="flex flex-col items-center justify-center py-20 text-center">
+          <AlertCircle size={36} className="text-red-400 mb-3" />
+          <p className="text-gray-700 font-medium mb-1">Failed to load analytics</p>
+          <p className="text-gray-400 text-sm mb-4">Check your connection and try again.</p>
+          <button onClick={load} className="flex items-center gap-2 text-sm bg-[#0F4C81] text-white px-4 py-2 rounded-lg hover:bg-[#0a3d6b]">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      ) : loading || !data ? (
         <div className="space-y-4 animate-pulse">
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
             {[1,2,3,4,5,6].map(i => <div key={i} className="h-24 bg-gray-100 rounded-xl" />)}
@@ -224,7 +268,7 @@ export default function AnalyticsPage() {
               <div className="flex items-end gap-2">
                 <Clock size={16} className="text-gray-400 mb-0.5 shrink-0" />
                 <span className="text-2xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>
-                  {data.summary.avgDeliveryTime != null ? `${data.summary.avgDeliveryTime} min` : (data.avgDeliveryTime != null ? `${data.avgDeliveryTime} min` : '—')}
+                  {data.summary.avgDeliveryTime != null ? `${data.summary.avgDeliveryTime} min` : '—'}
                 </span>
               </div>
             </div>
@@ -234,7 +278,7 @@ export default function AnalyticsPage() {
               <div className="flex items-end gap-2">
                 <CheckCircle2 size={16} className="text-gray-400 mb-0.5 shrink-0" />
                 {(() => {
-                  const rate = data.summary.onTimeRate ?? data.onTimeRate;
+                  const rate = data.summary.onTimeRate;
                   const pct = rate != null ? Math.round(rate * 100) : null;
                   const color = pct == null ? 'text-gray-900' : pct >= 90 ? 'text-green-600' : pct >= 70 ? 'text-amber-600' : 'text-red-600';
                   return (

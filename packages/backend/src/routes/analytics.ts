@@ -153,7 +153,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(sql`count(*) DESC`);
 
     return {
-      summary: { total, completed, failed, successRate, failureRate, avgPerDriver, activeDriverCount },
+      summary: { total, completed, failed, successRate, failureRate, avgPerDriver, activeDriverCount, avgDeliveryTime, onTimeRate },
       byStatus,
       daily,
       failureReasons: failureReasons.map(r => ({ reason: r.reason ?? 'Unknown', count: r.cnt })),
@@ -161,8 +161,6 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       depots: depotStats,
       topPerformers,
       weekOverWeekChange,
-      avgDeliveryTime,
-      onTimeRate,
     };
   });
 };
