@@ -1,5 +1,17 @@
 'use client';
-import { CheckCircle2, XCircle, Lightbulb } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { CheckCircle2, XCircle, Lightbulb, TrendingUp, Truck, Clock, BarChart2, AlertCircle } from 'lucide-react';
+import { api } from '@/lib/api';
+import { getUser } from '@/lib/auth';
+
+interface AnalyticsSummary {
+  total: number;
+  completed: number;
+  successRate: number;
+  onTimeRate: number | null;
+  avgDeliveryTime: number | null;
+  activeDriverCount?: number;
+}
 
 const competitors = [
   {
@@ -91,6 +103,17 @@ function FeatureCell({ value, isMdx }: { value: boolean | string; isMdx?: boolea
 }
 
 export default function IntelPage() {
+  const [user] = useState(getUser);
+  const [stats, setStats] = useState<AnalyticsSummary | null>(null);
+  const [statsError, setStatsError] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    api.get<{ summary: AnalyticsSummary; driverStats: { total: number }[] }>(`/orgs/${user.orgId}/analytics`)
+      .then(res => setStats({ ...res.summary, activeDriverCount: res.driverStats.filter(d => d.total > 0).length }))
+      .catch(() => setStatsError(true));
+  }, [user]);
+
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8">
       {/* Header */}
@@ -106,6 +129,34 @@ export default function IntelPage() {
         <p className="text-sm font-medium">
           MyDashRx has more compliance features than any competitor — at a fraction of the price.
         </p>
+      </div>
+
+      {/* Your Numbers — live 7-day platform metrics */}
+      <div>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Your Numbers (last 7 days)</h2>
+        {statsError ? (
+          <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+            <AlertCircle size={14} /> Performance data unavailable
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { icon: Truck, label: 'Deliveries', value: stats ? String(stats.total) : '—', sub: stats ? `${stats.completed} completed` : '' },
+              { icon: BarChart2, label: 'Success Rate', value: stats ? `${stats.successRate}%` : '—', sub: stats?.successRate != null && stats.successRate >= 90 ? '✓ Excellent' : stats ? 'Below target' : '' },
+              { icon: Clock, label: 'Avg Delivery', value: stats?.avgDeliveryTime != null ? `${stats.avgDeliveryTime}m` : '—', sub: 'door-to-door' },
+              { icon: TrendingUp, label: 'On-Time Rate', value: stats?.onTimeRate != null ? `${stats.onTimeRate}%` : '—', sub: stats?.onTimeRate != null && stats.onTimeRate >= 90 ? '✓ Top tier' : stats?.onTimeRate != null ? 'Needs attention' : 'No window data' },
+            ].map(({ icon: Icon, label, value, sub }) => (
+              <div key={label} className="bg-white border border-gray-100 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Icon size={14} className="text-[#0F4C81]" />
+                  <span className="text-xs font-medium text-gray-500">{label}</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{value}</p>
+                {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Competitor cards */}
