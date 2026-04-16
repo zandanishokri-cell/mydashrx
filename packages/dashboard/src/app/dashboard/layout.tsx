@@ -81,8 +81,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (!user) return;
     if (user.role === 'driver' && !pathname.startsWith('/dashboard/driver')) {
       router.replace('/dashboard/driver/me/routes');
-    } else if (user.role === 'pharmacist' && !pathname.startsWith('/dashboard/pharmacy') && !pathname.startsWith('/dashboard/compliance') && !pathname.startsWith('/dashboard/mi-compliance') && !pathname.startsWith('/dashboard/settings')) {
-      router.replace('/dashboard/pharmacy');
+    } else if (user.role === 'pharmacist' && !pathname.startsWith('/pharmacist') && !pathname.startsWith('/dashboard/compliance') && !pathname.startsWith('/dashboard/mi-compliance') && !pathname.startsWith('/dashboard/settings')) {
+      router.replace('/pharmacist/queue');
     }
   }, [user, pathname, router]);
 
