@@ -274,7 +274,13 @@ export default function AutomationPage() {
       await load();
       setSeedError('');
     } catch (e: any) {
-      setSeedError(e.message ?? 'Failed to seed defaults');
+      const msg: string = e?.message ?? '';
+      // 409 = rules already exist — not an error, just informational
+      if (msg.includes('409') || msg.toLowerCase().includes('already exist')) {
+        setSeedError('');
+      } else {
+        setSeedError(msg || 'Failed to seed defaults');
+      }
     } finally {
       setSeeding(false);
     }

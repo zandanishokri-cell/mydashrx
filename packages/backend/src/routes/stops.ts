@@ -172,18 +172,29 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // Fire automation triggers — fire-and-forget
-    fireTrigger({
-      orgId: updated.orgId,
-      trigger: status === 'completed' ? 'stop_completed' : status === 'failed' ? 'stop_failed' : 'stop_status_changed',
-      resourceId: updated.id,
-      data: {
-        patientName: updated.recipientName,
-        address: updated.address,
-        patientPhone: updated.recipientPhone,
-        stopStatus: status,
-        driverName: '',
-      },
-    }).catch(console.error);
+    (async () => {
+      let driverName = '';
+      if (updated.routeId) {
+        const [r] = await db.select({ driverId: routes.driverId }).from(routes).where(eq(routes.id, updated.routeId)).limit(1);
+        if (r?.driverId) {
+          const [d] = await db.select({ name: drivers.name }).from(drivers).where(eq(drivers.id, r.driverId)).limit(1);
+          driverName = d?.name ?? '';
+        }
+      }
+      await fireTrigger({
+        orgId: updated.orgId,
+        trigger: status === 'completed' ? 'stop_completed' : status === 'failed' ? 'stop_failed' : 'stop_status_changed',
+        resourceId: updated.id,
+        data: {
+          patientName: updated.recipientName,
+          patientPhone: updated.recipientPhone,
+          patientEmail: (updated as any).recipientEmail ?? '',
+          address: updated.address,
+          stopStatus: status,
+          driverName,
+        },
+      });
+    })().catch(console.error);
 
     return updated;
   });
