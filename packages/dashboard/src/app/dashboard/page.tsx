@@ -196,7 +196,7 @@ export default function CommandCenter() {
       {summaryError && !summaryLoading && (
         <div className="flex items-center gap-2 px-4 py-2 mb-3 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-700">
           <AlertCircle size={12} />
-          <span>KPI data unavailable</span>
+          <span>Could not refresh KPI data — showing last known values</span>
           <button onClick={loadSummary} className="ml-auto underline hover:no-underline">Retry</button>
         </div>
       )}
@@ -217,7 +217,7 @@ export default function CommandCenter() {
       </div>
 
       {/* Fleet status */}
-      {!driversLoading && (driversList.length > 0 || driversError) && (
+      {!driversLoading && (
         <div className="mb-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5">
             <Truck size={14} className="text-gray-400" /> Fleet Status
@@ -228,6 +228,9 @@ export default function CommandCenter() {
               <span>Fleet data unavailable</span>
               <button onClick={loadDrivers} className="ml-auto text-xs underline hover:no-underline">Retry</button>
             </div>
+          )}
+          {!driversError && driversList.length === 0 && (
+            <p className="text-xs text-gray-400 italic px-1">No drivers registered yet. <Link href="/dashboard/drivers" className="underline hover:no-underline">Add a driver</Link> to see fleet status here.</p>
           )}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
             {driversList.map(d => {
