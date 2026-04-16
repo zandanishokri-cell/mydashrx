@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { db } from '../db/connection.js';
 import { users, organizations, drivers } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
 
 const loginSchema = z.object({
@@ -33,7 +33,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     // For drivers, look up their drivers table record to include driverId in JWT
     let driverId: string | undefined;
     if (user.role === 'driver') {
-      const [driverRecord] = await db.select({ id: drivers.id }).from(drivers).where(eq(drivers.email, user.email)).limit(1);
+      const [driverRecord] = await db.select({ id: drivers.id }).from(drivers)
+        .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt))).limit(1);
       driverId = driverRecord?.id;
     }
 
