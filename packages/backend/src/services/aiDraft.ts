@@ -6,6 +6,14 @@ Tone: friendly but businesslike. Not salesy. Lead with value, not pitch.
 Format: return JSON only — {"subject": "...", "body": "..."}.
 Body: 3-4 short paragraphs. No em-dashes. No bullet lists. Plain text (no HTML).`;
 
+let _client: Anthropic | null = null;
+function getClient(): Anthropic {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
+  if (!_client) _client = new Anthropic({ apiKey });
+  return _client;
+}
+
 export async function generateOutreachDraft(lead: {
   name: string;
   city: string;
@@ -15,10 +23,7 @@ export async function generateOutreachDraft(lead: {
   businessType: string | null;
   ownerName: string | null;
 }): Promise<{ subject: string; body: string }> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
-
-  const client = new Anthropic({ apiKey });
+  const client = getClient();
 
   const context = [
     `Pharmacy: ${lead.name}`,
@@ -37,7 +42,10 @@ export async function generateOutreachDraft(lead: {
     messages: [{ role: 'user', content: userPrompt }],
   });
 
-  const text = response.content[0].type === 'text' ? response.content[0].text : '';
+  if (!response.content.length || response.content[0].type !== 'text') {
+    throw new Error('Empty or unexpected response from model');
+  }
+  const text = response.content[0].text;
 
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('Model returned non-JSON response');
