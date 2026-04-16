@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { organizations, stops, drivers } from '../db/schema.js';
-import { eq, and, gte, isNull } from 'drizzle-orm';
+import { eq, and, gte, isNull, count } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 const PLANS = {
@@ -51,14 +51,14 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
     monthStart.setHours(0, 0, 0, 0);
 
     const [stopsRows, driversRows] = await Promise.all([
-      db.select({ id: stops.id }).from(stops)
+      db.select({ n: count() }).from(stops)
         .where(and(eq(stops.orgId, orgId), isNull(stops.deletedAt), gte(stops.createdAt, monthStart))),
-      db.select({ id: drivers.id }).from(drivers)
+      db.select({ n: count() }).from(drivers)
         .where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt))),
     ]);
 
-    const stopsThisMonth = stopsRows.length;
-    const driversActive = driversRows.length;
+    const stopsThisMonth = stopsRows[0]?.n ?? 0;
+    const driversActive = driversRows[0]?.n ?? 0;
     const stopLimit = planDetails.stopLimit;
     const driverLimit = planDetails.driverLimit;
 
