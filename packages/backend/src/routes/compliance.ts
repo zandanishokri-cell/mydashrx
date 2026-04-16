@@ -157,7 +157,8 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
       );
       const csv = [header, ...lines].join('\n');
       reply.header('Content-Type', 'text/csv');
-      reply.header('Content-Disposition', `attachment; filename="audit-log-${new Date().toISOString().split('T')[0]}.csv"`);
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+      reply.header('Content-Disposition', `attachment; filename="audit-log-${todayStr}.csv"`);
       return reply.send(csv);
     }
 

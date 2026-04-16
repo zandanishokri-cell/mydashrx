@@ -84,7 +84,7 @@ export default function AuditPage() {
       const blob = await res.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `audit-log-${new Date().toISOString().split('T')[0]}.csv`;
+      a.download = `audit-log-${localDateStr()}.csv`;
       a.click();
     } catch (err) {
       setExportError(err instanceof Error ? err.message : 'Export failed. Please try again.');

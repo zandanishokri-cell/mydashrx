@@ -3,7 +3,7 @@ import {
   stops, proofOfDeliveries, baaRegistry, auditLogs, organizations,
   drivers, routes, plans, recurringDeliveries, complianceChecks, miComplianceItems,
 } from '../db/schema.js';
-import { eq, and, isNull, lt, gt, ne, or, count, sql } from 'drizzle-orm';
+import { eq, and, isNull, lt, gt, ne, or, count, sql, inArray } from 'drizzle-orm';
 
 export type Severity = 'P0' | 'P1' | 'P2' | 'P3';
 
@@ -274,13 +274,25 @@ async function michiganChecks(orgId: string): Promise<ComplianceFinding[]> {
   return findings;
 }
 
+// Scanner-generated check names — used to scope deletes so manual checks aren't wiped
+const SCANNER_CHECK_NAMES = [
+  'hipaa_cs_no_age_verify', 'hipaa_cs_no_pod_id_verify', 'hipaa_phi_baa_unsigned',
+  'hipaa_baa_expiring_soon', 'hipaa_no_audit_activity', 'hipaa_cs_no_signature_required',
+  'mi_cs_no_id_photo', 'mi_cs_no_dob_confirmed', 'mi_cs_completed_no_pod',
+  'mi_drug_incapable_driver_on_cs_route', 'mi_recurring_cs_no_signature', 'mi_checklist_items_overdue',
+];
+
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
 async function persistFindings(findings: ComplianceFinding[]): Promise<void> {
   if (!findings.length) return;
   const orgIds = [...new Set(findings.map(f => f.orgId))];
   for (const orgId of orgIds) {
-    await db.delete(complianceChecks).where(eq(complianceChecks.orgId, orgId));
+    // Only delete scanner-generated rows — preserves manual check data from POST /checks/run
+    await db.delete(complianceChecks).where(and(
+      eq(complianceChecks.orgId, orgId),
+      inArray(complianceChecks.checkName, SCANNER_CHECK_NAMES),
+    ));
   }
   await db.insert(complianceChecks).values(
     findings.map(f => ({
@@ -313,8 +325,8 @@ export async function runComplianceScan(opts: { orgId?: string; persistResults?:
 
   const findings: ComplianceFinding[] = [];
   for (const oid of orgIds) {
-    findings.push(...await hipaaChecks(oid));
-    findings.push(...await michiganChecks(oid));
+    const [hipaa, mi] = await Promise.all([hipaaChecks(oid), michiganChecks(oid)]);
+    findings.push(...hipaa, ...mi);
   }
 
   if (persistResults) await persistFindings(findings);
