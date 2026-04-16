@@ -1,10 +1,32 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { plans, routes, stops, depots } from '../db/schema.js';
-import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
+import { eq, and, isNull, inArray, notInArray, or, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { optimizeRoute } from '../services/routeOptimizer.js';
 import { sendRouteReadyNotifications } from '../services/notifications.js';
+
+// Angular clustering: sort stops by polar angle from depot, distribute round-robin
+// Creates geographically contiguous zones (pie slices) rather than arbitrary round-robin
+function angularDistribute(
+  depotLat: number,
+  depotLng: number,
+  stopList: Array<{ id: string; lat: number; lng: number }>,
+  routeIds: string[],
+): Map<string, string[]> {
+  const sorted = [...stopList].sort((a, b) => {
+    const angleA = Math.atan2(a.lat - depotLat, a.lng - depotLng);
+    const angleB = Math.atan2(b.lat - depotLat, b.lng - depotLng);
+    return angleA - angleB;
+  });
+
+  const assignment = new Map<string, string[]>(routeIds.map((id) => [id, []]));
+  sorted.forEach((stop, i) => {
+    const routeId = routeIds[i % routeIds.length];
+    assignment.get(routeId)!.push(stop.id);
+  });
+  return assignment;
+}
 
 export const planRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
@@ -222,5 +244,119 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     }
     await db.update(plans).set({ deletedAt: new Date() }).where(eq(plans.id, planId));
     return reply.code(204).send();
+  });
+
+  app.post('/:planId/auto-distribute', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, planId } = req.params as { orgId: string; planId: string };
+    const { stopIds: explicitStopIds } = req.body as { stopIds?: string[] };
+
+    // Verify plan ownership
+    const [plan] = await db.select({ id: plans.id, date: plans.date, depotId: plans.depotId })
+      .from(plans)
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .limit(1);
+    if (!plan) return reply.code(404).send({ error: 'Plan not found' });
+
+    // Get plan routes (only non-deleted)
+    const planRouteRows = await db.select({ id: routes.id })
+      .from(routes)
+      .where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
+    if (planRouteRows.length === 0) return reply.code(400).send({ error: 'Plan has no routes — add drivers first' });
+
+    // Get depot for clustering anchor
+    const [depot] = await db.select({ lat: depots.lat, lng: depots.lng })
+      .from(depots)
+      .where(and(eq(depots.id, plan.depotId), eq(depots.orgId, orgId)))
+      .limit(1);
+    const depotLat = depot?.lat ?? 42.3314; // Detroit fallback
+    const depotLng = depot?.lng ?? -83.0458;
+
+    // Find unassigned stops: either explicit list or auto-discover by plan date + org
+    let unassigned: Array<{ id: string; lat: number; lng: number }>;
+
+    if (explicitStopIds && explicitStopIds.length > 0) {
+      // Caller provided specific stops — verify they belong to org and are unassigned
+      unassigned = await db
+        .select({ id: stops.id, lat: stops.lat, lng: stops.lng })
+        .from(stops)
+        .where(and(
+          inArray(stops.id, explicitStopIds),
+          eq(stops.orgId, orgId),
+          isNull(stops.routeId),
+          isNull(stops.deletedAt),
+        ));
+    } else {
+      // Auto-discover: unassigned stops for this org whose window date OR createdAt date matches plan date
+      unassigned = await db
+        .select({ id: stops.id, lat: stops.lat, lng: stops.lng })
+        .from(stops)
+        .where(and(
+          eq(stops.orgId, orgId),
+          isNull(stops.routeId),
+          isNull(stops.deletedAt),
+          or(
+            sql`DATE(${stops.windowStart} AT TIME ZONE 'America/Detroit') = ${plan.date}`,
+            sql`DATE(${stops.createdAt} AT TIME ZONE 'America/Detroit') = ${plan.date}`,
+          ),
+        ));
+    }
+
+    if (unassigned.length === 0) return reply.code(400).send({ error: 'No unassigned stops found for this plan date' });
+
+    // Filter out stops with no valid geocoding (0,0 = not geocoded)
+    const geocoded = unassigned.filter((s) => s.lat !== 0 || s.lng !== 0);
+    const noCoords = unassigned.filter((s) => s.lat === 0 && s.lng === 0);
+
+    const routeIds = planRouteRows.map((r) => r.id);
+    const assignment = angularDistribute(depotLat, depotLng, geocoded, routeIds);
+
+    // Distribute non-geocoded stops round-robin (after geocoded)
+    noCoords.forEach((stop, i) => {
+      const routeId = routeIds[i % routeIds.length];
+      assignment.get(routeId)!.push(stop.id);
+    });
+
+    // Bulk-assign: set routeId + sequenceNumber for each route's stops
+    let totalAssigned = 0;
+    const byRoute: { routeId: string; stopCount: number }[] = [];
+
+    await Promise.all(
+      routeIds.map(async (routeId) => {
+        const stopIdsForRoute = assignment.get(routeId) ?? [];
+        if (stopIdsForRoute.length === 0) return;
+
+        // Get current max sequenceNumber for this route to append without collision
+        const [maxSeq] = await db
+          .select({ max: sql<number>`COALESCE(MAX(${stops.sequenceNumber}), -1)` })
+          .from(stops)
+          .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)));
+        let seq = (maxSeq?.max ?? -1) + 1;
+
+        await Promise.all(
+          stopIdsForRoute.map((stopId) =>
+            db.update(stops)
+              .set({ routeId, sequenceNumber: seq++ })
+              .where(and(eq(stops.id, stopId), eq(stops.orgId, orgId), isNull(stops.deletedAt)))
+          )
+        );
+
+        // Update route stopOrder array
+        const existingStops = await db.select({ id: stops.id })
+          .from(stops)
+          .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+          .orderBy(stops.sequenceNumber);
+
+        await db.update(routes)
+          .set({ stopOrder: existingStops.map((s) => s.id) })
+          .where(eq(routes.id, routeId));
+
+        totalAssigned += stopIdsForRoute.length;
+        byRoute.push({ routeId, stopCount: stopIdsForRoute.length });
+      })
+    );
+
+    return { assigned: totalAssigned, byRoute };
   });
 };
