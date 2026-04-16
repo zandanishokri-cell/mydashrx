@@ -12,7 +12,7 @@ const LeafletMap = dynamic(() => import('@/components/ui/LeafletMap'), {
   loading: () => <div className="w-full h-40 bg-gray-100 animate-pulse" />,
 });
 import {
-  ArrowLeft, Phone, MapPin, Package, Thermometer, AlertTriangle,
+  ArrowLeft, Phone, Mail, MapPin, Package, Thermometer, AlertTriangle,
   PenLine, Clock, CheckCircle2, XCircle, Truck, User, FileCheck,
   Flag, RotateCcw, FileEdit, ChevronRight, AlertCircle, X,
 } from 'lucide-react';
@@ -24,6 +24,7 @@ interface StopDetail {
   id: string;
   recipientName: string;
   recipientPhone: string;
+  recipientEmail?: string;
   address: string;
   unit?: string;
   status: string;
@@ -320,6 +321,12 @@ function StopDetailContent({ stopId }: { stopId: string }) {
               <Phone size={14} className="shrink-0 text-gray-400" />
               <span>{stop.recipientPhone || '—'}</span>
             </div>
+            {stop.recipientEmail && (
+              <div className="flex items-center gap-2 text-gray-600 col-span-2">
+                <Mail size={14} className="shrink-0 text-gray-400" />
+                <span className="truncate">{stop.recipientEmail}</span>
+              </div>
+            )}
             <div className="flex items-center gap-2 text-gray-600">
               <Package size={14} className="shrink-0 text-gray-400" />
               <span>{stop.packageCount} package{stop.packageCount !== 1 ? 's' : ''}</span>

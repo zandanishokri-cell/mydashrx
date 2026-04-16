@@ -12,6 +12,7 @@ interface Props {
 interface FormState {
   recipientName: string;
   recipientPhone: string;
+  recipientEmail: string;
   address: string;
   unit: string;
   rxNumbers: string;
@@ -26,7 +27,7 @@ interface FormState {
 }
 
 const DEFAULTS: FormState = {
-  recipientName: '', recipientPhone: '', address: '', unit: '',
+  recipientName: '', recipientPhone: '', recipientEmail: '', address: '', unit: '',
   rxNumbers: '', packageCount: '1', windowStart: '', windowEnd: '',
   deliveryNotes: '', requiresRefrigeration: false, controlledSubstance: false,
   requiresSignature: true, requiresAgeVerification: false,
@@ -49,6 +50,7 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
       await api.post(`/orgs/${orgId}/stops`, {
         recipientName: form.recipientName.trim(),
         recipientPhone: form.recipientPhone.trim() || undefined,
+        recipientEmail: form.recipientEmail.trim() || undefined,
         address: form.address.trim(),
         unit: form.unit.trim() || undefined,
         rxNumbers: form.rxNumbers ? form.rxNumbers.split(',').map(s => s.trim()).filter(Boolean) : [],
@@ -97,6 +99,14 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
                 <input
                   type="tel" value={form.recipientPhone} onChange={set('recipientPhone')}
                   placeholder="313-555-0100"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/20"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Email</label>
+                <input
+                  type="email" value={form.recipientEmail} onChange={set('recipientEmail')}
+                  placeholder="patient@example.com"
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/20"
                 />
               </div>

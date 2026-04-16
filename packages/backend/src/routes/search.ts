@@ -121,6 +121,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
         id: stops.id,
         recipientName: stops.recipientName,
         recipientPhone: stops.recipientPhone,
+        recipientEmail: stops.recipientEmail,
         address: stops.address,
         unit: stops.unit,
         status: stops.status,
@@ -416,6 +417,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     const body = req.body as {
       recipientName: string;
       recipientPhone?: string;
+      recipientEmail?: string;
       address: string;
       unit?: string;
       rxNumbers?: string[];
@@ -436,6 +438,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       orgId,
       recipientName: body.recipientName.trim(),
       recipientPhone: body.recipientPhone?.trim() ?? '',
+      recipientEmail: body.recipientEmail?.trim() || undefined,
       address: body.address.trim(),
       unit: body.unit?.trim() || undefined,
       rxNumbers: body.rxNumbers ?? [],

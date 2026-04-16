@@ -5,7 +5,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { PodViewer } from '@/components/PodViewer';
-import { Phone, MapPin, Package, Thermometer, AlertTriangle, PenLine, ClipboardList, Trash2, FileCheck } from 'lucide-react';
+import { Phone, Mail, MapPin, Package, Thermometer, AlertTriangle, PenLine, ClipboardList, Trash2, FileCheck } from 'lucide-react';
 
 interface Stop {
   id: string;
@@ -13,6 +13,7 @@ interface Stop {
   recipientName: string;
   address: string;
   recipientPhone: string;
+  recipientEmail?: string;
   status: string;
   sequenceNumber: number | null;
   requiresRefrigeration: boolean;
@@ -121,6 +122,12 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
             <Phone size={14} className="shrink-0 text-gray-400" />
             <span>{stop.recipientPhone || '—'}</span>
           </div>
+          {stop.recipientEmail && (
+            <div className="flex items-center gap-2 text-gray-600 col-span-2">
+              <Mail size={14} className="shrink-0 text-gray-400" />
+              <span className="truncate">{stop.recipientEmail}</span>
+            </div>
+          )}
           <div className="flex items-center gap-2 text-gray-600">
             <Package size={14} className="shrink-0 text-gray-400" />
             <span>{stop.packageCount} package{stop.packageCount !== 1 ? 's' : ''}</span>
