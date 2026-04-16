@@ -12,7 +12,7 @@ const hipaaName = (full: string) => {
   return `${parts[parts.length - 1]}, ${parts[0][0]}.`;
 };
 
-const ETA_PER_STOP_MS = 8 * 60 * 1000;
+export const ETA_PER_STOP_MS = 8 * 60 * 1000;
 
 // ─── Public patient-facing tracking ──────────────────────────────────────────
 export const trackingRoutes: FastifyPluginAsync = async (app) => {

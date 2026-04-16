@@ -6,6 +6,7 @@ import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification, sendDriverArrivalEmail, sendRouteCompleteSummaryEmail } from '../services/notifications.js';
 import { fireTrigger } from '../services/automation.js';
 import { TERMINAL_STATUSES, type StopStatus } from '@mydash-rx/shared';
+import { ETA_PER_STOP_MS } from './tracking.js';
 
 export async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
   const [route] = await db.select({ completedAt: routes.completedAt, driverId: routes.driverId })
@@ -50,6 +51,54 @@ export async function checkAndNotifyRouteComplete(orgId: string, routeId: string
     resourceId: routeId,
     data: { routeId, driverName, completedCount, totalStops: routeStops.length, failedCount: failedAddresses.length },
   }).catch(console.error);
+}
+
+const APPROACH_THRESHOLD = 3; // fire SMS when driver is ≤ this many stops ahead
+
+async function fireApproachNotifications(orgId: string, routeId: string): Promise<void> {
+  const [route] = await db
+    .select({ stopOrder: routes.stopOrder })
+    .from(routes)
+    .where(eq(routes.id, routeId))
+    .limit(1);
+  if (!route?.stopOrder) return;
+
+  const stopOrder = route.stopOrder as string[];
+
+  const pending = await db
+    .select({
+      id: stops.id,
+      orgId: stops.orgId,
+      recipientPhone: stops.recipientPhone,
+      trackingToken: stops.trackingToken,
+      routeId: stops.routeId,
+      status: stops.status,
+    })
+    .from(stops)
+    .where(and(
+      eq(stops.routeId, routeId),
+      eq(stops.orgId, orgId),
+      isNull(stops.deletedAt),
+      isNull(stops.approachNotifiedAt),
+    ));
+
+  for (const stop of pending) {
+    if ((TERMINAL_STATUSES as string[]).includes(stop.status ?? '')) continue;
+    const stopsAhead = stopOrder.indexOf(stop.id);
+    if (stopsAhead <= 0 || stopsAhead > APPROACH_THRESHOLD) continue;
+
+    const etaMin = Math.round(stopsAhead * ETA_PER_STOP_MS / 60000);
+
+    // Mark notified before sending — prevents duplicate if Twilio is slow
+    await db.update(stops)
+      .set({ approachNotifiedAt: new Date() })
+      .where(and(eq(stops.id, stop.id), isNull(stops.approachNotifiedAt)));
+
+    sendStopNotification(stop, 'stop_approaching', {
+      stopsAway: String(stopsAhead),
+      etaMin: String(etaMin),
+    }).catch(console.error);
+  }
 }
 
 export const stopRoutes: FastifyPluginAsync = async (app) => {
@@ -170,6 +219,10 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     }
     if ((status === 'completed' || status === 'failed' || status === 'rescheduled') && updated.routeId) {
       checkAndNotifyRouteComplete(updated.orgId, updated.routeId).catch(console.error);
+    }
+    // Auto-notify patients approaching their delivery window when driver advances
+    if ((status === 'completed' || status === 'arrived') && updated.routeId) {
+      fireApproachNotifications(updated.orgId, updated.routeId).catch(console.error);
     }
 
     // Fire automation triggers — fire-and-forget

@@ -1,0 +1,1 @@
+ALTER TABLE stops ADD COLUMN IF NOT EXISTS approach_notified_at TIMESTAMP;
