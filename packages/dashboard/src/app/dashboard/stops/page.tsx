@@ -135,7 +135,7 @@ export default function StopsPage() {
     if (!user) return;
     setLoading(true);
     const p = resetPage ? 1 : page;
-    if (resetPage) setPage(1);
+    if (resetPage) { setPage(1); setSelectedIds(new Set()); }
     try {
       const params = new URLSearchParams({ page: String(p), limit: '50' });
       if (search) params.set('q', search);
@@ -157,6 +157,7 @@ export default function StopsPage() {
 
   useEffect(() => { load(true); }, [statusTab, depotId, dateRange, search]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   const handleSearchInput = (v: string) => {
     setSearchInput(v);
@@ -349,7 +350,7 @@ export default function StopsPage() {
               className="pl-8 pr-8 py-1.5 text-sm border border-gray-200 rounded-lg w-64 focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
             {searchInput && (
-              <button onClick={() => { setSearchInput(''); setSearch(''); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <button onClick={() => handleSearchInput('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                 <X size={12} />
               </button>
             )}
