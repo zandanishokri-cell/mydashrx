@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { AddStopModal } from '@/components/AddStopModal';
 import { StopDetailModal } from '@/components/StopDetailModal';
-import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
@@ -39,6 +39,8 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [loading, setLoading] = useState(true);
   const [optimizing, setOptimizing] = useState(false);
   const [distributing, setDistributing] = useState(false);
+  const [autoDistributing, setAutoDistributing] = useState(false);
+  const [autoDistributeResult, setAutoDistributeResult] = useState<{ assigned: number } | null>(null);
   const [error, setError] = useState('');
   const [windowViolations, setWindowViolations] = useState<{ stopId: string; address: string; windowEnd: string; estimatedArrival: string }[]>([]);
 
@@ -114,6 +116,25 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
       setError('Failed to distribute. Please try again.');
     } finally {
       setDistributing(false);
+    }
+  };
+
+  const autoDistribute = async () => {
+    if (autoDistributing) return;
+    setAutoDistributing(true);
+    setError('');
+    setAutoDistributeResult(null);
+    try {
+      const result = await api.post<{ assigned: number; byRoute: { routeId: string; stopCount: number }[] }>(
+        `/orgs/${user!.orgId}/plans/${planId}/auto-distribute`,
+        {},
+      );
+      setAutoDistributeResult({ assigned: result.assigned });
+      await loadPlan();
+    } catch {
+      setError('Auto-distribute failed. Make sure you have routes and unassigned stops for this date.');
+    } finally {
+      setAutoDistributing(false);
     }
   };
 
@@ -193,6 +214,11 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
           <Button variant="secondary" size="sm" onClick={() => setShowAddRoute(true)}>
             <UserPlus size={14} /> Add Driver
           </Button>
+          {plan.status !== 'distributed' && plan.status !== 'completed' && routes.length > 0 && (
+            <Button variant="secondary" size="sm" onClick={autoDistribute} loading={autoDistributing}>
+              <MoveRight size={14} /> Auto-Distribute
+            </Button>
+          )}
           {plan.status !== 'distributed' && plan.status !== 'completed' && (
             <Button size="sm" onClick={optimize} loading={optimizing} disabled={totalStops === 0}>
               <Zap size={14} /> Optimize
@@ -220,6 +246,14 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
       )}
 
       {error && <div className="bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm mb-4">{error}</div>}
+
+      {autoDistributeResult && (
+        <div className="flex items-center gap-2 mb-4 px-4 py-2.5 bg-green-50 border border-green-200 rounded-xl text-sm text-green-800">
+          <CheckCircle2 size={15} className="text-green-600 shrink-0" />
+          {autoDistributeResult.assigned} stop{autoDistributeResult.assigned !== 1 ? 's' : ''} distributed across {routes.length} route{routes.length !== 1 ? 's' : ''}.
+          <button onClick={() => setAutoDistributeResult(null)} className="ml-auto text-green-600 hover:underline text-xs">Dismiss</button>
+        </div>
+      )}
 
       {windowViolations.length > 0 && (
         <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
