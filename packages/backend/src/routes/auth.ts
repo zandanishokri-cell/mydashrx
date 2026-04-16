@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '../db/connection.js';
 import { users, organizations, drivers } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
+
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
 
 const loginSchema = z.object({
@@ -110,12 +111,20 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       if (decoded.type !== 'refresh') throw new Error('wrong token type');
       const user = await findUserById(decoded.sub);
       if (!user) return reply.code(401).send({ error: 'User not found' });
+      // Re-attach driverId for driver role — omitting it causes empty route list after token expiry
+      let driverId: string | undefined;
+      if (user.role === 'driver') {
+        const [driverRecord] = await db.select({ id: drivers.id }).from(drivers)
+          .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt))).limit(1);
+        driverId = driverRecord?.id;
+      }
       const tokens = signTokens(app, {
         sub: user.id,
         email: user.email,
         role: user.role,
         orgId: user.orgId,
         depotIds: user.depotIds as string[],
+        ...(driverId ? { driverId } : {}),
       });
       return reply.send(tokens);
     } catch {
@@ -145,6 +154,12 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .set({ passwordHash: newHash, mustChangePassword: false })
       .where(eq(users.id, payload.sub))
       .returning({ id: users.id, name: users.name, email: users.email, role: users.role, orgId: users.orgId, depotIds: users.depotIds, mustChangePassword: users.mustChangePassword });
+
+    // Keep drivers.passwordHash in sync — prevents stale hash if a direct-driver-auth path is ever added
+    if (user.role === 'driver') {
+      await db.update(drivers).set({ passwordHash: newHash })
+        .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt)));
+    }
 
     return { user: updated };
   });
