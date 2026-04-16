@@ -97,6 +97,7 @@ export default function IntelPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Competitive Intelligence</h1>
         <p className="text-gray-500 mt-1">Know your market. Win every deal.</p>
+        <p className="text-xs text-gray-400 mt-1">Last reviewed: April 2026</p>
       </div>
 
       {/* Summary banner */}
@@ -154,8 +155,8 @@ export default function IntelPage() {
       {/* Feature matrix */}
       <div>
         <h2 className="text-lg font-bold text-gray-900 mb-4">Feature Comparison</h2>
-        <div className="border border-gray-100 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="border border-gray-100 rounded-xl overflow-hidden overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-gray-100">
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-1/2">
