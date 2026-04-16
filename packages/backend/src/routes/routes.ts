@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { routes, stops, plans, drivers } from '../db/schema.js';
-import { eq, and, isNull, inArray } from 'drizzle-orm';
+import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 export const routeRoutes: FastifyPluginAsync = async (app) => {
@@ -87,11 +87,16 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     const [plan] = await db.select({ orgId: plans.orgId }).from(plans)
       .where(and(eq(plans.id, planId), isNull(plans.deletedAt))).limit(1);
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
-    // Unassign non-terminal stops before soft-deleting the route so they
-    // appear in the "Unassigned" tab instead of becoming orphaned records
+    // Unassign only non-terminal stops — terminal stops (completed/failed/rescheduled)
+    // must remain linked to the route for audit/history. Non-terminal stops return to
+    // the "Unassigned" pool so they can be re-routed.
     await db.update(stops)
       .set({ routeId: null })
-      .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)));
+      .where(and(
+        eq(stops.routeId, routeId),
+        isNull(stops.deletedAt),
+        notInArray(stops.status, ['completed', 'failed', 'rescheduled']),
+      ));
     await db.update(routes).set({ deletedAt: new Date() })
       .where(and(eq(routes.id, routeId), eq(routes.planId, planId)));
     return reply.code(204).send();

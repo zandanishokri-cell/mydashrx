@@ -52,18 +52,16 @@ export default function PlansPage() {
     setLoading(true); setLoadError(false);
     try {
       const [allPlans, allDrivers] = await Promise.all([
-        api.get<Plan[]>(`/orgs/${user.orgId}/plans`),
+        api.get<(Plan & { routes: Route[] })[]>(`/orgs/${user.orgId}/plans`),
         api.get<Driver[]>(`/orgs/${user.orgId}/drivers`),
       ]);
       setDrivers(allDrivers);
-
-      const withMeta = await Promise.all(
-        allPlans.map(async plan => {
-          const routes = await api.get<Route[]>(`/plans/${plan.id}/routes`);
-          const stopCount = routes.reduce((s, r) => s + (r.stopOrder?.length ?? 0), 0);
-          return { ...plan, routes, stopCount };
-        })
-      );
+      // Routes are now embedded in the list response — no N+1 fetch needed
+      const withMeta = allPlans.map(plan => {
+        const planRoutes = plan.routes ?? [];
+        const stopCount = planRoutes.reduce((s, r) => s + (r.stopOrder?.length ?? 0), 0);
+        return { ...plan, routes: planRoutes, stopCount };
+      });
       setPlans(withMeta);
     } catch { setPlans([]); setLoadError(true); }
     finally { setLoading(false); }

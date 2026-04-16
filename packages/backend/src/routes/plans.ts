@@ -37,7 +37,19 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     const conditions = [eq(plans.orgId, orgId), isNull(plans.deletedAt)];
     if (date) conditions.push(eq(plans.date, date));
     if (depotId) conditions.push(eq(plans.depotId, depotId));
-    return db.select().from(plans).where(and(...conditions)).orderBy(plans.date);
+    const planList = await db.select().from(plans).where(and(...conditions)).orderBy(plans.date);
+    if (planList.length === 0) return planList;
+    // Embed routes so the list view avoids N+1 fetches (one query for all routes)
+    const planIds = planList.map((p) => p.id);
+    const allRoutes = await db.select().from(routes)
+      .where(and(inArray(routes.planId, planIds), isNull(routes.deletedAt)));
+    const routesByPlan = new Map<string, typeof allRoutes>();
+    for (const r of allRoutes) {
+      const arr = routesByPlan.get(r.planId) ?? [];
+      arr.push(r);
+      routesByPlan.set(r.planId, arr);
+    }
+    return planList.map((p) => ({ ...p, routes: routesByPlan.get(p.id) ?? [] }));
   });
 
   app.get('/:planId', {
@@ -154,7 +166,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
           routeStops.map((s) => [s.id, { windowEnd: s.windowEnd, address: s.address ?? '' }]),
         );
 
-        const originalOrder = [...(route.stopOrder as string[])];
+        const originalOrder = Array.isArray(route.stopOrder) ? [...(route.stopOrder as string[])] : [];
         const optimized = await optimizeRoute(depot.lat, depot.lng, geocodedStops);
         // Use real route duration from optimizer (minutes→seconds); fall back to 8 min/stop estimate
         const estimatedDuration = optimized.totalDuration > 0
@@ -312,6 +324,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (unassigned.length === 0) return reply.code(400).send({ error: 'No unassigned stops found for this plan date' });
+    const skipped = explicitStopIds ? explicitStopIds.length - unassigned.length : 0;
 
     // Filter out stops with no valid geocoding (0,0 = not geocoded)
     const geocoded = unassigned.filter((s) => s.lat !== 0 || s.lng !== 0);
@@ -361,6 +374,6 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
       byRoute.push({ routeId, stopCount: stopIdsForRoute.length });
     }
 
-    return { assigned: totalAssigned, byRoute, depotFallback: !depot };
+    return { assigned: totalAssigned, byRoute, skipped, depotFallback: !depot };
   });
 };
