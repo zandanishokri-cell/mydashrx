@@ -1,7 +1,6 @@
 'use client';
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { signIn } from 'next-auth/react';
 import { api } from '@/lib/api';
 import { setSession } from '@/lib/auth';
 import type { AuthTokens } from '@mydash-rx/shared';
@@ -9,42 +8,66 @@ import type { AuthTokens } from '@mydash-rx/shared';
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const authError = params.get('error');
-
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleGoogle = async () => {
-    setGoogleLoading(true);
-    await signIn('google', { callbackUrl: '/auth/callback' });
-  };
+  // Fallback email/password for existing admin accounts
+  const [showPassword, setShowPassword] = useState(false);
+  const [password, setPassword] = useState('');
+  const [pwLoading, setPwLoading] = useState(false);
 
-  const submit = async (e: React.FormEvent) => {
+  const requestMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      const tokens = await api.post<AuthTokens>('/auth/login', { email, password });
-      setSession(tokens);
-      if ((tokens.user as any).mustChangePassword) {
-        router.replace('/change-password');
-      } else {
-        router.replace('/dashboard');
-      }
+      await api.post('/auth/magic-link/request', { email });
+      setSent(true);
     } catch {
-      setError('Invalid email or password');
+      setError('Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const errorMsg =
-    authError === 'NoAccount' ? 'No account found for that Google address. Contact your admin.' :
-    authError === 'ServerError' ? 'Server error. Please try again.' :
-    authError ? 'Sign-in failed. Please try again.' : '';
+  const signInWithPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwLoading(true);
+    setError('');
+    try {
+      const tokens = await api.post<AuthTokens>('/auth/login', { email, password });
+      setSession(tokens);
+      router.replace((tokens.user as any).mustChangePassword ? '/change-password' : '/dashboard');
+    } catch {
+      setError('Invalid email or password.');
+    } finally {
+      setPwLoading(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center">
+        <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg className="w-6 h-6 text-[#0F4C81]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Check your email</h2>
+        <p className="text-gray-500 text-sm mb-1">We sent a login link to</p>
+        <p className="text-[#0F4C81] font-medium text-sm mb-6">{email}</p>
+        <p className="text-gray-400 text-xs mb-6">The link expires in 15 minutes. Check your spam folder if you don't see it.</p>
+        <button
+          onClick={() => { setSent(false); setEmail(''); }}
+          className="text-sm text-[#0F4C81] hover:underline"
+        >
+          Use a different email
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
@@ -53,57 +76,57 @@ function LoginForm() {
       </h1>
       <p className="text-gray-500 text-sm mb-8">Pharmacy Delivery Management</p>
 
-      <button
-        onClick={handleGoogle}
-        disabled={googleLoading}
-        className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-lg py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors mb-4"
-      >
-        <svg width="18" height="18" viewBox="0 0 48 48">
-          <path fill="#4285F4" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 5.1 29.6 3 24 37 3 12.4 3 24s9.4 21 21 21c10.5 0 20-7.6 20-21 0-1.3-.2-2.7-.5-4z"/>
-          <path fill="#34A853" d="M6.3 14.7l7 5.1C15.1 16.2 19.2 13 24 13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 5.1 29.6 3 24 3c-7.8 0-14.5 4.5-17.7 11.7z"/>
-          <path fill="#FBBC05" d="M24 45c5.8 0 10.7-1.9 14.3-5.2l-6.6-5.4C29.7 36.1 27 37 24 37c-6.1 0-10.7-3.1-11.8-7.5l-7 5.4C8.1 40.8 15.5 45 24 45z"/>
-          <path fill="#EA4335" d="M44.5 20H24v8.5h11.8c-.6 2.3-2 4.3-3.8 5.8l6.6 5.4C42.5 36.2 45 30.7 45 24c0-1.3-.2-2.7-.5-4z"/>
-        </svg>
-        {googleLoading ? 'Redirecting…' : 'Sign in with Google'}
-      </button>
-
-      <div className="flex items-center gap-3 mb-4">
-        <div className="flex-1 h-px bg-gray-200" />
-        <span className="text-xs text-gray-400">or</span>
-        <div className="flex-1 h-px bg-gray-200" />
-      </div>
-
-      <form onSubmit={submit} className="space-y-4">
+      <form onSubmit={requestMagicLink} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Email address</label>
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+            placeholder="you@pharmacy.com"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
             required
             autoFocus
           />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-            required
-          />
-        </div>
-        {(error || errorMsg) && <p className="text-red-500 text-sm">{error || errorMsg}</p>}
+        {error && !showPassword && <p className="text-red-500 text-sm">{error}</p>}
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-[#0F4C81] text-white rounded-lg py-2 text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
+          className="w-full bg-[#0F4C81] text-white rounded-lg py-2.5 text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
         >
-          {loading ? 'Signing in…' : 'Sign in'}
+          {loading ? 'Sending link…' : 'Send login link'}
         </button>
       </form>
+
+      <div className="mt-6 pt-6 border-t border-gray-100">
+        <button
+          onClick={() => { setShowPassword(p => !p); setError(''); }}
+          className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          {showPassword ? 'Hide password sign in' : 'Sign in with password instead'}
+        </button>
+        {showPassword && (
+          <form onSubmit={signInWithPassword} className="mt-4 space-y-3">
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+              required
+            />
+            {error && showPassword && <p className="text-red-500 text-sm">{error}</p>}
+            <button
+              type="submit"
+              disabled={pwLoading}
+              className="w-full bg-gray-700 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
+            >
+              {pwLoading ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+        )}
+      </div>
     </div>
   );
 }
@@ -111,7 +134,7 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F7F8FC]">
-      <Suspense fallback={<div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-8 h-96" />}>
+      <Suspense fallback={<div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-8 h-64" />}>
         <LoginForm />
       </Suspense>
     </div>

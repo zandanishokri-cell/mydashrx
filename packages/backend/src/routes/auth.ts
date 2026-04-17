@@ -1,8 +1,9 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { createHash, randomBytes } from 'crypto';
 import { db } from '../db/connection.js';
-import { users, organizations, drivers } from '../db/schema.js';
-import { eq, and, isNull } from 'drizzle-orm';
+import { users, organizations, drivers, magicLinkTokens } from '../db/schema.js';
+import { eq, and, isNull, gt, count } from 'drizzle-orm';
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
 
@@ -163,6 +164,97 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       depotIds: user.depotIds as string[], ...(driverId ? { driverId } : {}),
     };
     const tokens = signTokens(app, payload);
+    return reply.send({
+      ...tokens,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
+    });
+  });
+
+  // ─── Magic Link ───────────────────────────────────────────────────────────────
+  app.post('/magic-link/request', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { email } = req.body as { email?: string };
+    if (!email || !z.string().email().safeParse(email).success) {
+      return reply.code(400).send({ error: 'Valid email required' });
+    }
+
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const [{ value: recentCount }] = await db
+      .select({ value: count() })
+      .from(magicLinkTokens)
+      .where(and(eq(magicLinkTokens.email, email), gt(magicLinkTokens.createdAt, tenMinAgo)));
+
+    // Always return the same message — never reveal rate limit or account existence
+    const ok = { message: 'If an account exists, a login link has been sent to that address.' };
+    if (recentCount >= 3) return reply.send(ok);
+
+    const token = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await db.insert(magicLinkTokens).values({ email, tokenHash, expiresAt });
+
+    const user = await findUserByEmail(email);
+    if (user && !user.deletedAt) {
+      const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+      const magicUrl = `${dashUrl}/auth/verify?token=${token}`;
+      const resendKey = process.env.RESEND_API_KEY;
+      const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+
+      if (resendKey) {
+        fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+          body: JSON.stringify({
+            from: `MyDashRx <noreply@${senderDomain}>`,
+            to: email,
+            subject: 'Your MyDashRx login link',
+            html: `
+              <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+                <h2 style="color:#0F4C81;margin:0 0 8px">Sign in to MyDashRx</h2>
+                <p style="color:#374151;margin:0 0 24px;font-size:15px">Click the button below to sign in. This link expires in 15 minutes and can only be used once.</p>
+                <a href="${magicUrl}" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Sign in to MyDashRx</a>
+                <p style="color:#9ca3af;font-size:12px;margin-top:24px">If you didn't request this, you can safely ignore this email.</p>
+              </div>`,
+          }),
+        }).catch(() => {});
+      }
+    }
+
+    return reply.send(ok);
+  });
+
+  app.get('/magic-link/verify', async (req, reply) => {
+    const { token } = req.query as { token?: string };
+    if (!token) return reply.code(400).send({ error: 'Token required' });
+
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const [record] = await db
+      .select()
+      .from(magicLinkTokens)
+      .where(and(
+        eq(magicLinkTokens.tokenHash, tokenHash),
+        isNull(magicLinkTokens.usedAt),
+        gt(magicLinkTokens.expiresAt, new Date()),
+      ))
+      .limit(1);
+
+    if (!record) return reply.code(400).send({ error: 'This link is invalid or has expired. Please request a new one.' });
+
+    await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
+
+    const user = await findUserByEmail(record.email);
+    if (!user || user.deletedAt) return reply.code(404).send({ error: 'No account found for this email.' });
+
+    let driverId: string | undefined;
+    if (user.role === 'driver') {
+      const [dr] = await db.select({ id: drivers.id }).from(drivers)
+        .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt))).limit(1);
+      driverId = dr?.id;
+    }
+
+    const tokens = signTokens(app, {
+      sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
+      depotIds: user.depotIds as string[], ...(driverId ? { driverId } : {}),
+    });
     return reply.send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },

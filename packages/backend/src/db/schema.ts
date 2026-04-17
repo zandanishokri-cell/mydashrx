@@ -484,3 +484,13 @@ export const automationLog = pgTable('automation_log', {
   detail: text('detail'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (t) => ({ orgIdx: index('auto_log_org_idx').on(t.orgId) }));
+
+// ─── Magic Link Tokens ────────────────────────────────────────────────────────
+export const magicLinkTokens = pgTable('magic_link_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at').notNull(),
+  usedAt: timestamp('used_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({ emailIdx: index('magic_link_email_idx').on(t.email) }));
