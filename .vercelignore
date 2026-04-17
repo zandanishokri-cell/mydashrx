@@ -1,0 +1,7 @@
+node_modules
+packages/backend
+packages/shared
+.git
+**/node_modules
+**/.next
+**/dist
