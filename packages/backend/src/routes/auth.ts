@@ -137,6 +137,38 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword };
   });
 
+  // Google OAuth — called server-side from NextAuth signIn callback
+  app.post('/google', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const internalSecret = process.env.INTERNAL_API_SECRET ?? 'dev-internal-secret';
+    if (req.headers['x-internal-secret'] !== internalSecret) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    const { email } = req.body as { email?: string };
+    if (!email) return reply.code(400).send({ error: 'email required' });
+
+    const user = await findUserByEmail(email);
+    if (!user || user.deletedAt) {
+      return reply.code(401).send({ error: 'No account found. Contact your administrator.' });
+    }
+
+    let driverId: string | undefined;
+    if (user.role === 'driver') {
+      const [dr] = await db.select({ id: drivers.id }).from(drivers)
+        .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt))).limit(1);
+      driverId = dr?.id;
+    }
+
+    const payload = {
+      sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
+      depotIds: user.depotIds as string[], ...(driverId ? { driverId } : {}),
+    };
+    const tokens = signTokens(app, payload);
+    return reply.send({
+      ...tokens,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
+    });
+  });
+
   app.post('/change-password', async (req, reply) => {
     try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
     const payload = req.user as { sub: string };
