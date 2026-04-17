@@ -57,7 +57,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [paletteOpen, setPaletteOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const onboardingChecked = useRef(false);
-  const user = getUser();
+  // useState(null) ensures server and client render identically (no hydration mismatch).
+  // useEffect sets the real user after hydration completes.
+  const [user, setUser] = useState<ReturnType<typeof getUser>>(null);
+  useEffect(() => { setUser(getUser()); }, []);
 
   const navItems = [
     ...baseNavItems.filter(item => {
@@ -132,27 +135,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const userName = user?.name ?? 'User';
   const orgName = 'MyDashRx';
 
-  const NavLinks = () => (
-    <>
-      {navItems.map(({ href, label, icon: Icon, exact }) => {
-        const active = isActive({ href, label, icon: Icon, exact });
-        return (
-          <Link
-            key={href}
-            href={href}
-            className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              active
-                ? 'bg-blue-50 text-[#0F4C81] border-l-2 border-[#0F4C81] pl-[10px] pr-3'
-                : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700 px-3'
-            }`}
-          >
-            <Icon size={15} />
-            {label}
-          </Link>
-        );
-      })}
-    </>
-  );
+  // Render nav links as plain JSX (not as a component) to avoid React treating
+  // a new function type on every render, which causes unnecessary unmount/remount.
+  const navLinks = navItems.map(({ href, label, icon: Icon, exact }) => {
+    const active = isActive({ href, label, icon: Icon, exact });
+    return (
+      <Link
+        key={href}
+        href={href}
+        className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+          active
+            ? 'bg-blue-50 text-[#0F4C81] border-l-2 border-[#0F4C81] pl-[10px] pr-3'
+            : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700 px-3'
+        }`}
+      >
+        <Icon size={15} />
+        {label}
+      </Link>
+    );
+  });
 
   return (
     <div className="flex h-screen bg-[#F7F8FC]">
@@ -196,7 +197,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
         <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
-          <NavLinks />
+          {navLinks}
         </nav>
         <div className="px-3 pb-4">
           <button
@@ -248,7 +249,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
         <nav className="flex-1 px-3 pt-3 space-y-0.5 overflow-y-auto">
-          <NavLinks />
+          {navLinks}
         </nav>
         <div className="px-3 pb-8">
           <button

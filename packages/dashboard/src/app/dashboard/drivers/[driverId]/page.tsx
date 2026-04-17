@@ -164,6 +164,11 @@ export default function DriverDetailPage() {
     <div className="p-6 text-center text-gray-500">Driver not found.</div>
   );
 
+  // Defensive guards: backend always returns arrays, but guard against unexpected API shapes
+  const dailyData = Array.isArray(perf.daily) ? perf.daily : [];
+  const failureReasons = Array.isArray(perf.failureReasons) ? perf.failureReasons : [];
+  const summary = perf.summary ?? { totalStops: 0, completed: 0, failed: 0, completionRate: 0, avgStopsPerDay: 0, activeDays: 0, onTimeRate: null };
+
   const statusColors: Record<string, string> = {
     available: 'bg-emerald-500',
     on_route: 'bg-blue-500',
@@ -272,19 +277,19 @@ export default function DriverDetailPage() {
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <StatCard label="Total Stops" value={perf.summary.totalStops} />
+            <StatCard label="Total Stops" value={summary.totalStops} />
             <StatCard
               label="Completion Rate"
-              value={`${perf.summary.completionRate}%`}
-              sub={`${perf.summary.completed} completed`}
+              value={`${summary.completionRate}%`}
+              sub={`${summary.completed} completed`}
             />
-            <StatCard label="Avg Stops/Day" value={perf.summary.avgStopsPerDay} sub={`${perf.summary.activeDays} active days`} />
+            <StatCard label="Avg Stops/Day" value={summary.avgStopsPerDay} sub={`${summary.activeDays} active days`} />
             <StatCard
               label="On-Time Rate"
-              value={perf.summary.onTimeRate !== null ? `${perf.summary.onTimeRate}%` : '—'}
-              sub={perf.summary.onTimeRate !== null ? 'within delivery window' : 'no window data'}
+              value={summary.onTimeRate !== null ? `${summary.onTimeRate}%` : '—'}
+              sub={summary.onTimeRate !== null ? 'within delivery window' : 'no window data'}
             />
-            <StatCard label="Failed Stops" value={perf.summary.failed} sub={perf.summary.failed > 0 ? 'See reasons below' : 'Clean record'} />
+            <StatCard label="Failed Stops" value={summary.failed} sub={summary.failed > 0 ? 'See reasons below' : 'Clean record'} />
           </div>
         )}
       </div>
@@ -292,7 +297,7 @@ export default function DriverDetailPage() {
       {/* Daily delivery chart */}
       <div className="bg-white rounded-xl border border-gray-100 p-5">
         <h3 className="text-sm font-semibold text-gray-700 mb-4">Daily Deliveries</h3>
-        <DailyBars data={perf.daily} formatDate={formatDate} />
+        <DailyBars data={dailyData} formatDate={formatDate} />
       </div>
 
       {/* Failure reasons + recent activity */}
@@ -300,16 +305,16 @@ export default function DriverDetailPage() {
         {/* Failure reasons pie */}
         <div className="bg-white rounded-xl border border-gray-100 p-5">
           <h3 className="text-sm font-semibold text-gray-700 mb-4">Failure Reasons</h3>
-          {perf.failureReasons.length === 0 ? (
+          {failureReasons.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <CheckCircle2 size={28} className="text-emerald-400 mb-2" />
               <p className="text-sm text-gray-400">No failures this period</p>
             </div>
           ) : (() => {
-            const maxCount = Math.max(...perf.failureReasons.map(r => r.count), 1);
+            const maxCount = Math.max(...failureReasons.map(r => r.count), 1);
             return (
               <div className="space-y-3">
-                {perf.failureReasons.map((r, i) => (
+                {failureReasons.map((r, i) => (
                   <div key={r.reason} className="flex items-center gap-3">
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: REASON_COLORS[i % REASON_COLORS.length] }} />
                     <span className="text-xs text-gray-600 w-36 truncate shrink-0 capitalize">{r.reason.replace(/_/g, ' ')}</span>
