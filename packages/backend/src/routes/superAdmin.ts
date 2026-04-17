@@ -310,7 +310,11 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     if (action !== 'approve' && action !== 'reject') return reply.code(400).send({ error: 'action must be approve or reject' });
 
     await Promise.all(orgIds.map(id =>
-      app.inject({ method: 'POST', url: `/api/v1/admin/approvals/${id}/${action}`, headers: req.headers as any })
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/admin/approvals/${id}/${action}`,
+        headers: { authorization: (req.headers as any).authorization ?? '' },
+      })
     ));
 
     return { success: true, processed: orgIds.length };
