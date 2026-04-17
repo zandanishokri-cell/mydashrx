@@ -63,7 +63,7 @@ try {
 const app = Fastify({ logger: true });
 
 await app.register(cors, {
-  origin: process.env.DASHBOARD_URL ?? true,
+  origin: process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app',
   credentials: true,
 });
 

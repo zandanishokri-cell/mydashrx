@@ -27,5 +27,6 @@ export function clearSession() {
 }
 
 export function isAuthenticated(): boolean {
-  return !!getUser();
+  if (typeof window === 'undefined') return false;
+  return !!(getUser() && localStorage.getItem('accessToken'));
 }

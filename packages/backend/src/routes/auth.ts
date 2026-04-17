@@ -187,6 +187,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const ok = { message: 'If an account exists, a login link has been sent to that address.' };
     if (recentCount >= 3) return reply.send(ok);
 
+    // Invalidate any prior unused tokens for this email — only the newest link works
+    await db.update(magicLinkTokens)
+      .set({ usedAt: new Date() })
+      .where(and(eq(magicLinkTokens.email, email), isNull(magicLinkTokens.usedAt)));
+
     const token = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
@@ -215,7 +220,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
                 <p style="color:#9ca3af;font-size:12px;margin-top:24px">If you didn't request this, you can safely ignore this email.</p>
               </div>`,
           }),
-        }).catch(() => {});
+        }).catch((e: unknown) => { console.error('[Resend] magic-link email failed:', e); });
       }
     }
 

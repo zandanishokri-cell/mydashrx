@@ -13,6 +13,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
+    if (res.status === 401 && typeof window !== 'undefined') {
+      ['accessToken', 'refreshToken', 'user'].forEach(k => localStorage.removeItem(k));
+      window.location.replace('/login');
+    }
     throw new Error(`API ${res.status}: ${text}`);
   }
   if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T;
@@ -35,7 +39,14 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
     });
-    if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+    if (!res.ok) {
+      const text = await res.text();
+      if (res.status === 401 && typeof window !== 'undefined') {
+        ['accessToken', 'refreshToken', 'user'].forEach(k => localStorage.removeItem(k));
+        window.location.replace('/login');
+      }
+      throw new Error(`API ${res.status}: ${text}`);
+    }
     return res.json() as Promise<T>;
   },
 };

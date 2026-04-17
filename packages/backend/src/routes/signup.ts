@@ -54,7 +54,7 @@ async function notifySuperAdmins(orgName: string, adminEmail: string) {
             <a href="${dashUrl}/admin/approvals" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;">Review in Admin Panel</a>
           </div>`,
       }),
-    }).catch(() => {})
+    }).catch((e: unknown) => { console.error('[Resend] super-admin notify failed:', e); })
   ));
 }
 
@@ -83,7 +83,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
       pendingApproval: true,
     });
 
-    notifySuperAdmins(orgName, adminEmail).catch(() => {});
+    notifySuperAdmins(orgName, adminEmail).catch((e: unknown) => { console.error('[Resend] pharmacy signup notify failed:', e); });
 
     return reply.code(201).send({ message: 'Application submitted. You will hear from us within 24 hours.' });
   });
@@ -177,7 +177,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
               <p style="color:#9ca3af;font-size:12px;margin-top:24px">If you weren't expecting this, ignore this email.</p>
             </div>`,
         }),
-      }).catch(() => {});
+      }).catch((e: unknown) => { console.error('[Resend] invite email failed:', e); });
     }
 
     return reply.code(201).send({ message: `Invitation sent to ${email}` });
