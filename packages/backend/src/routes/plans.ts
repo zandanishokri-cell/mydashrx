@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { plans, routes, stops, depots } from '../db/schema.js';
+import { plans, routes, stops, depots, drivers } from '../db/schema.js';
 import { eq, and, isNull, inArray, notInArray, or, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { optimizeRoute } from '../services/routeOptimizer.js';
@@ -256,6 +256,93 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     }
     await db.update(plans).set({ deletedAt: new Date() }).where(eq(plans.id, planId));
     return reply.code(204).send();
+  });
+
+  // Preview endpoint: dry-run auto-distribute without writing to DB
+  app.get('/:planId/auto-distribute/preview', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, planId } = req.params as { orgId: string; planId: string };
+
+    const [plan] = await db.select({ id: plans.id, date: plans.date, depotId: plans.depotId, status: plans.status })
+      .from(plans)
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+      .limit(1);
+    if (!plan) return reply.code(404).send({ error: 'Plan not found' });
+
+    if (plan.status === 'distributed' || plan.status === 'completed') {
+      return reply.code(409).send({ error: `Cannot preview distribution for a plan with status '${plan.status}'` });
+    }
+
+    const planRouteRows = await db
+      .select({ id: routes.id, driverId: routes.driverId })
+      .from(routes)
+      .where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
+    if (planRouteRows.length === 0) return reply.code(400).send({ error: 'Plan has no routes — add drivers first' });
+
+    const [depot] = await db.select({ lat: depots.lat, lng: depots.lng })
+      .from(depots)
+      .where(and(eq(depots.id, plan.depotId), eq(depots.orgId, orgId)))
+      .limit(1);
+    const depotLat = depot?.lat ?? 42.3314;
+    const depotLng = depot?.lng ?? -83.0458;
+
+    // Fetch current stop counts per route
+    const routeIds = planRouteRows.map(r => r.id);
+    const currentStopRows = await db
+      .select({ routeId: stops.routeId, id: stops.id })
+      .from(stops)
+      .where(and(inArray(stops.routeId, routeIds), isNull(stops.deletedAt)));
+
+    const currentCountByRoute = new Map<string, number>(routeIds.map(id => [id, 0]));
+    for (const s of currentStopRows) {
+      if (s.routeId) currentCountByRoute.set(s.routeId, (currentCountByRoute.get(s.routeId) ?? 0) + 1);
+    }
+
+    // Fetch driver names
+    const driverIds = planRouteRows.map(r => r.driverId).filter(Boolean) as string[];
+    const driverRows = driverIds.length > 0
+      ? await db.select({ id: drivers.id, name: drivers.name }).from(drivers).where(inArray(drivers.id, driverIds))
+      : [];
+    const driverNameById = new Map(driverRows.map(d => [d.id, d.name]));
+
+    // Discover unassigned stops (same logic as actual endpoint)
+    const unassigned = await db
+      .select({ id: stops.id, lat: stops.lat, lng: stops.lng })
+      .from(stops)
+      .where(and(
+        eq(stops.orgId, orgId),
+        isNull(stops.routeId),
+        isNull(stops.deletedAt),
+        or(
+          sql`DATE(${stops.windowStart} AT TIME ZONE 'America/Detroit') = ${plan.date}`,
+          sql`DATE(${stops.createdAt} AT TIME ZONE 'America/Detroit') = ${plan.date}`,
+        ),
+      ));
+
+    const geocoded = unassigned.filter(s => s.lat !== 0 || s.lng !== 0);
+    const noCoords = unassigned.filter(s => s.lat === 0 && s.lng === 0);
+    const unassignableCount = 0; // all stops can be distributed (even ungeocodable ones go round-robin)
+
+    // Dry-run the distribution
+    const assignment = angularDistribute(depotLat, depotLng, geocoded, routeIds);
+    noCoords.forEach((stop, i) => {
+      const routeId = routeIds[i % routeIds.length];
+      assignment.get(routeId)!.push(stop.id);
+    });
+
+    const previewRoutes = planRouteRows.map(route => ({
+      routeId: route.id,
+      driverName: route.driverId ? (driverNameById.get(route.driverId) ?? 'Unknown Driver') : 'Unassigned',
+      currentStopCount: currentCountByRoute.get(route.id) ?? 0,
+      previewStopCount: (currentCountByRoute.get(route.id) ?? 0) + (assignment.get(route.id)?.length ?? 0),
+    }));
+
+    return {
+      routes: previewRoutes,
+      totalStops: unassigned.length,
+      unassignableCount,
+    };
   });
 
   app.post('/:planId/auto-distribute', {

@@ -27,6 +27,8 @@ interface Stop {
   priority?: string;
 }
 interface Driver { id: string; name: string; vehicleType: string; status: string; }
+interface DistributePreviewRoute { routeId: string; driverName: string; currentStopCount: number; previewStopCount: number; }
+interface DistributePreview { routes: DistributePreviewRoute[]; totalStops: number; unassignableCount: number; }
 
 export default function PlanDetailPage({ params }: { params: { planId: string } }) {
   const router = useRouter();
@@ -43,6 +45,12 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [autoDistributing, setAutoDistributing] = useState(false);
   const [autoDistributeResult, setAutoDistributeResult] = useState<{ assigned: number } | null>(null);
   const [error, setError] = useState('');
+
+  // Auto-distribute preview
+  const [showDistributePreview, setShowDistributePreview] = useState(false);
+  const [distributePreview, setDistributePreview] = useState<DistributePreview | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const [windowViolations, setWindowViolations] = useState<{ stopId: string; address: string; windowEnd: string; estimatedArrival: string }[]>([]);
 
   const [showAddStop, setShowAddStop] = useState<string | null>(null);
@@ -125,11 +133,30 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     }
   };
 
+  const openDistributePreview = async () => {
+    if (loadingPreview) return;
+    setLoadingPreview(true);
+    setPreviewError('');
+    setDistributePreview(null);
+    try {
+      const preview = await api.get<{ routes: DistributePreviewRoute[]; totalStops: number; unassignableCount: number }>(
+        `/orgs/${user!.orgId}/plans/${planId}/auto-distribute/preview`,
+      );
+      setDistributePreview(preview);
+      setShowDistributePreview(true);
+    } catch {
+      setPreviewError('Failed to load preview. Make sure you have routes and unassigned stops for this date.');
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
   const autoDistribute = async () => {
     if (autoDistributing) return;
     setAutoDistributing(true);
     setError('');
     setAutoDistributeResult(null);
+    setShowDistributePreview(false);
     try {
       const result = await api.post<{ assigned: number; byRoute: { routeId: string; stopCount: number }[] }>(
         `/orgs/${user!.orgId}/plans/${planId}/auto-distribute`,
@@ -265,9 +292,12 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
             <UserPlus size={14} /> Add Driver
           </Button>
           {plan.status !== 'distributed' && plan.status !== 'completed' && routes.length > 0 && (
-            <Button variant="secondary" size="sm" onClick={autoDistribute} loading={autoDistributing}>
-              <MoveRight size={14} /> Auto-Distribute
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <Button variant="secondary" size="sm" onClick={openDistributePreview} loading={loadingPreview}>
+                <MoveRight size={14} /> Auto-Distribute
+              </Button>
+              {previewError && <p className="text-xs text-red-600 max-w-xs text-right">{previewError}</p>}
+            </div>
           )}
           {plan.status !== 'distributed' && plan.status !== 'completed' && (
             <Button size="sm" onClick={optimize} loading={optimizing} disabled={totalStops === 0}>
@@ -551,6 +581,60 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
           onClose={() => setSelectedStop(null)}
           onUpdated={() => { setSelectedStop(null); loadPlan(); }}
         />
+      )}
+
+      {/* Auto-Distribute Preview Modal */}
+      {showDistributePreview && distributePreview && (
+        <Modal title="Auto-Distribute Preview" onClose={() => setShowDistributePreview(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              {distributePreview.totalStops} unassigned stop{distributePreview.totalStops !== 1 ? 's' : ''} will be distributed across {distributePreview.routes.length} route{distributePreview.routes.length !== 1 ? 's' : ''}.
+            </p>
+
+            {distributePreview.unassignableCount > 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                <AlertTriangle size={14} className="shrink-0 text-amber-500" />
+                {distributePreview.unassignableCount} stop{distributePreview.unassignableCount !== 1 ? 's' : ''} cannot be distributed.
+              </div>
+            )}
+
+            <div className="border border-gray-100 rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left px-4 py-2.5 font-medium text-gray-600 text-xs">Driver</th>
+                    <th className="text-center px-3 py-2.5 font-medium text-gray-600 text-xs">Current</th>
+                    <th className="text-center px-3 py-2.5 font-medium text-gray-400 text-xs">→</th>
+                    <th className="text-center px-3 py-2.5 font-medium text-gray-600 text-xs">After</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {distributePreview.routes.map(r => {
+                    const diff = r.previewStopCount - r.currentStopCount;
+                    const previewColor = diff > 0 ? 'text-amber-600 font-semibold' : diff < 0 ? 'text-green-600 font-semibold' : 'text-gray-700';
+                    return (
+                      <tr key={r.routeId} className="hover:bg-gray-50">
+                        <td className="px-4 py-2.5 text-gray-800">{r.driverName}</td>
+                        <td className="px-3 py-2.5 text-center text-gray-500">{r.currentStopCount}</td>
+                        <td className="px-3 py-2.5 text-center text-gray-300 text-xs">→</td>
+                        <td className={`px-3 py-2.5 text-center ${previewColor}`}>{r.previewStopCount}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" size="sm" onClick={() => setShowDistributePreview(false)} disabled={autoDistributing}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={autoDistribute} loading={autoDistributing}>
+                <MoveRight size={13} /> Confirm Distribution
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );
