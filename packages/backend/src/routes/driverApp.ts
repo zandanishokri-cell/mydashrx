@@ -10,6 +10,21 @@ import type { StopStatus } from '@mydash-rx/shared';
 import { todayInTz } from '../utils/date.js';
 
 export const driverAppRoutes: FastifyPluginAsync = async (app) => {
+  // GET /driver/me — driver profile + status
+  app.get('/me', {
+    preHandler: requireRole('driver'),
+  }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
+    const [driver] = await db
+      .select({ id: drivers.id, name: drivers.name, status: drivers.status })
+      .from(drivers)
+      .where(eq(drivers.id, driverId))
+      .limit(1);
+    if (!driver) return reply.code(404).send({ error: 'Not found' });
+    return driver;
+  });
+
   // GET /driver/me/routes — driver's active routes
   app.get('/me/routes', {
     preHandler: requireRole('driver'),
@@ -349,6 +364,24 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const matches = text.match(/c[2-5]/gi) ?? [];
     for (const m of matches) { const u = m.toUpperCase(); if (!schedules.includes(u)) schedules.push(u); }
     return { required: stop.controlledSubstance || schedules.length > 0, schedules };
+  });
+
+  // PATCH /driver/me/status — driver sets their own available/offline status
+  app.patch('/me/status', {
+    preHandler: requireRole('driver'),
+  }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string };
+    const driverId = user.driverId ?? user.sub;
+    const { status } = req.body as { status?: string };
+    if (status !== 'available' && status !== 'offline') {
+      return reply.code(400).send({ error: 'status must be available or offline' });
+    }
+    const [updated] = await db.update(drivers)
+      .set({ status })
+      .where(eq(drivers.id, driverId))
+      .returning({ status: drivers.status });
+    if (!updated) return reply.code(404).send({ error: 'Driver not found' });
+    return { status: updated.status };
   });
 
   // POST /driver/me/location — driver pings current location

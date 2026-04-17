@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { MapPin, Clock, ChevronRight, LogOut, CheckCircle2, Circle } from 'lucide-react';
@@ -21,13 +21,42 @@ export default function DriverHomePage() {
   const [routes, setRoutes] = useState<MyRoute[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [driverStatus, setDriverStatus] = useState<'available' | 'offline' | 'on_route'>('available');
+  const [toggling, setToggling] = useState(false);
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    api.get<MyRoute[]>('/driver/me/routes')
-      .then(setRoutes)
-      .catch(() => setError('Could not load your routes'))
-      .finally(() => setLoading(false));
+    Promise.all([
+      api.get<MyRoute[]>('/driver/me/routes'),
+      api.get<{ status: 'available' | 'offline' | 'on_route' }>('/driver/me'),
+    ]).then(([r, me]) => {
+      setRoutes(r);
+      setDriverStatus(me.status);
+    }).catch(() => setError('Could not load your routes')).finally(() => setLoading(false));
   }, []);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(''), 4000);
+  };
+
+  const toggleStatus = async () => {
+    if (toggling || driverStatus === 'on_route') return;
+    const next = driverStatus === 'available' ? 'offline' : 'available';
+    const prev = driverStatus;
+    setDriverStatus(next);
+    setToggling(true);
+    try {
+      await api.patch<{ status: string }>('/driver/me/status', { status: next });
+    } catch {
+      setDriverStatus(prev);
+      showToast('Could not update status. Try again.');
+    } finally {
+      setToggling(false);
+    }
+  };
 
   const signOut = () => {
     localStorage.clear();
@@ -56,7 +85,29 @@ export default function DriverHomePage() {
           </button>
         </div>
         <p className="text-blue-300 text-sm mt-3">{today}</p>
+        {/* Status toggle */}
+        <button
+          onClick={toggleStatus}
+          disabled={toggling || driverStatus === 'on_route'}
+          className="mt-4 flex items-center gap-2 px-3.5 py-2 rounded-xl bg-blue-700/50 hover:bg-blue-700/80 disabled:opacity-60 disabled:cursor-not-allowed transition-colors text-sm font-medium min-h-[40px]"
+          aria-label="Toggle availability status"
+        >
+          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${driverStatus === 'available' ? 'bg-emerald-400' : driverStatus === 'on_route' ? 'bg-blue-300' : 'bg-gray-400'}`} />
+          {driverStatus === 'available' ? 'Available' : driverStatus === 'on_route' ? 'On Route' : 'Offline'}
+          {driverStatus !== 'on_route' && (
+            <span className="text-blue-300 text-xs ml-1">
+              {toggling ? '…' : `→ ${driverStatus === 'available' ? 'Go Offline' : 'Go Available'}`}
+            </span>
+          )}
+        </button>
       </div>
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">
+          {toast}
+        </div>
+      )}
 
       <div className="px-4 py-5">
         {loading ? (

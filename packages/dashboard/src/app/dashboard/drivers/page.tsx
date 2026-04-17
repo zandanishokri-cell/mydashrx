@@ -16,7 +16,7 @@ interface Driver {
   totalStops: number;
 }
 
-interface DriverPerf { completionRate: number; summary: { totalStops: number } }
+interface BulkPerf { [driverId: string]: { completionRate: number; totalStops: number } }
 
 const STATUS_DOT: Record<string, string> = {
   available: 'bg-emerald-500',
@@ -47,19 +47,19 @@ export default function DriversPage() {
       setDrivers(data);
       setFiltered(data);
       setLoadError(false);
-      // Fetch completion rates for all drivers in parallel
-      Promise.allSettled(
-        data.map(d =>
-          api.get<DriverPerf>(`/orgs/${user.orgId}/drivers/${d.id}/performance`)
-            .then(p => ({ id: d.id, rate: p.summary.totalStops > 0 ? p.completionRate : -1 }))
-        )
-      ).then(results => {
-        const map: Record<string, number> = {};
-        for (const r of results) {
-          if (r.status === 'fulfilled') map[r.value.id] = r.value.rate;
-        }
-        setPerfMap(map);
-      });
+      // Single bulk query instead of N parallel per-driver calls
+      if (data.length > 0) {
+        const ids = data.map(d => d.id).join(',');
+        api.get<BulkPerf>(`/orgs/${user.orgId}/drivers/performance/bulk?driverIds=${ids}`)
+          .then(bulk => {
+            const map: Record<string, number> = {};
+            for (const [id, perf] of Object.entries(bulk)) {
+              map[id] = perf.totalStops > 0 ? perf.completionRate : -1;
+            }
+            setPerfMap(map);
+          })
+          .catch(() => { /* perf data optional — don't block UI */ });
+      }
     } catch {
       setLoadError(true);
     } finally {

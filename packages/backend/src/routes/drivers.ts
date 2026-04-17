@@ -162,6 +162,54 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(204).send();
   });
 
+  // GET /orgs/:orgId/drivers/performance/bulk?driverIds=id1,id2
+  app.get('/performance/bulk', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { driverIds: rawIds } = req.query as { driverIds?: string };
+    if (!rawIds?.trim()) return reply.code(400).send({ error: 'driverIds query param required' });
+    const ids = rawIds.split(',').map(s => s.trim()).filter(Boolean).slice(0, 100);
+    if (ids.length === 0) return reply.code(400).send({ error: 'No valid driverIds' });
+
+    const from = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.now() - 30 * 86400000));
+    const fromTs = new Date(from + 'T00:00:00Z');
+    const toTs = new Date(todayInTz() + 'T23:59:59Z');
+
+    // Single query: all stops for all requested drivers in the org over last 30 days
+    const rows = await db
+      .select({
+        driverId: routes.driverId,
+        total: sql<number>`count(${stops.id})::int`,
+        completed: sql<number>`count(case when ${stops.status} = 'completed' then 1 end)::int`,
+      })
+      .from(stops)
+      .innerJoin(routes, eq(stops.routeId, routes.id))
+      .where(and(
+        eq(stops.orgId, orgId),
+        inArray(routes.driverId, ids),
+        isNull(stops.deletedAt),
+        gte(stops.createdAt, fromTs),
+        lte(stops.createdAt, toTs),
+      ))
+      .groupBy(routes.driverId);
+
+    const result: Record<string, { completionRate: number; totalStops: number }> = {};
+    for (const r of rows) {
+      if (r.driverId) {
+        result[r.driverId] = {
+          completionRate: r.total > 0 ? Math.round((r.completed / r.total) * 1000) / 10 : 0,
+          totalStops: r.total,
+        };
+      }
+    }
+    // Fill in zeros for drivers with no stops in range
+    for (const id of ids) {
+      if (!result[id]) result[id] = { completionRate: 0, totalStops: 0 };
+    }
+    return result;
+  });
+
   app.get('/:driverId/performance', {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
