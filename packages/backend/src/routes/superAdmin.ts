@@ -1,7 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { db } from '../db/connection.js';
 import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens } from '../db/schema.js';
-import { eq, isNull, sql, gte, count, and, desc, lt, or, isNotNull } from 'drizzle-orm';
+import { eq, isNull, sql, gte, count, and, desc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 const PLAN_PRICES: Record<string, number> = {
@@ -64,6 +65,25 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
     const revenueEstimate = allOrgs.reduce((sum, o) => sum + (PLAN_PRICES[o.billingPlan] ?? 0), 0);
 
+    // P-ADM12: approval funnel health
+    const since7d = new Date(Date.now() - 7 * 86400000);
+    const [approvedLast7d, rejectedLast7d, pendingOrgs] = await Promise.all([
+      db.select({ count: sql<number>`count(*)::int` }).from(organizations)
+        .where(and(isNull(organizations.deletedAt), sql`${organizations.approvedAt} >= ${since7d.toISOString()}`)),
+      db.select({ count: sql<number>`count(*)::int` }).from(organizations)
+        .where(and(isNull(organizations.deletedAt), sql`${organizations.rejectedAt} >= ${since7d.toISOString()}`)),
+      db.select({ createdAt: organizations.createdAt }).from(organizations)
+        .where(and(eq(organizations.pendingApproval, true), isNull(organizations.deletedAt))),
+    ]);
+    const nowMs = Date.now();
+    const pendingOver24h = pendingOrgs.filter(o => nowMs - new Date(o.createdAt).getTime() > 24 * 3600_000).length;
+    const approvedWithTime = await db.select({ createdAt: organizations.createdAt, approvedAt: organizations.approvedAt })
+      .from(organizations).where(and(isNull(organizations.deletedAt), isNotNull(organizations.approvedAt)));
+    const hoursArr = approvedWithTime
+      .filter(o => o.approvedAt)
+      .map(o => (new Date(o.approvedAt!).getTime() - new Date(o.createdAt).getTime()) / 3600_000);
+    const avgHoursToApproval = hoursArr.length ? Math.round(hoursArr.reduce((s, h) => s + h, 0) / hoursArr.length * 10) / 10 : null;
+
     return {
       totalOrgs: allOrgs.length,
       activeOrgs: activeOrgRows.length,
@@ -76,6 +96,13 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         stops30d: r.stops30d,
       })),
       revenueEstimate,
+      approvalHealth: {
+        pending: pendingOrgs.length,
+        approvedLast7d: approvedLast7d[0]?.count ?? 0,
+        rejectedLast7d: rejectedLast7d[0]?.count ?? 0,
+        pendingOver24h,
+        avgHoursToApproval,
+      },
     };
   });
 
@@ -244,11 +271,26 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
           to: admin.email,
           subject: `Welcome to MyDashRx — ${org.name} is approved!`,
           html: `
-            <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
-              <h2 style="color:#0F4C81;margin:0 0 8px">You're approved!</h2>
+            <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+              <h2 style="color:#0F4C81;margin:0 0 8px">You're approved — let's get delivering!</h2>
               <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${admin.name},</p>
-              <p style="color:#374151;margin:0 0 24px;font-size:15px"><strong>${org.name}</strong> has been approved on MyDashRx. You can now sign in and start managing your deliveries.</p>
-              <a href="${dashUrl}/login" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Sign in to MyDashRx</a>
+              <p style="color:#374151;margin:0 0 24px;font-size:15px"><strong>${org.name}</strong> is now live on MyDashRx. Complete these 3 steps and you'll have your first delivery route running today.</p>
+              <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:16px 20px;margin-bottom:24px">
+                <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px">
+                  <span style="background:#0F4C81;color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">1</span>
+                  <div><p style="margin:0;font-size:14px;font-weight:600;color:#0c4a6e">Add your depot</p><p style="margin:2px 0 0;font-size:13px;color:#0369a1">Your pharmacy location — used as the route start point</p></div>
+                </div>
+                <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px">
+                  <span style="background:#0F4C81;color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">2</span>
+                  <div><p style="margin:0;font-size:14px;font-weight:600;color:#0c4a6e">Add a driver</p><p style="margin:2px 0 0;font-size:13px;color:#0369a1">They'll get the app + their first route automatically</p></div>
+                </div>
+                <div style="display:flex;align-items:flex-start;gap:12px">
+                  <span style="background:#0F4C81;color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">3</span>
+                  <div><p style="margin:0;font-size:14px;font-weight:600;color:#0c4a6e">Create your first delivery plan</p><p style="margin:2px 0 0;font-size:13px;color:#0369a1">Import stops via CSV or add individually</p></div>
+                </div>
+              </div>
+              <a href="${dashUrl}/login?welcome=1" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;margin-bottom:16px">Sign in &amp; start setup →</a>
+              <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Need help? Reply to this email or book a 15-min setup call: <a href="mailto:onboarding@mydashrx.com?subject=Setup%20call%20for%20${encodeURIComponent(org.name)}" style="color:#0F4C81">onboarding@mydashrx.com</a></p>
             </div>`,
         }),
       }).catch((e: unknown) => { console.error('[Resend] approval email failed:', e); });
@@ -330,6 +372,85 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .limit(50);
   });
 
+  // GET /admin/approvals/:orgId/approve-link — P-ADM11: HMAC-signed one-click approve URL
+  app.get('/approvals/:orgId/approve-link', { preHandler: auth }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const secret = process.env.MAGIC_LINK_SECRET ?? 'fallback-secret';
+    const exp = Math.floor(Date.now() / 1000) + 48 * 3600; // 48hr expiry
+    const payload = `${orgId}:${exp}`;
+    const sig = createHmac('sha256', secret).update(payload).digest('hex');
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+    return { url: `${dashUrl}/admin/approve?orgId=${orgId}&exp=${exp}&sig=${sig}` };
+  });
+
+  // GET /admin/approvals/approve — P-ADM11: validate HMAC, approve org, redirect
+  app.get('/approvals/approve', async (req, reply) => {
+    const { orgId, exp, sig } = req.query as { orgId?: string; exp?: string; sig?: string };
+    if (!orgId || !exp || !sig) return reply.code(400).send({ error: 'Missing parameters' });
+    const secret = process.env.MAGIC_LINK_SECRET ?? 'fallback-secret';
+    const payload = `${orgId}:${exp}`;
+    const expected = createHmac('sha256', secret).update(payload).digest('hex');
+    const sigBuf = Buffer.from(sig, 'hex');
+    const expBuf = Buffer.from(expected, 'hex');
+    if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+      return reply.code(401).send({ error: 'Invalid or tampered link' });
+    }
+    if (Math.floor(Date.now() / 1000) > parseInt(exp, 10)) {
+      return reply.code(410).send({ error: 'Link expired' });
+    }
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+    if (!org.pendingApproval) return reply.redirect(`${process.env.DASHBOARD_URL ?? ''}/admin/approvals?already=approved`);
+    await db.update(organizations).set({ pendingApproval: false, approvedAt: new Date() }).where(eq(organizations.id, orgId));
+    await db.update(users).set({ pendingApproval: false }).where(and(eq(users.orgId, orgId), isNull(users.deletedAt)));
+    const [admin] = await db.select({ email: users.email, name: users.name })
+      .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
+    const resendKey = process.env.RESEND_API_KEY;
+    const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+    if (admin && resendKey) {
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+        body: JSON.stringify({
+          from: `MyDashRx <noreply@${senderDomain}>`,
+          to: admin.email,
+          subject: `Welcome to MyDashRx — ${org.name} is approved!`,
+          html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px"><h2 style="color:#0F4C81;margin:0 0 8px">You're approved — let's get delivering!</h2><p style="color:#374151;margin:0 0 24px;font-size:15px">Hi ${admin.name}, <strong>${org.name}</strong> is now live on MyDashRx.</p><a href="${dashUrl}/login?welcome=1" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;">Sign in &amp; start setup →</a></div>`,
+        }),
+      }).catch((e: unknown) => { console.error('[ADM11] welcome email failed:', e); });
+    }
+    await logAuditAction('email-link', 'email-approve', 'approve_org', orgId, org.name);
+    return reply.redirect(`${dashUrl}/admin/approvals?approved=${orgId}`);
+  });
+
+  // GET /admin/users/zero-scope — P-RBAC7: dispatchers/pharmacists with no depot assignments
+  app.get('/users/zero-scope', { preHandler: auth }, async () => {
+    const zeroScopeUsers = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        role: users.role,
+        orgId: users.orgId,
+        orgName: organizations.name,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .innerJoin(organizations, eq(users.orgId, organizations.id))
+      .where(
+        and(
+          inArray(users.role, ['dispatcher', 'pharmacist']),
+          sql`${users.depotIds}::jsonb = '[]'::jsonb`,
+          isNull(users.deletedAt),
+          eq(organizations.pendingApproval, false),
+          isNull(organizations.deletedAt),
+        )
+      )
+      .orderBy(users.createdAt);
+    return { count: zeroScopeUsers.length, users: zeroScopeUsers };
+  });
+
   // POST /admin/jobs/approval-reminders — P-CNV1: 90min/4hr re-engagement for pending approvals
   app.post('/jobs/approval-reminders', { preHandler: auth }, async () => {
     const now = new Date();
@@ -370,6 +491,37 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         }).catch((e: unknown) => { console.error('[CNV1] 90min email failed:', e); });
         await db.update(organizations)
           .set({ approvalReminderSentAt: { ...(org.approvalReminderSentAt as object ?? {}), t90: now.toISOString() } })
+          .where(eq(organizations.id, org.id));
+        sent++;
+      }
+
+      // P-ADM10: 24hr admin escalation — email all super_admins when signup pending ≥23hr
+      const sentAdminEsc = (org.approvalReminderSentAt as any)?.adminEsc24h;
+      if (ageMin >= 23 * 60 && !sentAdminEsc) {
+        const superAdmins = await db.select({ email: users.email, name: users.name })
+          .from(users)
+          .where(and(eq(users.role, 'super_admin'), isNull(users.deletedAt)));
+        for (const sa of superAdmins) {
+          if (!resendKey) continue;
+          fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+            body: JSON.stringify({
+              from: `MyDashRx Alerts <noreply@${senderDomain}>`,
+              to: sa.email,
+              subject: `[ACTION NEEDED] ${org.name} has been waiting 24hr for approval`,
+              track_clicks: false,
+              html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+                <h2 style="color:#dc2626;margin:0 0 8px">⚠ Pending approval: 24+ hours</h2>
+                <p style="color:#374151;font-size:15px">Hi ${sa.name}, <strong>${org.name}</strong> submitted their pharmacy application over 24 hours ago and is still awaiting approval.</p>
+                <p style="color:#374151;font-size:15px">Applied by: ${admin.email}</p>
+                <a href="${dashUrl}/admin/approvals" style="display:inline-block;background:#dc2626;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Review application →</a>
+              </div>`,
+            }),
+          }).catch((e: unknown) => { console.error('[ADM10] admin escalation email failed:', e); });
+        }
+        await db.update(organizations)
+          .set({ approvalReminderSentAt: { ...(org.approvalReminderSentAt as object ?? {}), adminEsc24h: now.toISOString() } })
           .where(eq(organizations.id, org.id));
         sent++;
       }

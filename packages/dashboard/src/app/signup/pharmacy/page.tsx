@@ -42,11 +42,16 @@ const validateEmail = (v: string) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? '' : 'Please enter a valid work email';
 };
 
+// P-CNV11: detect 409 duplicate account error
+const isDuplicateError = (msg: string) =>
+  msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('already registered');
+
 export default function PharmacySignupPage() {
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState(emptyForm);
   const [emailError, setEmailError] = useState('');
   const [draftSaved, setDraftSaved] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false); // P-CNV10
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -54,7 +59,14 @@ export default function PharmacySignupPage() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(DRAFT_KEY);
-      if (saved) setForm(JSON.parse(saved));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // P-CNV10: only restore if there's meaningful data
+        if (Object.values(parsed).some((v: unknown) => typeof v === 'string' && (v as string).trim())) {
+          setForm(parsed);
+          setDraftRestored(true);
+        }
+      }
     } catch { /* ignore */ }
   }, []);
 
@@ -135,6 +147,23 @@ export default function PharmacySignupPage() {
           <a href="/login" className="text-xs text-gray-400 hover:text-gray-600">← Back to sign in</a>
           {draftSaved && <span className="text-xs text-gray-400">Draft saved</span>}
         </div>
+
+        {/* P-CNV10: draft restoration banner */}
+        {draftRestored && (
+          <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+            <p className="text-xs text-amber-700">Resuming your saved application.</p>
+            <button
+              onClick={() => {
+                localStorage.removeItem(DRAFT_KEY);
+                setForm(emptyForm);
+                setDraftRestored(false);
+              }}
+              className="text-xs text-amber-600 hover:text-amber-800 font-medium underline-offset-2 hover:underline"
+            >
+              Start fresh
+            </button>
+          </div>
+        )}
         <h1 className="text-2xl font-bold text-[#0F4C81] mb-1" style={{ fontFamily: 'var(--font-sora)' }}>
           Join MyDashRx
         </h1>
@@ -193,7 +222,20 @@ export default function PharmacySignupPage() {
               {form.orgPhone && <> · {form.orgPhone}</>}
             </div>
 
-            {error && <p className="text-red-500 text-sm">{error}</p>}
+            {/* P-CNV11: actionable error display with sign-in/support links on 409 */}
+            {error && (
+              <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2.5">
+                <p className="text-red-600 text-sm">{error}</p>
+                {isDuplicateError(error) && (
+                  <p className="text-xs text-red-500 mt-1.5">
+                    Already submitted?{' '}
+                    <a href="/login" className="font-medium underline hover:text-red-700">Sign in here</a>
+                    {' '}or{' '}
+                    <a href="mailto:support@mydashrx.com" className="font-medium underline hover:text-red-700">contact support</a>.
+                  </p>
+                )}
+              </div>
+            )}
             <div className="flex gap-3">
               <button onClick={() => setStep(1)} className="flex-1 border border-gray-200 text-gray-600 rounded-lg py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors">Back</button>
               <button

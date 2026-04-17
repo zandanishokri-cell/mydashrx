@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { isAuthenticated, clearSession } from '@/lib/auth';
 
 const WARN_MS = 25 * 60_000;
@@ -8,6 +8,7 @@ const EVENTS = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'] as cons
 
 export function useIdleTimeout() {
   const router = useRouter();
+  const pathname = usePathname();
   const [showWarning, setShowWarning] = useState(false);
   const [countdown, setCountdown] = useState(300);
   const resetRef = useRef<() => void>(() => {});
@@ -22,7 +23,9 @@ export function useIdleTimeout() {
     const doLogout = () => {
       clearInterval(countdownInterval);
       clearSession();
-      router.replace('/login?reason=idle');
+      // P-UX3: preserve current path so user returns to same page after re-auth
+      const next = encodeURIComponent(pathname ?? '/dashboard');
+      router.replace(`/login?reason=idle&next=${next}`);
     };
 
     const reset = () => {

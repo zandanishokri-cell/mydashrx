@@ -135,7 +135,11 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       // P-SES6: Invalidate all outstanding refresh tokens when role changes
       updates.tokenVersion = sql`${users.tokenVersion} + 1`;
     }
-    if (body.depotIds !== undefined) updates.depotIds = body.depotIds;
+    if (body.depotIds !== undefined) {
+      updates.depotIds = body.depotIds;
+      // P-RBAC6: depot change invalidates AT immediately — same pattern as role change
+      updates.tokenVersion = sql`${users.tokenVersion} + 1`;
+    }
     const [updated] = await db
       .update(users)
       .set(updates)

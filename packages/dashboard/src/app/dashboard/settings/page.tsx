@@ -233,6 +233,7 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
   const [invite, setInvite] = useState({ name: '', email: '', role: 'dispatcher' as Role, depotIds: [] as string[] });
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState('');
+  const [inviteDepots, setInviteDepots] = useState<Depot[]>([]);
   const [editingRoleFor, setEditingRoleFor] = useState<string | null>(null);
   const [editRoleValue, setEditRoleValue] = useState<Role>('dispatcher');
   const [savingRole, setSavingRole] = useState(false);
@@ -250,6 +251,9 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
   }, [orgId]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    api.get<Depot[]>(`/orgs/${orgId}/depots`).then(setInviteDepots).catch(() => {});
+  }, [orgId]);
 
   const handleInvite = async () => {
     if (!invite.name || !invite.email) { setInviteError('Name and email are required'); return; }
@@ -365,8 +369,15 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <Badge role={m.role} />
+                      {/* P-RBAC7: amber badge for zero-scope dispatchers/pharmacists */}
+                      {(m.role === 'dispatcher' || m.role === 'pharmacist') &&
+                        Array.isArray(m.depotIds) && m.depotIds.length === 0 && (
+                        <span className="inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                          ⚠ No depot access
+                        </span>
+                      )}
                       {m.id !== currentUserId && m.role !== 'super_admin' && (
                         <button onClick={() => startEditRole(m)}
                           className="p-1 rounded text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors">
@@ -427,6 +438,35 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
                   <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                 </div>
               </div>
+              {/* P-RBAC3-UI: depot selector for roles that are scoped by depot */}
+              {(invite.role === 'dispatcher' || invite.role === 'pharmacist') && inviteDepots.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Depot Access <span className="text-gray-400 font-normal">(select at least one)</span>
+                  </label>
+                  <div className="space-y-1 max-h-32 overflow-y-auto border border-gray-200 rounded-md p-2">
+                    {inviteDepots.map(depot => (
+                      <label key={depot.id} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                        <input
+                          type="checkbox"
+                          checked={invite.depotIds.includes(depot.id)}
+                          onChange={e => setInvite(p => ({
+                            ...p,
+                            depotIds: e.target.checked
+                              ? [...p.depotIds, depot.id]
+                              : p.depotIds.filter(id => id !== depot.id),
+                          }))}
+                          className="rounded border-gray-300"
+                        />
+                        {depot.name}
+                      </label>
+                    ))}
+                  </div>
+                  {invite.depotIds.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">⚠ No depots selected — this user will have no access to routes, plans, or stops.</p>
+                  )}
+                </div>
+              )}
               {inviteError && <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} />{inviteError}</p>}
             </div>
             <div className="flex gap-3 mt-5">
