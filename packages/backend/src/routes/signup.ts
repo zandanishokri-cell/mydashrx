@@ -25,6 +25,37 @@ const acceptInviteSchema = z.object({
   name: z.string().min(2).max(100),
 });
 
+async function sendApplicantConfirmation(orgName: string, adminEmail: string, adminName: string) {
+  const resendKey = process.env.RESEND_API_KEY;
+  const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+  if (!resendKey) return;
+  await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+    body: JSON.stringify({
+      from: `MyDashRx <noreply@${senderDomain}>`,
+      to: adminEmail,
+      subject: `We received your application — ${orgName}`,
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+          <h2 style="color:#0F4C81;margin:0 0 8px">Application received!</h2>
+          <p style="color:#374151;margin:0 0 16px;font-size:15px">Hi ${adminName},</p>
+          <p style="color:#374151;margin:0 0 16px;font-size:15px">
+            We've received your application for <strong>${orgName}</strong> and our team will review it within
+            <strong>2–4 business hours</strong>.
+          </p>
+          <p style="color:#374151;margin:0 0 8px;font-size:14px;font-weight:600;">While you wait, get a head start:</p>
+          <ul style="color:#374151;font-size:14px;padding-left:20px;margin:0 0 24px">
+            <li style="margin-bottom:6px">Gather your pharmacy NPI number and state license</li>
+            <li style="margin-bottom:6px">Prepare your staff list with names and email addresses</li>
+            <li style="margin-bottom:6px">Download the MyDashRx driver app so drivers are ready on day one</li>
+          </ul>
+          <p style="color:#6b7280;font-size:13px">Questions? Reply to this email or contact <a href="mailto:support@mydashrx.com" style="color:#0F4C81;">support@mydashrx.com</a>.</p>
+        </div>`,
+    }),
+  }).catch((e: unknown) => { console.error('[Resend] applicant confirmation failed:', e); });
+}
+
 async function notifySuperAdmins(orgName: string, adminEmail: string) {
   const resendKey = process.env.RESEND_API_KEY;
   const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
@@ -84,8 +115,9 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     });
 
     notifySuperAdmins(orgName, adminEmail).catch((e: unknown) => { console.error('[Resend] pharmacy signup notify failed:', e); });
+    sendApplicantConfirmation(orgName, adminEmail, adminName).catch((e: unknown) => { console.error('[Resend] applicant confirmation failed:', e); });
 
-    return reply.code(201).send({ message: 'Application submitted. You will hear from us within 24 hours.' });
+    return reply.code(201).send({ message: 'Application submitted. You will hear from us within 2–4 business hours.' });
   });
 
   // ─── Driver Signup ────────────────────────────────────────────────────────

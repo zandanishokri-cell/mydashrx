@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { drivers, stops, routes, plans } from '../db/schema.js';
+import { drivers, stops, routes, plans, users } from '../db/schema.js';
 import { eq, and, isNull, sql, gte, lte, inArray } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { hashPassword } from '../services/auth.js';
@@ -82,6 +82,17 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
       passwordHash, drugCapable: body.drugCapable ?? false,
       vehicleType: body.vehicleType ?? 'car',
     }).returning();
+
+    // Create corresponding users record so driver can authenticate via /auth/login
+    await db.insert(users).values({
+      orgId,
+      email: body.email,
+      name: body.name,
+      role: 'driver',
+      passwordHash,
+      mustChangePassword: true,
+      depotIds: [],
+    }).onConflictDoNothing();
 
     const { passwordHash: _, ...safe } = driver;
     return reply.code(201).send(safe);

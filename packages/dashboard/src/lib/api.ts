@@ -1,3 +1,5 @@
+import { clearSession } from './auth';
+
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -14,7 +16,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
     if (res.status === 401 && typeof window !== 'undefined') {
-      ['accessToken', 'refreshToken', 'user'].forEach(k => localStorage.removeItem(k));
+      clearSession();
       window.location.replace('/login');
     }
     throw new Error(`API ${res.status}: ${text}`);

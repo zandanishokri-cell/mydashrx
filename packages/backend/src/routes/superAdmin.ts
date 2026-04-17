@@ -1,12 +1,23 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { organizations, users, stops, drivers } from '../db/schema.js';
-import { eq, isNull, sql, gte, count, and } from 'drizzle-orm';
+import { organizations, users, stops, drivers, adminAuditLogs } from '../db/schema.js';
+import { eq, isNull, sql, gte, count, and, desc } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 const PLAN_PRICES: Record<string, number> = {
   starter: 0, growth: 99, pro: 249, enterprise: 499,
 };
+
+async function logAuditAction(
+  actorId: string, actorEmail: string,
+  action: string, targetId: string, targetName: string,
+  metadata?: Record<string, unknown>
+) {
+  await db.insert(adminAuditLogs).values({
+    actorId, actorEmail, action, targetId, targetName,
+    metadata: metadata ?? null,
+  }).catch((e: unknown) => { console.error('[AuditLog] insert failed:', e); });
+}
 
 export const superAdminRoutes: FastifyPluginAsync = async (app) => {
   const auth = requireRole('super_admin');
@@ -240,8 +251,11 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
               <a href="${dashUrl}/login" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Sign in to MyDashRx</a>
             </div>`,
         }),
-      }).catch(() => {});
+      }).catch((e: unknown) => { console.error('[Resend] approval email failed:', e); });
     }
+
+    const actor = req.user as { sub: string; email: string };
+    await logAuditAction(actor.sub, actor.email, 'approve_org', orgId, org.name);
 
     return { success: true, orgId };
   });
@@ -280,8 +294,11 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
               <p style="color:#6b7280;font-size:13px">If you believe this is an error, contact <a href="mailto:support@mydashrx.com">support@mydashrx.com</a>.</p>
             </div>`,
         }),
-      }).catch(() => {});
+      }).catch((e: unknown) => { console.error('[Resend] approval email failed:', e); });
     }
+
+    const actor = req.user as { sub: string; email: string };
+    await logAuditAction(actor.sub, actor.email, 'reject_org', orgId, org.name, { reason: reason ?? null });
 
     return { success: true, orgId };
   });
@@ -297,5 +314,14 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     ));
 
     return { success: true, processed: orgIds.length };
+  });
+
+  // GET /admin/audit-log — last 50 approval/rejection actions (HIPAA §164.312(b))
+  app.get('/audit-log', { preHandler: auth }, async () => {
+    return db
+      .select()
+      .from(adminAuditLogs)
+      .orderBy(desc(adminAuditLogs.createdAt))
+      .limit(50);
   });
 };

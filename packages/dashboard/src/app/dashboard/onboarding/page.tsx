@@ -77,12 +77,14 @@ export default function OnboardingPage() {
           <StepDepot
             orgId={user?.orgId ?? ''}
             onSuccess={() => { setCompletedDepot(true); setStep(3); }}
+            onSkip={() => setStep(3)}
           />
         )}
         {step === 3 && (
           <StepDriver
             orgId={user?.orgId ?? ''}
             onSuccess={() => { setCompletedDriver(true); setStep(4); }}
+            onSkip={() => setStep(4)}
           />
         )}
         {step === 4 && (
@@ -125,7 +127,7 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
   );
 }
 
-function StepDepot({ orgId, onSuccess }: { orgId: string; onSuccess: () => void }) {
+function StepDepot({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: () => void; onSkip: () => void }) {
   const [form, setForm] = useState({ name: '', address: '', phone: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -186,11 +188,18 @@ function StepDepot({ orgId, onSuccess }: { orgId: string; onSuccess: () => void 
           Save Depot <ArrowRight size={15} />
         </Button>
       </form>
+      <button
+        type="button"
+        onClick={onSkip}
+        className="mt-3 w-full text-center text-xs text-gray-400 hover:text-gray-600 transition-colors"
+      >
+        Skip for now — I'll add my depot in Settings →
+      </button>
     </div>
   );
 }
 
-function StepDriver({ orgId, onSuccess }: { orgId: string; onSuccess: () => void }) {
+function StepDriver({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: () => void; onSkip: () => void }) {
   const [form, setForm] = useState({
     name: '', email: '', phone: '', password: '',
     vehicleType: 'car' as 'car' | 'van' | 'bicycle',
@@ -242,6 +251,13 @@ function StepDriver({ orgId, onSuccess }: { orgId: string; onSuccess: () => void
           Add Driver <ArrowRight size={15} />
         </Button>
       </form>
+      <button
+        type="button"
+        onClick={onSkip}
+        className="mt-3 w-full text-center text-xs text-gray-400 hover:text-gray-600 transition-colors"
+      >
+        Skip for now — I'll add drivers in Settings →
+      </button>
     </div>
   );
 }

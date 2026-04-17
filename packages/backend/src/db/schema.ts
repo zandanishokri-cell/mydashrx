@@ -500,6 +500,18 @@ export const staffInvitations = pgTable('staff_invitations', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (t) => ({ orgIdx: index('staff_inv_org_idx').on(t.orgId) }));
 
+// ─── Admin Audit Logs (HIPAA §164.312(b)) ────────────────────────────────────
+export const adminAuditLogs = pgTable('admin_audit_logs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  actorId: uuid('actor_id').notNull().references(() => users.id),
+  actorEmail: text('actor_email').notNull(),
+  action: text('action').notNull(), // 'approve_org' | 'reject_org' | 'batch_approve' | 'batch_reject' | 'role_change' | 'depot_assign' | 'depot_remove' | 'user_deactivate'
+  targetId: uuid('target_id').notNull(),
+  targetName: text('target_name').notNull(),
+  metadata: jsonb('metadata'),      // { reason?: string, batchSize?: number, oldRole?: string, newRole?: string }
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({ actorIdx: index('audit_actor_idx').on(t.actorId) }));
+
 // ─── Magic Link Tokens ────────────────────────────────────────────────────────
 export const magicLinkTokens = pgTable('magic_link_tokens', {
   id: uuid('id').primaryKey().defaultRandom(),
