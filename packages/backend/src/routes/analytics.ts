@@ -46,9 +46,9 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     const total = Object.values(byStatus).reduce((s, v) => s + v, 0);
     const completed = byStatus['completed'] ?? 0;
     const failed = byStatus['failed'] ?? 0;
-    const returned = byStatus['returned'] ?? 0;
-    // successRate/failureRate denominators only count terminal statuses (completed + failed + returned)
-    const terminalTotal = completed + failed + returned;
+    const rescheduled = byStatus['rescheduled'] ?? 0;
+    // successRate/failureRate denominators only count terminal statuses (completed + failed + rescheduled)
+    const terminalTotal = completed + failed + rescheduled;
     const successRate = terminalTotal > 0 ? Math.round((completed / terminalTotal) * 1000) / 10 : 0;
     const failureRate = terminalTotal > 0 ? Math.round((failed / terminalTotal) * 1000) / 10 : 0;
 
@@ -71,12 +71,13 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       .groupBy(sql`DATE(${stops.createdAt})`, stops.status);
 
     // Pivot daily data
-    const dayMap: Record<string, { date: string; total: number; completed: number; failed: number }> = {};
+    const dayMap: Record<string, { date: string; total: number; completed: number; failed: number; rescheduled: number }> = {};
     for (const r of dailyRaw) {
-      if (!dayMap[r.day]) dayMap[r.day] = { date: r.day, total: 0, completed: 0, failed: 0 };
+      if (!dayMap[r.day]) dayMap[r.day] = { date: r.day, total: 0, completed: 0, failed: 0, rescheduled: 0 };
       dayMap[r.day].total += r.cnt;
       if (r.status === 'completed') dayMap[r.day].completed += r.cnt;
       if (r.status === 'failed') dayMap[r.day].failed += r.cnt;
+      if (r.status === 'rescheduled') dayMap[r.day].rescheduled += r.cnt;
     }
     const daily = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
 
@@ -98,7 +99,9 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
     const driverStatsNamed = driverStats.map(d => ({ ...d, driverName: d.driverName ?? 'Unknown Driver' }));
     const activeDriverCount = driverStatsNamed.filter(d => d.total > 0).length;
-    const avgPerDriver = activeDriverCount > 0 ? Math.round(total / activeDriverCount) : 0;
+    // Use routed-stop total (from driverStats) so unassigned stops don't inflate avg
+    const routedTotal = driverStatsNamed.reduce((s, d) => s + d.total, 0);
+    const avgPerDriver = activeDriverCount > 0 ? Math.round(routedTotal / activeDriverCount) : 0;
 
     // Top performers: top 3 by completion rate (min 1 delivery)
     const topPerformers = driverStatsNamed

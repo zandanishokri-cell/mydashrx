@@ -15,7 +15,7 @@ interface AnalyticsData {
     avgDeliveryTime: number | null;
     onTimeRate: number | null;
   };
-  daily: { date: string; total: number; completed: number; failed: number }[];
+  daily: { date: string; total: number; completed: number; failed: number; rescheduled: number }[];
   failureReasons: { reason: string; count: number }[];
   drivers: DriverStat[];
   depots: { depotId: string; depotName: string; total: number; completed: number }[];
@@ -62,10 +62,15 @@ function HBar({ label, pct, value, color = '#0F4C81' }: { label: string; pct: nu
 }
 
 /** SVG sparkline showing completion rate trend per day */
-function TrendSparkline({ data }: { data: { date: string; total: number; completed: number; failed: number }[] }) {
+function TrendSparkline({ data }: { data: { date: string; total: number; completed: number; failed: number; rescheduled: number }[] }) {
+  // Use terminal stops only (completed+failed+returned) as denominator
+  // so in-progress stops on today's date don't deflate the rate
   const pts = data.filter(d => d.total > 0).slice(-14);
   if (pts.length < 2) return null;
-  const rates = pts.map(d => (d.completed / d.total) * 100);
+  const rates = pts.map(d => {
+    const terminal = d.completed + d.failed + (d.rescheduled ?? 0);
+    return terminal > 0 ? (d.completed / terminal) * 100 : 0;
+  });
   const avgRate = rates.reduce((s, v) => s + v, 0) / rates.length;
   const trend = rates[rates.length - 1] - rates[0];
   const W = 400, H = 56;
@@ -109,25 +114,33 @@ function TrendSparkline({ data }: { data: { date: string; total: number; complet
 }
 
 /** Vertical grouped bar chart for daily totals */
-function DailyBars({ data }: { data: { date: string; total: number; completed: number; failed: number }[] }) {
+function DailyBars({ data }: { data: { date: string; total: number; completed: number; failed: number; rescheduled: number }[] }) {
   if (data.length === 0) return <div className="flex items-center justify-center h-40 text-gray-400 text-sm">No data for this period</div>;
   const maxVal = Math.max(...data.map(d => d.total), 1);
   return (
     <div className="overflow-x-auto">
       <div className="flex items-end gap-1 min-w-0 h-40" style={{ minWidth: data.length * 32 }}>
-        {data.map(d => (
-          <div key={d.date} className="flex flex-col items-center gap-0.5 flex-1 min-w-[28px]">
-            <div className="w-full flex items-end gap-px" style={{ height: 120 }}>
-              <div className="flex-1 rounded-t transition-all" style={{ height: `${(d.completed / maxVal) * 100}%`, background: '#00B8A9', minHeight: d.completed > 0 ? 2 : 0 }} title={`Completed: ${d.completed}`} />
-              <div className="flex-1 rounded-t transition-all" style={{ height: `${(d.failed / maxVal) * 100}%`, background: '#ef4444', minHeight: d.failed > 0 ? 2 : 0 }} title={`Failed: ${d.failed}`} />
+        {data.map(d => {
+          const resch = d.rescheduled ?? 0;
+          const other = Math.max(0, d.total - d.completed - d.failed - resch);
+          return (
+            <div key={d.date} className="flex flex-col items-center gap-0.5 flex-1 min-w-[28px]">
+              <div className="w-full flex items-end gap-px" style={{ height: 120 }}>
+                <div className="flex-1 rounded-t transition-all" style={{ height: `${(d.completed / maxVal) * 100}%`, background: '#00B8A9', minHeight: d.completed > 0 ? 2 : 0 }} title={`Completed: ${d.completed}`} />
+                <div className="flex-1 rounded-t transition-all" style={{ height: `${(d.failed / maxVal) * 100}%`, background: '#ef4444', minHeight: d.failed > 0 ? 2 : 0 }} title={`Failed: ${d.failed}`} />
+                {resch > 0 && <div className="flex-1 rounded-t transition-all" style={{ height: `${(resch / maxVal) * 100}%`, background: '#f59e0b', minHeight: 2 }} title={`Rescheduled: ${resch}`} />}
+                {other > 0 && <div className="flex-1 rounded-t transition-all" style={{ height: `${(other / maxVal) * 100}%`, background: '#d1d5db', minHeight: 2 }} title={`In progress: ${other}`} />}
+              </div>
+              <span className="text-[9px] text-gray-400 rotate-45 origin-top-left translate-x-1">{d.date.slice(5)}</span>
             </div>
-            <span className="text-[9px] text-gray-400 rotate-45 origin-top-left translate-x-1">{d.date.slice(5)}</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <div className="flex items-center gap-4 mt-6 text-xs text-gray-500">
         <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-[#00B8A9]" /> Completed</span>
         <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-[#ef4444]" /> Failed</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-[#f59e0b]" /> Rescheduled</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-gray-300" /> In progress</span>
       </div>
     </div>
   );
@@ -164,8 +177,8 @@ export default function AnalyticsPage() {
 
     // Daily summary
     sections.push('DAILY SUMMARY');
-    sections.push(['Date', 'Total', 'Completed', 'Failed'].join(','));
-    sections.push(...data.daily.map(d => [d.date, d.total, d.completed, d.failed].join(',')));
+    sections.push(['Date', 'Total', 'Completed', 'Failed', 'Rescheduled'].join(','));
+    sections.push(...data.daily.map(d => [d.date, d.total, d.completed, d.failed, d.rescheduled ?? 0].join(',')));
 
     // Driver breakdown
     sections.push('');
@@ -197,10 +210,12 @@ export default function AnalyticsPage() {
       ].join(',')));
     }
 
+    const url = URL.createObjectURL(new Blob([sections.join('\n')], { type: 'text/csv' }));
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([sections.join('\n')], { type: 'text/csv' }));
+    a.href = url;
     a.download = `analytics-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -448,7 +463,7 @@ export default function AnalyticsPage() {
               ? data.daily.reduce((best, d) => d.completed > best.completed ? d : best)
               : null;
             const mostReliable = data.drivers.filter(d => d.total > 0)
-              .sort((a, b) => (b.completed / b.total) - (a.completed / a.total))[0];
+              .sort((a, b) => (b.completed / b.total) - (a.completed / a.total))[0]; // total is routed stops; completed/total is completion rate
             const topFailure = data.failureReasons.length > 0
               ? data.failureReasons.reduce((top, r) => r.count > top.count ? r : top)
               : null;
