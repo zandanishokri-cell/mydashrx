@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { recurringDeliveries, stops, routes, plans, depots } from '../db/schema.js';
 import { eq, and, isNull, lte, inArray } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { geocodeAddress } from '../utils/geocode.js';
 
 // All date arithmetic is done in UTC ms to avoid local-timezone drift.
@@ -37,7 +37,7 @@ function combineDateTime(date: Date, timeStr: string | null | undefined): Date |
 export const recurringRoutes: FastifyPluginAsync = async (app) => {
   // List
   app.get('/', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     return db.select().from(recurringDeliveries)
@@ -47,7 +47,7 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
 
   // Create
   app.post('/', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as {
@@ -121,7 +121,7 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
 
   // Update — scoped to orgId to prevent cross-org mutation
   app.patch('/:id', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, id } = req.params as { orgId: string; id: string };
     const body = req.body as Record<string, unknown>;
@@ -162,7 +162,7 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
 
   // Soft delete — scoped to orgId to prevent cross-org deletion
   app.delete('/:id', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, id } = req.params as { orgId: string; id: string };
     const [deleted] = await db.update(recurringDeliveries)
@@ -175,7 +175,7 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
 
   // Generate stops for due recurring deliveries
   app.post('/generate', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { date, planId } = req.body as { date: string; planId?: string };

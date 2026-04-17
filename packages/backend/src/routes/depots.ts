@@ -2,17 +2,17 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { depots } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 
 export const depotRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
-    preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin'),
+    preHandler: requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     return db.select().from(depots).where(and(eq(depots.orgId, orgId), isNull(depots.deletedAt)));
   });
 
-  app.post('/', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+  app.post('/', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as {
       name: string; address: string; lat: number; lng: number; phone?: string;
@@ -21,7 +21,7 @@ export const depotRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(depot);
   });
 
-  app.put('/:depotId', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+  app.put('/:depotId', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
     const { orgId, depotId } = req.params as { orgId: string; depotId: string };
     const body = req.body as Partial<{ name: string; address: string; lat: number; lng: number; phone: string }>;
     // Whitelist updatable fields — prevents injection of orgId/deletedAt/id
@@ -39,7 +39,7 @@ export const depotRoutes: FastifyPluginAsync = async (app) => {
     return updated;
   });
 
-  app.delete('/:depotId', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+  app.delete('/:depotId', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
     const { orgId, depotId } = req.params as { orgId: string; depotId: string };
     const result = await db.update(depots).set({ deletedAt: new Date() })
       .where(and(eq(depots.id, depotId), eq(depots.orgId, orgId), isNull(depots.deletedAt)))

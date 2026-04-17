@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { miComplianceItems, regulatoryUpdates } from '../db/schema.js';
 import { eq, and, count, sql } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 
 const ADMIN_ROLES = ['pharmacy_admin', 'super_admin'] as const;
 const READ_ROLES = ['pharmacy_admin', 'super_admin', 'pharmacist'] as const;
@@ -61,7 +61,7 @@ function categoryStatus(items: { status: string }[]): string {
 
 export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   // Dashboard
-  app.get('/dashboard', { preHandler: requireRole(...READ_ROLES) }, async (req) => {
+  app.get('/dashboard', { preHandler: requireOrgRole(...READ_ROLES) }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const items = await db.select().from(miComplianceItems).where(eq(miComplianceItems.orgId, orgId));
     const updates = await db.select().from(regulatoryUpdates).where(eq(regulatoryUpdates.orgId, orgId));
@@ -93,7 +93,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // List items
-  app.get('/items', { preHandler: requireRole(...READ_ROLES) }, async (req) => {
+  app.get('/items', { preHandler: requireOrgRole(...READ_ROLES) }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { category } = req.query as { category?: string };
     const where = category
@@ -103,7 +103,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Create item
-  app.post('/items', { preHandler: requireRole(...ADMIN_ROLES) }, async (req, reply) => {
+  app.post('/items', { preHandler: requireOrgRole(...ADMIN_ROLES) }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as { category: string; itemName: string; legalRef?: string; notes?: string; dueDate?: string };
     if (!body.itemName?.trim()) return reply.code(400).send({ error: 'itemName is required' });
@@ -123,7 +123,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
 
   // Update item
   const VALID_MI_ITEM_STATUSES = ['compliant', 'warning', 'non_compliant', 'pending'];
-  app.patch('/items/:id', { preHandler: requireRole(...ADMIN_ROLES) }, async (req, reply) => {
+  app.patch('/items/:id', { preHandler: requireOrgRole(...ADMIN_ROLES) }, async (req, reply) => {
     const { orgId, id } = req.params as { orgId: string; id: string };
     const body = req.body as { status?: string; notes?: string; dueDate?: string };
     if (body.status !== undefined && !VALID_MI_ITEM_STATUSES.includes(body.status)) {
@@ -143,7 +143,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Init — seed default checklist
-  app.post('/init', { preHandler: requireRole(...ADMIN_ROLES) }, async (req, reply) => {
+  app.post('/init', { preHandler: requireOrgRole(...ADMIN_ROLES) }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const existing = await db.select({ cnt: sql<number>`count(*)::int` })
       .from(miComplianceItems).where(eq(miComplianceItems.orgId, orgId));
@@ -162,7 +162,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // List regulatory updates
-  app.get('/regulatory', { preHandler: requireRole(...READ_ROLES) }, async (req) => {
+  app.get('/regulatory', { preHandler: requireOrgRole(...READ_ROLES) }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { unacknowledged } = req.query as { unacknowledged?: string };
     const where = unacknowledged === 'true'
@@ -173,7 +173,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
 
   // Add regulatory update
   const VALID_IMPACT_LEVELS = ['critical', 'high', 'medium', 'low'];
-  app.post('/regulatory', { preHandler: requireRole(...ADMIN_ROLES) }, async (req, reply) => {
+  app.post('/regulatory', { preHandler: requireOrgRole(...ADMIN_ROLES) }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as { title: string; summary: string; source: string; impactLevel?: string; effectiveDate?: string; url?: string };
     if (!body.title?.trim() || !body.summary?.trim()) return reply.code(400).send({ error: 'title and summary are required' });
@@ -196,7 +196,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Acknowledge regulatory update
-  app.patch('/regulatory/:id', { preHandler: requireRole(...ADMIN_ROLES) }, async (req, reply) => {
+  app.patch('/regulatory/:id', { preHandler: requireOrgRole(...ADMIN_ROLES) }, async (req, reply) => {
     const { orgId, id } = req.params as { orgId: string; id: string };
     const [update] = await db.update(regulatoryUpdates)
       .set({ acknowledged: true, acknowledgedAt: new Date() })

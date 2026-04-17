@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { leadProspects, leadOutreachLog, users } from '../db/schema.js';
 import { eq, and, isNull, ilike, or, sql, desc } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { generateOutreachDraft } from '../services/aiDraft.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ function parseCityState(address: string): { city: string; state: string; zip: st
 // ─── Routes ───────────────────────────────────────────────────────────────────
 export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
   // Leads are sales intelligence — restricted to admin roles only (not dispatchers)
-  const auth = requireRole('pharmacy_admin', 'super_admin');
+  const auth = requireOrgRole('pharmacy_admin', 'super_admin');
 
   // GET /orgs/:orgId/leads/stats
   app.get('/stats', { preHandler: auth }, async (req) => {

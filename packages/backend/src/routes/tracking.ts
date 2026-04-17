@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, drivers, plans, driverLocationHistory } from '../db/schema.js';
 import { eq, and, isNull, inArray } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { todayInTz } from '../utils/date.js';
 
 // HIPAA-safe: "Smith, J." format
@@ -83,7 +83,7 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orgs/:orgId/tracking/live
   app.get('/live', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
 
@@ -190,7 +190,7 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orgs/:orgId/tracking/route/:routeId
   app.get('/route/:routeId', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, routeId } = req.params as { orgId: string; routeId: string };
 
@@ -272,7 +272,7 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /orgs/:orgId/tracking/ping — driver location ping
   app.post('/ping', {
-    preHandler: requireRole('driver'),
+    preHandler: requireOrgRole('driver'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { lat, lng } = req.body as { lat: number; lng: number };

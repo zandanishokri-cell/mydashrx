@@ -2,11 +2,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { baaRegistry, auditLogs, complianceChecks, miComplianceItems, complianceScoreHistory } from '../db/schema.js';
 import { eq, and, gte, lte, desc, sql, count } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { runComplianceScan, isDeploymentBlocked } from '../compliance/scanner.js';
 
-const ADMIN = requireRole('pharmacy_admin', 'super_admin');
-const ADMIN_READ = requireRole('pharmacy_admin', 'super_admin', 'pharmacist');
+const ADMIN = requireOrgRole('pharmacy_admin', 'super_admin');
+const ADMIN_READ = requireOrgRole('pharmacy_admin', 'super_admin', 'pharmacist');
 
 function computeScannerScore(findings: { severity: string; count: number }[]): number {
   const p0 = findings.filter(f => f.severity === 'P0' && f.count > 0).length;

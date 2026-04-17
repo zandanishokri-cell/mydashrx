@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, depots } from '../db/schema.js';
 import { eq, isNull, and, inArray } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { todayInTz } from '../utils/date.js';
 import { geocodeAddress } from '../utils/geocode.js';
 import { checkStopLimit } from '../utils/usageLimits.js';
@@ -28,7 +28,7 @@ function parseCsv(text: string): Array<Record<string, string>> {
 
 export const importRoutes: FastifyPluginAsync = async (app) => {
   app.post('/stops/import', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
 

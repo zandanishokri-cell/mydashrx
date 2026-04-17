@@ -2,12 +2,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers } from '../db/schema.js';
 import { eq, and, isNull, gte, lte, sql, inArray } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
-import { requireOrg } from '../middleware/requireOrg.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
-    preHandler: [requireOrg, requireRole('dispatcher', 'pharmacy_admin', 'super_admin')],
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { depotId, from, to } = req.query as { depotId?: string; from?: string; to?: string };

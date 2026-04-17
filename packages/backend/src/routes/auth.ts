@@ -32,6 +32,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(401).send({ error: 'Invalid credentials' });
     }
     if (user.deletedAt) return reply.code(401).send({ error: 'Account deactivated' });
+    if (user.pendingApproval) return reply.code(403).send({ pendingApproval: true, error: 'Your account is pending admin approval.' });
 
     // For drivers, look up their drivers table record to include driverId in JWT
     let driverId: string | undefined;

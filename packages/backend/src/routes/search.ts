@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers, leadProspects, proofOfDeliveries, notificationLogs } from '../db/schema.js';
 import { eq, and, isNull, ilike, or, gte, lte, sql, inArray, ne } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { checkAndNotifyRouteComplete } from './stops.js';
 import { geocodeAddress } from '../utils/geocode.js';
 import { checkStopLimit } from '../utils/usageLimits.js';
@@ -10,7 +10,7 @@ import { checkStopLimit } from '../utils/usageLimits.js';
 export const searchRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/stops — filterable stop list (used by Stops page + Search page)
   app.get('/stops', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { q, depotId, status, from, to, driverId, unassigned, page = '1', limit = '50' } = req.query as {
@@ -115,7 +115,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orgs/:orgId/stops/:stopId — full stop detail with POD and route context
   app.get('/stops/:stopId', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'pharmacist'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin', 'pharmacist'),
   }, async (req, reply) => {
     const { orgId, stopId } = req.params as { orgId: string; stopId: string };
 
@@ -209,7 +209,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /orgs/:orgId/stops/bulk-action — bulk status update for dispatcher
   app.post('/stops/bulk-action', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { stopIds, action } = req.body as { stopIds: string[]; action: string };
@@ -251,7 +251,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orgs/:orgId/routes — list non-completed routes for reassign picker
   app.get('/routes', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
 
@@ -287,7 +287,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /orgs/:orgId/stops/bulk-reassign — move selected stops to a different route
   app.post('/stops/bulk-reassign', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { stopIds, targetRouteId } = req.body as { stopIds: string[]; targetRouteId: string };
@@ -339,7 +339,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orgs/:orgId/search — global search across stops, drivers, leads
   app.get('/search', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { q = '', type = 'all' } = req.query as { q?: string; type?: string };
@@ -429,7 +429,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /orgs/:orgId/stops/:stopId — update stop fields (priority, notes, etc.)
   app.patch('/stops/:stopId', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, stopId } = req.params as { orgId: string; stopId: string };
     const body = req.body as Record<string, unknown>;
@@ -455,7 +455,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /orgs/:orgId/stops — create a single unassigned stop (no route required)
   app.post('/stops', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as {

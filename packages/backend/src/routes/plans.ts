@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { plans, routes, stops, depots, drivers } from '../db/schema.js';
 import { eq, and, isNull, inArray, notInArray, or, sql } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { optimizeRoute } from '../services/routeOptimizer.js';
 import { sendRouteReadyNotifications } from '../services/notifications.js';
 
@@ -30,7 +30,7 @@ function angularDistribute(
 
 export const planRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
-    preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin'),
+    preHandler: requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { date, depotId } = req.query as { date?: string; depotId?: string };
@@ -53,7 +53,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/:planId', {
-    preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin'),
+    preHandler: requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
     const [plan] = await db.select().from(plans)
@@ -65,7 +65,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { depotId, date } = req.body as { depotId: string; date: string };
@@ -80,7 +80,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.patch('/:planId/distribute', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
 
@@ -109,7 +109,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:planId/optimize', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
 
@@ -236,7 +236,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.delete('/:planId', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
     // Verify ownership before cascade
@@ -260,7 +260,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
 
   // Preview endpoint: dry-run auto-distribute without writing to DB
   app.get('/:planId/auto-distribute/preview', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
 
@@ -346,7 +346,7 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:planId/auto-distribute', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
     const { stopIds: explicitStopIds } = req.body as { stopIds?: string[] };

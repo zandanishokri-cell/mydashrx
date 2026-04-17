@@ -2,14 +2,14 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { drivers, stops, routes, plans } from '../db/schema.js';
 import { eq, and, isNull, sql, gte, lte, inArray } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { hashPassword } from '../services/auth.js';
 import { checkDriverLimit } from '../utils/usageLimits.js';
 import { todayInTz } from '../utils/date.js';
 
 export const driverRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
-    preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin'),
+    preHandler: requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     // Include total stop count (all time) and today's stop count
@@ -32,7 +32,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/:driverId', {
-    preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin', 'driver'),
+    preHandler: requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin', 'driver'),
   }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     // Drivers may only view their own profile
@@ -55,7 +55,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     return driver;
   });
 
-  app.post('/', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+  app.post('/', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as {
       name: string; email: string; phone: string; password: string;
@@ -88,7 +88,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GPS ping from driver app
-  app.post('/:driverId/ping', { preHandler: requireRole('driver', 'super_admin') }, async (req, reply) => {
+  app.post('/:driverId/ping', { preHandler: requireOrgRole('driver', 'super_admin') }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const { lat, lng } = req.body as { lat: number; lng: number };
     // Drivers can only ping for themselves; super_admin can ping any
@@ -105,7 +105,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  app.patch('/:driverId/status', { preHandler: requireRole('driver', 'dispatcher', 'super_admin') }, async (req, reply) => {
+  app.patch('/:driverId/status', { preHandler: requireOrgRole('driver', 'dispatcher', 'super_admin') }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const { status } = req.body as { status: 'available' | 'on_route' | 'offline' };
     if (!['available', 'on_route', 'offline'].includes(status)) {
@@ -123,7 +123,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     return { id: updated.id, status: updated.status };
   });
 
-  app.patch('/:driverId', { preHandler: requireRole('pharmacy_admin', 'dispatcher', 'super_admin') }, async (req, reply) => {
+  app.patch('/:driverId', { preHandler: requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin') }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const raw = req.body as Record<string, unknown>;
     // Whitelist: only allow safe, non-credential fields to prevent injection of passwordHash/email/status/deletedAt
@@ -141,7 +141,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     return safe;
   });
 
-  app.delete('/:driverId', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+  app.delete('/:driverId', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     // Block deletion if driver has an active route (scope to org via plans join)
     const [activeRoute] = await db
@@ -164,7 +164,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orgs/:orgId/drivers/performance/bulk?driverIds=id1,id2
   app.get('/performance/bulk', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { driverIds: rawIds } = req.query as { driverIds?: string };
@@ -211,7 +211,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/:driverId/performance', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const query = req.query as { from?: string; to?: string };

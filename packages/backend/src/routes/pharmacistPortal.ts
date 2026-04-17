@@ -2,12 +2,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes } from '../db/schema.js';
 import { eq, and, isNull, desc, gte, lte, sql } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 
 export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/pharmacist/queue
   app.get('/queue', {
-    preHandler: requireRole('pharmacist', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('pharmacist', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const todayStart = new Date();
@@ -113,7 +113,7 @@ export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /orgs/:orgId/stops/:stopId/pharmacist-approve
   app.post('/:stopId/pharmacist-approve', {
-    preHandler: requireRole('pharmacist', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('pharmacist', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, stopId } = req.params as { orgId: string; stopId: string };
     const user = req.user as { sub: string; name?: string };
@@ -139,7 +139,7 @@ export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /orgs/:orgId/pharmacist/bulk-approve
   app.post('/bulk-approve', {
-    preHandler: requireRole('pharmacist', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('pharmacist', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { stopIds } = req.body as { stopIds: string[] };
@@ -169,7 +169,7 @@ export const pharmacistPortalRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orgs/:orgId/pharmacist/analytics
   app.get('/analytics', {
-    preHandler: requireRole('pharmacist', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('pharmacist', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const now = new Date();

@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { automationRules, automationLog } from '../db/schema.js';
 import { eq, and, desc, lte } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { executeRule } from '../services/automation.js';
 
 const authRoles = ['dispatcher', 'pharmacy_admin', 'super_admin'] as const;
@@ -49,7 +49,7 @@ const SAMPLE_DATA: Record<string, Record<string, string>> = {
 
 export const automationRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/automation/rules
-  app.get('/rules', { preHandler: requireRole(...authRoles) }, async (req) => {
+  app.get('/rules', { preHandler: requireOrgRole(...authRoles) }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     return db.select().from(automationRules)
       .where(eq(automationRules.orgId, orgId))
@@ -57,7 +57,7 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /orgs/:orgId/automation/rules
-  app.post('/rules', { preHandler: requireRole(...authRoles) }, async (req, reply) => {
+  app.post('/rules', { preHandler: requireOrgRole(...authRoles) }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as {
       name: string;
@@ -107,7 +107,7 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /orgs/:orgId/automation/rules/:ruleId
-  app.get('/rules/:ruleId', { preHandler: requireRole(...authRoles) }, async (req, reply) => {
+  app.get('/rules/:ruleId', { preHandler: requireOrgRole(...authRoles) }, async (req, reply) => {
     const { orgId, ruleId } = req.params as { orgId: string; ruleId: string };
     const [rule] = await db.select().from(automationRules)
       .where(and(eq(automationRules.id, ruleId), eq(automationRules.orgId, orgId)))
@@ -117,7 +117,7 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // PATCH /orgs/:orgId/automation/rules/:ruleId
-  app.patch('/rules/:ruleId', { preHandler: requireRole(...authRoles) }, async (req, reply) => {
+  app.patch('/rules/:ruleId', { preHandler: requireOrgRole(...authRoles) }, async (req, reply) => {
     const { orgId, ruleId } = req.params as { orgId: string; ruleId: string };
     const body = req.body as Partial<{
       name: string;
@@ -159,7 +159,7 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // DELETE /orgs/:orgId/automation/rules/:ruleId
-  app.delete('/rules/:ruleId', { preHandler: requireRole(...authRoles) }, async (req, reply) => {
+  app.delete('/rules/:ruleId', { preHandler: requireOrgRole(...authRoles) }, async (req, reply) => {
     const { orgId, ruleId } = req.params as { orgId: string; ruleId: string };
     const [deleted] = await db.delete(automationRules)
       .where(and(eq(automationRules.id, ruleId), eq(automationRules.orgId, orgId)))
@@ -169,7 +169,7 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /orgs/:orgId/automation/rules/:ruleId/test — fire with sample data, no side effects
-  app.post('/rules/:ruleId/test', { preHandler: requireRole(...authRoles) }, async (req, reply) => {
+  app.post('/rules/:ruleId/test', { preHandler: requireOrgRole(...authRoles) }, async (req, reply) => {
     const { orgId, ruleId } = req.params as { orgId: string; ruleId: string };
     const [rule] = await db.select().from(automationRules)
       .where(and(eq(automationRules.id, ruleId), eq(automationRules.orgId, orgId)))
@@ -185,7 +185,7 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /orgs/:orgId/automation/log
-  app.get('/log', { preHandler: requireRole(...authRoles) }, async (req) => {
+  app.get('/log', { preHandler: requireOrgRole(...authRoles) }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { ruleId } = req.query as { ruleId?: string };
     const conditions = [eq(automationLog.orgId, orgId)];
@@ -197,7 +197,7 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /orgs/:orgId/automation/seed-defaults
-  app.post('/seed-defaults', { preHandler: requireRole(...authRoles) }, async (req, reply) => {
+  app.post('/seed-defaults', { preHandler: requireOrgRole(...authRoles) }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const existing = await db.select({ id: automationRules.id }).from(automationRules)
       .where(eq(automationRules.orgId, orgId)).limit(1);

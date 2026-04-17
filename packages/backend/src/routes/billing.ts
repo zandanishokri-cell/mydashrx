@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { organizations, stops, drivers } from '../db/schema.js';
 import { eq, and, gte, isNull, count } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 
 const PLANS = {
   starter:    { name: 'Starter',    price: 0,    stopLimit: 100,  driverLimit: 2,  features: ['Basic dispatch', 'Stop tracking', 'Analytics'] },
@@ -34,7 +34,7 @@ async function stripePost(path: string, params: Record<string, string>): Promise
 // Org-scoped billing routes (prefix: /api/v1/orgs/:orgId/billing)
 export const billingRoutes: FastifyPluginAsync = async (app) => {
   // GET /billing/plan
-  app.get('/plan', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+  app.get('/plan', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const user = req.user as { orgId: string; role: string };
     if (user.role !== 'super_admin' && user.orgId !== orgId) return reply.code(403).send({ error: 'Forbidden' });
@@ -78,12 +78,12 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /billing/plans
-  app.get('/plans', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async () => {
+  app.get('/plans', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async () => {
     return Object.entries(PLANS).map(([key, plan]) => ({ key, ...plan }));
   });
 
   // POST /billing/checkout
-  app.post('/checkout', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+  app.post('/checkout', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const user = req.user as { orgId: string; role: string };
     if (user.role !== 'super_admin' && user.orgId !== orgId) return reply.code(403).send({ error: 'Forbidden' });
@@ -141,7 +141,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /billing/portal
-  app.post('/portal', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+  app.post('/portal', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const user = req.user as { orgId: string; role: string };
     if (user.role !== 'super_admin' && user.orgId !== orgId) return reply.code(403).send({ error: 'Forbidden' });

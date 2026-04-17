@@ -2,13 +2,13 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, drivers } from '../db/schema.js';
 import { eq, and, isNull, isNotNull, sql, inArray, desc } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { todayInTz } from '../utils/date.js';
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/dashboard/summary
   app.get('/summary', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const q = req.query as { depotId?: string };
@@ -83,7 +83,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orgs/:orgId/dashboard/drivers — fleet status for Command Center
   app.get('/drivers', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const q = req.query as { depotId?: string };
@@ -166,7 +166,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orgs/:orgId/dashboard/today — single aggregate: plans + routes + stops
   app.get('/today', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const q = req.query as { date?: string; depotId?: string };

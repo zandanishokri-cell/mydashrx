@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, drivers, users } from '../db/schema.js';
 import { eq, and, isNull, isNotNull, gte, inArray, or, sql } from 'drizzle-orm';
-import { requireRole } from '../middleware/requireRole.js';
+import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { checkStopLimit, checkDriverLimit } from '../utils/usageLimits.js';
 
 type NotifEvent = {
@@ -62,7 +62,7 @@ async function getUsageAlert(orgId: string): Promise<NotifEvent | null> {
 export const notificationRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/notifications
   app.get('/', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
 
