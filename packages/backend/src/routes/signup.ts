@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { createHash, randomBytes } from 'crypto';
+import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
 import { z } from 'zod';
 import { db } from '../db/connection.js';
 import { organizations, users, drivers, staffInvitations } from '../db/schema.js';
@@ -8,8 +8,8 @@ import { hashPassword, signTokens, findUserByEmail } from '../services/auth.js';
 
 const pharmacySignupSchema = z.object({
   orgName: z.string().min(2).max(120),
-  orgPhone: z.string().min(7).max(20),
-  orgAddress: z.string().min(5).max(200),
+  orgPhone: z.string().min(7).max(20).optional(),
+  orgAddress: z.string().min(5).max(200).optional(),
   adminName: z.string().min(2).max(100),
   adminEmail: z.string().email(),
 });
@@ -176,7 +176,8 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const token = randomBytes(32).toString('hex');
-    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const INVITE_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? 'fallback';
+    const tokenHash = createHmac('sha256', INVITE_SECRET).update(token).digest('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
     await db.insert(staffInvitations).values({
@@ -221,18 +222,26 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request' });
     const { token, name } = parsed.data;
 
-    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const INVITE_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? 'fallback';
+    const tokenHash = createHmac('sha256', INVITE_SECRET).update(token).digest('hex');
     const [invite] = await db
       .select()
       .from(staffInvitations)
       .where(and(
-        eq(staffInvitations.tokenHash, tokenHash),
         isNull(staffInvitations.acceptedAt),
         gt(staffInvitations.expiresAt, new Date()),
       ))
       .limit(1);
 
-    if (!invite) return reply.code(400).send({ error: 'This invitation is invalid or has expired.' });
+    // Timing-safe comparison to prevent oracle attacks
+    const validInvite = invite && (() => {
+      try {
+        const a = Buffer.from(invite.tokenHash, 'hex');
+        const b = Buffer.from(tokenHash, 'hex');
+        return a.length === b.length && timingSafeEqual(a, b);
+      } catch { return false; }
+    })();
+    if (!validInvite) return reply.code(400).send({ error: 'This invitation is invalid or has expired.' });
 
     const existing = await findUserByEmail(invite.email);
     if (existing) {
@@ -246,7 +255,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
 
     const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
     const [user] = await db.insert(users).values({
-      orgId: invite.orgId, email: invite.email, passwordHash, name, role: invite.role,
+      orgId: invite.orgId, email: invite.email, passwordHash, name, role: invite.role, mustChangePassword: true,
     }).returning();
 
     await db.update(staffInvitations).set({ acceptedAt: new Date() }).where(eq(staffInvitations.id, invite.id));
@@ -265,7 +274,8 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     const { token } = req.query as { token?: string };
     if (!token) return reply.code(400).send({ error: 'Token required' });
 
-    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const INVITE_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? 'fallback';
+    const tokenHash = createHmac('sha256', INVITE_SECRET).update(token).digest('hex');
     const [invite] = await db
       .select({ email: staffInvitations.email, role: staffInvitations.role, expiresAt: staffInvitations.expiresAt })
       .from(staffInvitations)

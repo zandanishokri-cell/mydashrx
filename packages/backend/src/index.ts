@@ -60,7 +60,7 @@ try {
   console.error('Migration warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
-const app = Fastify({ logger: true });
+const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(cors, {
   origin: process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app',
@@ -78,7 +78,12 @@ await app.register(jwt, {
 await app.register(rateLimit, {
   max: process.env.NODE_ENV === 'production' ? 300 : 10000,
   timeWindow: '1 minute',
-  keyGenerator: (req) => req.ip,
+  // Take leftmost X-Forwarded-For entry (real client IP behind Render proxy)
+  keyGenerator: (req) => {
+    const xff = req.headers['x-forwarded-for'];
+    if (xff) return (Array.isArray(xff) ? xff[0] : xff).split(',')[0].trim();
+    return req.ip;
+  },
 });
 
 await app.register(multipart, {

@@ -1,11 +1,23 @@
 import type { FastifyPluginAsync } from 'fastify';
 import crypto from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, drivers } from '../db/schema.js';
+import { organizations, users, drivers, adminAuditLogs } from '../db/schema.js';
 import { eq, isNull, and } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import bcrypt from 'bcryptjs';
 import { checkDriverLimit } from '../utils/usageLimits.js';
+
+async function logRoleChange(
+  actorId: string, actorEmail: string,
+  targetId: string, targetEmail: string,
+  action: string, metadata: Record<string, unknown>
+) {
+  await db.insert(adminAuditLogs).values({
+    actorId, actorEmail, action,
+    targetId, targetName: targetEmail,
+    metadata,
+  }).catch((e: unknown) => { console.error('[AuditLog] role change insert failed:', e); });
+}
 
 export const organizationRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs — super_admin only
@@ -128,6 +140,17 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(users.id, userId), eq(users.orgId, orgId)))
       .returning({ id: users.id, orgId: users.orgId, email: users.email, name: users.name, role: users.role, depotIds: users.depotIds, createdAt: users.createdAt });
     if (!updated) return reply.code(404).send({ error: 'Not found' });
+
+    // HIPAA §164.312(b) — audit role/depot changes
+    if (body.role !== undefined || body.depotIds !== undefined) {
+      const actor = req.user as { id: string; email: string };
+      const action = body.role !== undefined ? 'role_change' : 'depot_assign';
+      await logRoleChange(actor.id, actor.email, updated.id, updated.email, action, {
+        ...(body.role !== undefined ? { newRole: body.role } : {}),
+        ...(body.depotIds !== undefined ? { newDepotIds: body.depotIds } : {}),
+      });
+    }
+
     return updated;
   });
 

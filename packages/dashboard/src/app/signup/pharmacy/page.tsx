@@ -126,16 +126,18 @@ export default function PharmacySignupPage() {
               <input value={form.orgName} onChange={set('orgName')} placeholder="Greater Care Pharmacy" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone number</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone number <span className="text-gray-400 font-normal">(optional)</span></label>
               <input value={form.orgPhone} onChange={set('orgPhone')} placeholder="(555) 000-0000" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+              <p className="text-xs text-gray-400 mt-1">You can add this in Settings after approval</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Address <span className="text-gray-400 font-normal">(optional)</span></label>
               <input value={form.orgAddress} onChange={set('orgAddress')} placeholder="123 Main St, Detroit, MI 48201" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+              <p className="text-xs text-gray-400 mt-1">You can add this in Settings after approval</p>
             </div>
             <button
               onClick={() => setStep(2)}
-              disabled={!form.orgName || !form.orgPhone || !form.orgAddress}
+              disabled={!form.orgName}
               className="w-full bg-[#0F4C81] text-white rounded-lg py-2.5 text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-40 transition-colors mt-2"
             >
               Continue
@@ -189,6 +191,17 @@ export default function PharmacySignupPage() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Trust signals */}
+      <div className="w-full max-w-lg mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-400">
+        <span>🔒 HIPAA-compliant</span>
+        <span>·</span>
+        <span>BAA available on request</span>
+        <span>·</span>
+        <span>Reviewed in 2–4 hours</span>
+        <span>·</span>
+        <span>Trusted by independent pharmacies nationwide</span>
       </div>
     </div>
   );
