@@ -114,7 +114,7 @@ export function LiveMap({
       markersRef.current = [];
 
       drivers.forEach((driver) => {
-        if (!driver.lat || !driver.lng) return;
+        if (driver.lat == null || driver.lng == null) return;
         const highlighted = driver.id === highlightedDriverId;
         const icon = L.divIcon({
           className: '',
@@ -132,7 +132,7 @@ export function LiveMap({
       });
 
       stops.forEach((stop) => {
-        if (!stop.lat || !stop.lng) return;
+        if (stop.lat == null || stop.lng == null) return;
         const color = STATUS_COLORS[stop.status] ?? '#94a3b8';
         const icon = L.divIcon({
           className: '',
@@ -140,9 +140,10 @@ export function LiveMap({
           iconSize: [24, 24],
           iconAnchor: [12, 12],
         });
-        L.marker([stop.lat, stop.lng], { icon })
+        const stopMarker = L.marker([stop.lat, stop.lng], { icon })
           .addTo(mapRef.current)
           .bindPopup(`<strong>${stop.recipientName}</strong><br>${stop.address}<br>Status: ${stop.status}`);
+        markersRef.current.push(stopMarker); // ensure cleanup on next render
       });
 
       // Draw route polyline connecting stops in sequence order
@@ -172,15 +173,28 @@ export function LiveMap({
     });
   }, [mapReady, drivers, stops, highlightedDriverId, depotLatLng, onMarkerClick]);
 
-  // When a driver is selected, pan to them so the user sees their route
+  // When a driver is selected, pan to their route; when deselected, refit all markers
   useEffect(() => {
-    if (!mapRef.current || !highlightedDriverId) return;
+    if (!mapRef.current) return;
     import('leaflet').then(() => {
-      const stopPoints = stops.filter((s) => s.lat && s.lng).map((s) => [s.lat, s.lng] as [number, number]);
+      if (!highlightedDriverId) {
+        // Deselected — refit to all visible drivers
+        const allPoints = drivers
+          .filter((d) => d.lat != null && d.lng != null)
+          .map((d) => [d.lat, d.lng] as [number, number]);
+        if (allPoints.length > 1) {
+          hasFitRef.current = false; // allow fitBounds in marker effect on next render
+          mapRef.current.fitBounds(allPoints, { padding: [40, 40], animate: true });
+        }
+        return;
+      }
+      const stopPoints = stops
+        .filter((s) => s.lat != null && s.lng != null)
+        .map((s) => [s.lat, s.lng] as [number, number]);
       const driver = drivers.find((d) => d.id === highlightedDriverId);
       if (stopPoints.length > 1) {
         mapRef.current.fitBounds(stopPoints, { padding: [40, 40], animate: true });
-      } else if (driver?.lat && driver?.lng) {
+      } else if (driver?.lat != null && driver?.lng != null) {
         mapRef.current.setView([driver.lat, driver.lng], 14, { animate: true });
       }
     });

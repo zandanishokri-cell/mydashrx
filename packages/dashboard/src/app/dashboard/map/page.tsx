@@ -68,8 +68,11 @@ const timeAgo = (iso: string | null): string => {
 const isStale = (iso: string | null) =>
   iso ? Date.now() - new Date(iso).getTime() > 5 * 60 * 1000 : false;
 
-const fmtTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const fmtTime = (iso: string | null | undefined): string => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+};
 
 export default function MapPage() {
   const [user] = useState(getUser);
@@ -79,6 +82,10 @@ export default function MapPage() {
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [secondsAgo, setSecondsAgo] = useState(0);
   const [highlightedDriverId, setHighlightedDriverId] = useState<string | null>(null);
+  const handleMarkerClick = useCallback(
+    (id: string) => setHighlightedDriverId((prev) => (prev === id ? null : id)),
+    [],
+  );
   const [routeStops, setRouteStops] = useState<StopMarker[]>([]);
   const [stopsLoading, setStopsLoading] = useState(false);
   const [stopsError, setStopsError] = useState(false);
@@ -211,7 +218,7 @@ export default function MapPage() {
               stops={routeStops}
               highlightedDriverId={highlightedDriverId}
               depotLatLng={null}
-              onMarkerClick={(id) => setHighlightedDriverId((prev) => (prev === id ? null : id))}
+              onMarkerClick={handleMarkerClick}
             />
           )}
         </div>

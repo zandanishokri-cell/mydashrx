@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, drivers, plans } from '../db/schema.js';
+import { stops, routes, drivers, plans, driverLocationHistory } from '../db/schema.js';
 import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { todayInTz } from '../utils/date.js';
@@ -165,7 +165,7 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
         .filter((s) => s.status !== 'completed' && s.status !== 'failed' && s.status !== 'rescheduled')
         .sort((a, b) => (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0))[0] ?? null;
 
-      const base = r.lastPingAt ? new Date(r.lastPingAt) : new Date();
+      const base = new Date(); // always project from now — stale lastPingAt produces past ETAs
       return {
         routeId: r.routeId,
         driverId: r.driverId,
@@ -231,7 +231,7 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(stops.sequenceNumber);
 
     const pending = routeStops.filter((s) => s.status !== 'completed' && s.status !== 'failed' && s.status !== 'rescheduled');
-    const base = route.lastPingAt ? new Date(route.lastPingAt) : new Date();
+    const base = new Date(); // always project from now — stale lastPingAt produces past ETAs
 
     return {
       routeId: route.id,
@@ -276,7 +276,9 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { lat, lng } = req.body as { lat: number; lng: number };
-    if (lat == null || lng == null) return reply.code(400).send({ error: 'lat/lng required' });
+    if (lat == null || lng == null || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return reply.code(400).send({ error: 'lat/lng required and must be valid coordinates' });
+    }
     // Use driverId from JWT — never from body (prevents GPS spoofing of other drivers)
     const jwtUser = req.user as { sub: string; driverId?: string };
     const driverId = jwtUser.driverId ?? jwtUser.sub;
@@ -285,6 +287,9 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
     await db.update(drivers)
       .set({ currentLat: lat, currentLng: lng, lastPingAt: now })
       .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId)));
+
+    // Append to location history (same as driverApp /me/location)
+    await db.insert(driverLocationHistory).values({ driverId, routeId: null, lat, lng, recordedAt: now });
 
     return { ok: true, recordedAt: now.toISOString() };
   });

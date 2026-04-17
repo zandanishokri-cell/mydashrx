@@ -354,10 +354,13 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   // POST /driver/me/location — driver pings current location
   app.post('/me/location', {
     preHandler: requireRole('driver'),
-  }, async (req) => {
+  }, async (req, reply) => {
     const user = req.user as { sub: string; driverId?: string };
     const driverId = user.driverId ?? user.sub;
     const { lat, lng, routeId } = req.body as { lat: number; lng: number; routeId?: string };
+    if (lat == null || lng == null || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return reply.code(400).send({ error: 'Invalid lat/lng' });
+    }
 
     const now = new Date();
     await db.update(drivers)
