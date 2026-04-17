@@ -81,6 +81,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     if (user.deletedAt) return reply.code(401).send({ error: 'Account deactivated' });
     if (user.pendingApproval) return reply.code(403).send({ pendingApproval: true, error: 'Your account is pending admin approval.' });
+    // P-ADM7: Check org rejection state
+    if (user.orgId) {
+      const [org] = await db.select({ rejectedAt: organizations.rejectedAt, rejectionReason: organizations.rejectionReason })
+        .from(organizations).where(eq(organizations.id, user.orgId)).limit(1);
+      if (org?.rejectedAt) {
+        return reply.code(403).send({ rejected: true, reason: org.rejectionReason, error: 'Your application was not approved.' });
+      }
+    }
 
     // P-LCK1: Reset failed attempts on successful login
     if ((user.failedLoginAttempts ?? 0) > 0) {
@@ -103,6 +111,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       role: user.role,
       orgId: user.orgId,
       depotIds: user.depotIds as string[],
+      ...(user.mustChangePassword ? { mustChangePw: true } : {}),
       ...(driverId ? { driverId } : {}),
     };
     const tokens = signTokens(app, payload, user.tokenVersion);
@@ -319,7 +328,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const tokens = signTokens(app, {
       sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
-      depotIds: user.depotIds as string[], ...(driverId ? { driverId } : {}),
+      depotIds: user.depotIds as string[],
+      ...(user.mustChangePassword ? { mustChangePw: true } : {}),
+      ...(driverId ? { driverId } : {}),
     }, user.tokenVersion);
     return reply.send({
       ...tokens,
@@ -349,5 +360,21 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return { user: updated };
+  });
+
+  // GET /auth/org-status — approval state for authenticated user (P-ADM7)
+  app.get('/org-status', async (req, reply) => {
+    try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
+    const { orgId } = req.user as { orgId: string };
+    const [org] = await db
+      .select({ pendingApproval: organizations.pendingApproval, approvedAt: organizations.approvedAt, rejectedAt: organizations.rejectedAt, rejectionReason: organizations.rejectionReason })
+      .from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+    const status = org.rejectedAt ? 'rejected' : org.approvedAt ? 'approved' : 'pending';
+    return {
+      status,
+      ...(org.rejectedAt ? { reason: org.rejectionReason, rejectedAt: org.rejectedAt } : {}),
+      ...(org.approvedAt ? { approvedAt: org.approvedAt } : {}),
+    };
   });
 };

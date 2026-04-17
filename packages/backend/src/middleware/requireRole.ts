@@ -9,9 +9,13 @@ export function requireRole(...roles: Role[]) {
       reply.code(401).send({ error: 'Unauthorized' });
       return;
     }
-    const payload = req.user as { role: Role };
+    const payload = req.user as { role: Role; mustChangePw?: boolean };
     if (!roles.includes(payload.role)) {
       reply.code(403).send({ error: 'Forbidden' });
+      return;
+    }
+    if (payload.mustChangePw) {
+      reply.code(403).send({ error: 'Password change required', mustChangePassword: true });
       return;
     }
   };

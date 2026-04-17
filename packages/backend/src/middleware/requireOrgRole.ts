@@ -6,13 +6,16 @@ export function requireOrgRole(...roles: Role[]) {
     try { await req.jwtVerify(); } catch {
       reply.code(401).send({ error: 'Unauthorized' }); return;
     }
-    const payload = req.user as { role: Role; orgId: string };
+    const payload = req.user as { role: Role; orgId: string; mustChangePw?: boolean };
     if (!roles.includes(payload.role)) {
       reply.code(403).send({ error: 'Forbidden' }); return;
     }
     const params = req.params as { orgId?: string };
     if (params.orgId && params.orgId !== payload.orgId && payload.role !== 'super_admin') {
       reply.code(403).send({ error: 'Access denied to this organization' }); return;
+    }
+    if (payload.mustChangePw) {
+      reply.code(403).send({ error: 'Password change required', mustChangePassword: true }); return;
     }
   };
 }

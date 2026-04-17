@@ -70,6 +70,8 @@ export const organizations = pgTable('organizations', {
   approvalReminderSentAt: jsonb('approval_reminder_sent_at').$type<Record<string, string>>(),
   approvedAt: timestamp('approved_at'),
   onboardingEmailSentAt: jsonb('onboarding_email_sent_at').default('{}'),
+  rejectedAt: timestamp('rejected_at'),
+  rejectionReason: text('rejection_reason'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { api } from '@/lib/api';
 
 const STORAGE_KEY = 'mydashrx_pending_checklist';
 
@@ -14,6 +15,7 @@ const TASKS = [
 export default function PendingApprovalPage() {
   const [checked, setChecked] = useState<Set<string>>(new Set(['submitted']));
   const [mounted, setMounted] = useState(false);
+  const [orgStatus, setOrgStatus] = useState<{ status: string; reason?: string } | null>(null);
 
   useEffect(() => {
     try {
@@ -24,6 +26,9 @@ export default function PendingApprovalPage() {
       }
     } catch { /* ignore */ }
     setMounted(true);
+    api.get<{ status: string; reason?: string }>('/auth/org-status')
+      .then(setOrgStatus)
+      .catch(() => {});
   }, []);
 
   const toggle = (id: string) => {
@@ -41,6 +46,33 @@ export default function PendingApprovalPage() {
 
   const completedCount = checked.size;
   const totalCount = TASKS.length;
+
+  if (orgStatus?.status === 'rejected') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F7F8FC] py-8">
+        <div className="w-full max-w-lg bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+          <div className="text-center mb-6">
+            <div className="w-14 h-14 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-7 h-7 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Application not approved</h2>
+            {orgStatus.reason && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4 text-left">
+                <p className="text-sm font-semibold text-amber-900 mb-1">Reason</p>
+                <p className="text-sm text-amber-800">{orgStatus.reason}</p>
+              </div>
+            )}
+            <p className="text-sm text-gray-500">
+              Questions? Contact{' '}
+              <a href="mailto:support@mydashrx.com" className="text-[#0F4C81] hover:underline">support@mydashrx.com</a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F7F8FC] py-8">

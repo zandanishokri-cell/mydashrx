@@ -267,9 +267,9 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Organization not found' });
 
-    const now = new Date();
-    await db.update(organizations).set({ deletedAt: now }).where(eq(organizations.id, orgId));
-    await db.update(users).set({ deletedAt: now }).where(eq(users.orgId, orgId));
+    await db.update(organizations)
+      .set({ pendingApproval: false, rejectedAt: new Date(), rejectionReason: reason ?? null })
+      .where(eq(organizations.id, orgId));
 
     const [admin] = await db.select({ email: users.email, name: users.name })
       .from(users).where(eq(users.orgId, orgId)).limit(1);
@@ -287,11 +287,12 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
           subject: `MyDashRx — Application update for ${org.name}`,
           html: `
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
-              <h2 style="color:#374151;margin:0 0 8px">Application update</h2>
+              <h2 style="color:#374151;margin:0 0 8px">Update on your MyDashRx application</h2>
               <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${admin.name},</p>
-              <p style="color:#374151;margin:0 0 8px;font-size:15px">Thank you for applying to MyDashRx. After review, we are unable to approve <strong>${org.name}</strong> at this time.</p>
-              ${reason ? `<p style="color:#374151;margin:0 0 16px;font-size:14px;background:#f9fafb;padding:12px;border-radius:8px">${reason}</p>` : ''}
-              <p style="color:#6b7280;font-size:13px">If you believe this is an error, contact <a href="mailto:support@mydashrx.com">support@mydashrx.com</a>.</p>
+              <p style="color:#374151;margin:0 0 16px;font-size:15px">We reviewed the application for <strong>${org.name}</strong> and are unable to approve it at this time.</p>
+              ${reason ? `<div style="background:#fef9ec;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:16px"><p style="color:#92400e;font-size:13px;font-weight:600;margin:0 0 4px">Reason:</p><p style="color:#78350f;font-size:14px;margin:0">${reason}</p></div>` : ''}
+              <p style="color:#6b7280;font-size:14px;margin:0 0 8px">If you believe this is an error or have questions, reply to this email or contact <a href="mailto:support@mydashrx.com" style="color:#0F4C81">support@mydashrx.com</a>. We respond within 2 business hours.</p>
+              <p style="color:#9ca3af;font-size:12px;margin-top:24px">Application ref: ${orgId}</p>
             </div>`,
         }),
       }).catch((e: unknown) => { console.error('[Resend] approval email failed:', e); });

@@ -9,11 +9,13 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'driver'),
   }, async (req, reply) => {
     const { planId } = req.params as { planId: string };
-    const { orgId: userOrgId } = req.user as { orgId: string };
-    // Verify plan belongs to this org before listing routes
-    const [plan] = await db.select({ orgId: plans.orgId }).from(plans)
+    const { orgId: userOrgId, role, depotIds } = req.user as { orgId: string; role: string; depotIds: string[] };
+    const [plan] = await db.select({ orgId: plans.orgId, depotId: plans.depotId }).from(plans)
       .where(and(eq(plans.id, planId), isNull(plans.deletedAt))).limit(1);
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
+    if (role === 'dispatcher' && depotIds?.length > 0 && !depotIds.includes(plan.depotId)) {
+      return reply.code(403).send({ error: 'Access denied to this depot' });
+    }
     return db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
   });
 

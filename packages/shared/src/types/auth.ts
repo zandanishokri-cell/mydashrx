@@ -16,6 +16,7 @@ export interface JWTPayload {
   role: Role;
   orgId: string;
   depotIds: string[];
+  mustChangePw?: boolean;
   iat: number;
   exp: number;
 }

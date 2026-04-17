@@ -34,9 +34,13 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { date, depotId } = req.query as { date?: string; depotId?: string };
+    const user = req.user as { role: string; depotIds: string[] };
     const conditions = [eq(plans.orgId, orgId), isNull(plans.deletedAt)];
     if (date) conditions.push(eq(plans.date, date));
     if (depotId) conditions.push(eq(plans.depotId, depotId));
+    if (user.role === 'dispatcher' && user.depotIds?.length > 0) {
+      conditions.push(inArray(plans.depotId, user.depotIds));
+    }
     const planList = await db.select().from(plans).where(and(...conditions)).orderBy(plans.date);
     if (planList.length === 0) return planList;
     // Embed routes so the list view avoids N+1 fetches (one query for all routes)
@@ -56,10 +60,14 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin'),
   }, async (req, reply) => {
     const { orgId, planId } = req.params as { orgId: string; planId: string };
+    const user = req.user as { role: string; depotIds: string[] };
     const [plan] = await db.select().from(plans)
       .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
       .limit(1);
     if (!plan) return reply.code(404).send({ error: 'Not found' });
+    if (user.role === 'dispatcher' && user.depotIds?.length > 0 && !user.depotIds.includes(plan.depotId)) {
+      return reply.code(403).send({ error: 'Access denied to this depot' });
+    }
     const planRoutes = await db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
     return { ...plan, routes: planRoutes };
   });

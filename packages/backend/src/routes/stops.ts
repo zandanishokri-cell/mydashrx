@@ -126,7 +126,16 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'driver', 'super_admin'),
   }, async (req) => {
     const { routeId } = req.params as { routeId: string };
-    const { orgId: userOrgId } = req.user as { orgId: string };
+    const { orgId: userOrgId, role, depotIds } = req.user as { orgId: string; role: string; depotIds: string[] };
+    if (role === 'dispatcher' && (depotIds as string[])?.length > 0) {
+      const [routePlan] = await db
+        .select({ depotId: plans.depotId })
+        .from(routes)
+        .innerJoin(plans, eq(routes.planId, plans.id))
+        .where(eq(routes.id, routeId))
+        .limit(1);
+      if (!routePlan || !(depotIds as string[]).includes(routePlan.depotId)) return [];
+    }
     return db
       .select()
       .from(stops)
