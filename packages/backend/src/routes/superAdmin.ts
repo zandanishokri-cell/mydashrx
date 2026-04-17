@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { organizations, users, stops, drivers, adminAuditLogs } from '../db/schema.js';
-import { eq, isNull, sql, gte, count, and, desc } from 'drizzle-orm';
+import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens } from '../db/schema.js';
+import { eq, isNull, sql, gte, count, and, desc, lt, or, isNotNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 const PLAN_PRICES: Record<string, number> = {
@@ -224,7 +224,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Organization not found' });
 
-    await db.update(organizations).set({ pendingApproval: false }).where(eq(organizations.id, orgId));
+    await db.update(organizations).set({ pendingApproval: false, approvedAt: new Date() }).where(eq(organizations.id, orgId));
     await db.update(users).set({ pendingApproval: false }).where(and(eq(users.orgId, orgId), isNull(users.deletedAt)));
 
     // Send welcome email to pharmacy admin
@@ -327,5 +327,88 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .from(adminAuditLogs)
       .orderBy(desc(adminAuditLogs.createdAt))
       .limit(50);
+  });
+
+  // POST /admin/jobs/approval-reminders — P-CNV1: 90min/4hr re-engagement for pending approvals
+  app.post('/jobs/approval-reminders', { preHandler: auth }, async () => {
+    const now = new Date();
+    const resendKey = process.env.RESEND_API_KEY;
+    const senderDomain = process.env.SENDER_DOMAIN ?? 'cartana.life';
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+    let sent = 0;
+
+    const pending = await db.select().from(organizations)
+      .where(and(eq(organizations.pendingApproval, true), isNull(organizations.deletedAt)));
+
+    for (const org of pending) {
+      const ageMs = now.getTime() - new Date(org.createdAt).getTime();
+      const ageMin = ageMs / 60_000;
+      const sent90 = (org.approvalReminderSentAt as any)?.t90;
+      const sent4h = (org.approvalReminderSentAt as any)?.t4h;
+
+      const [admin] = await db.select({ email: users.email, name: users.name })
+        .from(users).where(and(eq(users.orgId, org.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
+      if (!admin || !resendKey) continue;
+
+      // 90-min touch: 85–95 minutes since signup
+      if (ageMin >= 85 && ageMin < 95 && !sent90) {
+        fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+          body: JSON.stringify({
+            from: `MyDashRx <noreply@${senderDomain}>`,
+            to: admin.email,
+            subject: '[MyDashRx] Your application is being reviewed',
+            track_clicks: false,
+            html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+              <h2 style="color:#0F4C81;margin:0 0 8px">We're reviewing your application</h2>
+              <p style="color:#374151;font-size:15px">Hi ${admin.name}, your application for <strong>${org.name}</strong> is actively being reviewed. Most applications are approved within 2–4 business hours.</p>
+              <p style="color:#374151;font-size:15px">While you wait, you can <a href="${dashUrl}/pending-approval">prepare your onboarding checklist</a>.</p>
+            </div>`,
+          }),
+        }).catch((e: unknown) => { console.error('[CNV1] 90min email failed:', e); });
+        await db.update(organizations)
+          .set({ approvalReminderSentAt: { ...(org.approvalReminderSentAt as object ?? {}), t90: now.toISOString() } })
+          .where(eq(organizations.id, org.id));
+        sent++;
+      }
+
+      // 4-hour fallback: 235–245 minutes since signup
+      if (ageMin >= 235 && ageMin < 245 && !sent4h) {
+        fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+          body: JSON.stringify({
+            from: `MyDashRx <noreply@${senderDomain}>`,
+            to: admin.email,
+            subject: '[MyDashRx] Still reviewing your application',
+            track_clicks: false,
+            html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+              <h2 style="color:#0F4C81;margin:0 0 8px">We haven't forgotten you</h2>
+              <p style="color:#374151;font-size:15px">Hi ${admin.name}, your application for <strong>${org.name}</strong> is taking a little longer than usual. Our team will reach out personally if we need anything.</p>
+              <p style="color:#374151;font-size:15px">Questions? Reply to this email — we respond within 2 hours.</p>
+            </div>`,
+          }),
+        }).catch((e: unknown) => { console.error('[CNV1] 4hr email failed:', e); });
+        await db.update(organizations)
+          .set({ approvalReminderSentAt: { ...(org.approvalReminderSentAt as object ?? {}), t4h: now.toISOString() } })
+          .where(eq(organizations.id, org.id));
+        sent++;
+      }
+    }
+
+    return { sent, checked: pending.length };
+  });
+
+  // POST /admin/jobs/cleanup-tokens — P-CLN2: Delete expired/used magic link tokens older than 24hr
+  app.post('/jobs/cleanup-tokens', { preHandler: auth }, async () => {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const deleted = await db.delete(magicLinkTokens).where(
+      or(
+        lt(magicLinkTokens.expiresAt, cutoff),
+        and(isNotNull(magicLinkTokens.usedAt), lt(magicLinkTokens.createdAt, cutoff)),
+      )
+    ).returning({ id: magicLinkTokens.id });
+    return { deleted: deleted.length };
   });
 };

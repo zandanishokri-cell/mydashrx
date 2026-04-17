@@ -1,5 +1,5 @@
 'use client';
-import { useState, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { setSession } from '@/lib/auth';
@@ -9,31 +9,31 @@ function VerifyContent() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get('token');
-  const [status, setStatus] = useState<'ready' | 'loading' | 'success' | 'error'>('ready');
+  const [status, setStatus] = useState<'validating' | 'valid' | 'confirming' | 'success' | 'error'>('validating');
   const [errorMsg, setErrorMsg] = useState('');
+  const [validatedEmail, setValidatedEmail] = useState('');
 
-  if (!token) {
-    return (
-      <div className="text-center">
-        <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </div>
-        <h2 className="text-base font-semibold text-gray-900 mb-2">Invalid link</h2>
-        <p className="text-gray-500 text-sm mb-6">No sign-in token found. Please request a new link.</p>
-        <a href="/login" className="inline-block bg-[#0F4C81] text-white rounded-lg px-5 py-2.5 text-sm font-medium hover:bg-[#0d3d69] transition-colors">
-          Request a new link
-        </a>
-      </div>
-    );
-  }
+  // P-ML2: GET validates only (scanner-safe — pre-fetch never consumes single-use token)
+  // POST /confirm consumes token and issues JWT only when user explicitly clicks
+  useEffect(() => {
+    if (!token) { setStatus('error'); setErrorMsg('No sign-in token found. Please request a new link.'); return; }
+    api.get<{ valid: boolean; email: string; token: string }>(`/auth/magic-link/verify?token=${encodeURIComponent(token)}`)
+      .then((res) => { setValidatedEmail(res.email); setStatus('valid'); })
+      .catch((err: Error) => {
+        const raw = err.message ?? '';
+        const match = raw.match(/\{.*\}/);
+        let msg = 'This link is invalid or has expired.';
+        if (match) {
+          try { const p = JSON.parse(match[0]); msg = p.error ?? msg; } catch { /* ignore */ }
+        }
+        setErrorMsg(msg);
+        setStatus('error');
+      });
+  }, [token]);
 
-  // Token is only consumed when user explicitly clicks — prevents email scanner pre-fetch
-  // from consuming the single-use token before the user clicks (Outlook Safe Links, etc.)
-  function handleSignIn() {
-    setStatus('loading');
-    api.get<AuthTokens>(`/auth/magic-link/verify?token=${encodeURIComponent(token!)}`)
+  function handleConfirm() {
+    setStatus('confirming');
+    api.post<AuthTokens>('/auth/magic-link/confirm', { token })
       .then((tokens) => {
         setSession(tokens);
         setStatus('success');
@@ -42,20 +42,29 @@ function VerifyContent() {
       .catch((err: Error) => {
         const raw = err.message ?? '';
         const match = raw.match(/\{.*\}/);
+        let msg = 'This link is invalid or has expired.';
         if (match) {
           try {
-            const parsed = JSON.parse(match[0]);
-            if (parsed.pendingApproval) { router.replace('/pending-approval'); return; }
-            setErrorMsg(parsed.error ?? 'This link is invalid or has expired.');
-          } catch { setErrorMsg('This link is invalid or has expired.'); }
-        } else {
-          setErrorMsg('This link is invalid or has expired.');
+            const p = JSON.parse(match[0]);
+            if (p.pendingApproval) { router.replace('/pending-approval'); return; }
+            msg = p.error ?? msg;
+          } catch { /* ignore */ }
         }
+        setErrorMsg(msg);
         setStatus('error');
       });
   }
 
-  if (status === 'ready') {
+  if (status === 'validating') {
+    return (
+      <div className="text-center">
+        <div className="w-10 h-10 border-2 border-[#0F4C81] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-gray-600 text-sm">Verifying your link…</p>
+      </div>
+    );
+  }
+
+  if (status === 'valid') {
     return (
       <div className="text-center">
         <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -64,9 +73,10 @@ function VerifyContent() {
           </svg>
         </div>
         <h2 className="text-base font-semibold text-gray-900 mb-2">Complete your sign in</h2>
-        <p className="text-gray-500 text-sm mb-6">Click the button below to securely sign in to MyDashRx.</p>
+        {validatedEmail && <p className="text-gray-500 text-sm mb-4">Signing in as <span className="font-medium text-gray-700">{validatedEmail}</span></p>}
+        <p className="text-gray-500 text-sm mb-6">Click below to securely sign in to MyDashRx.</p>
         <button
-          onClick={handleSignIn}
+          onClick={handleConfirm}
           className="w-full bg-[#0F4C81] text-white rounded-lg px-5 py-3 text-sm font-semibold hover:bg-[#0d3d69] transition-colors"
         >
           Sign in to MyDashRx
@@ -76,7 +86,7 @@ function VerifyContent() {
     );
   }
 
-  if (status === 'loading') {
+  if (status === 'confirming') {
     return (
       <div className="text-center">
         <div className="w-10 h-10 border-2 border-[#0F4C81] border-t-transparent rounded-full animate-spin mx-auto mb-4" />

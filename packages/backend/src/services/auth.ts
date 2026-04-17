@@ -16,12 +16,13 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
 export function signTokens(
   app: FastifyInstance,
   payload: Omit<JWTPayload, 'iat' | 'exp'>,
+  tokenVersion?: number,
 ): { accessToken: string; refreshToken: string } {
   const accessToken = app.jwt.sign(payload as object, {
     expiresIn: process.env.JWT_EXPIRES_IN ?? '15m',
   });
   const refreshToken = app.jwt.sign(
-    { sub: payload.sub, type: 'refresh' } as object,
+    { sub: payload.sub, type: 'refresh', ...(tokenVersion !== undefined ? { tv: tokenVersion } : {}) } as object,
     { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '90d' },
   );
   return { accessToken, refreshToken };

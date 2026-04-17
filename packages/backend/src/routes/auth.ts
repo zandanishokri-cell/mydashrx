@@ -9,6 +9,7 @@ import { users, organizations, drivers, magicLinkTokens } from '../db/schema.js'
 import { eq, and, isNull, gt, count } from 'drizzle-orm';
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
+import { sql } from 'drizzle-orm';
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -31,11 +32,62 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const { email, password } = parsed.data;
 
     const user = await findUserByEmail(email);
+
+    // P-LCK1: Check lockout before bcrypt (fast-fail)
+    if (user && user.lockedUntil && user.lockedUntil > new Date()) {
+      const secsLeft = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 1000);
+      return reply.code(429).send({ error: `Account temporarily locked. Try again in ${secsLeft}s.` });
+    }
+
     if (!user || !(await verifyPassword(password, user.passwordHash))) {
+      // P-LCK1: Increment failed attempts on wrong password
+      if (user) {
+        const attempts = (user.failedLoginAttempts ?? 0) + 1;
+        const lockUntil = attempts >= 5 ? new Date(Date.now() + 15 * 60_000) : null;
+
+        // P-LCK1-EMAIL: Security alert on 3rd attempt
+        if (attempts === 3) {
+          const resendKey = process.env.RESEND_API_KEY;
+          const senderDomain = process.env.SENDER_DOMAIN ?? 'cartana.life';
+          const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+          if (resendKey) {
+            fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+              body: JSON.stringify({
+                from: `MyDashRx <security@${senderDomain}>`,
+                to: user.email,
+                subject: '[MyDashRx] Unusual login activity on your account',
+                track_clicks: false,
+                html: `
+                  <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+                    <h2 style="color:#dc2626;margin:0 0 8px">Unusual login activity</h2>
+                    <p style="color:#374151;font-size:15px">Hi ${user.name},</p>
+                    <p style="color:#374151;font-size:15px">We detected 3 failed login attempts on your MyDashRx account. Your account will be temporarily locked after 2 more failed attempts.</p>
+                    <p style="color:#374151;font-size:15px">If this wasn't you, <a href="${dashUrl}/login">reset your password now</a>.</p>
+                  </div>`,
+              }),
+            }).catch((e: unknown) => { console.error('[Security] login alert email failed:', e); });
+          }
+        }
+
+        await db.update(users).set({
+          failedLoginAttempts: attempts,
+          ...(lockUntil ? { lockedUntil: lockUntil } : {}),
+        }).where(eq(users.id, user.id));
+      }
       return reply.code(401).send({ error: 'Invalid credentials' });
     }
+
     if (user.deletedAt) return reply.code(401).send({ error: 'Account deactivated' });
     if (user.pendingApproval) return reply.code(403).send({ pendingApproval: true, error: 'Your account is pending admin approval.' });
+
+    // P-LCK1: Reset failed attempts on successful login
+    if ((user.failedLoginAttempts ?? 0) > 0) {
+      await db.update(users)
+        .set({ failedLoginAttempts: 0, lockedUntil: null })
+        .where(eq(users.id, user.id));
+    }
 
     // For drivers, look up their drivers table record to include driverId in JWT
     let driverId: string | undefined;
@@ -53,7 +105,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       depotIds: user.depotIds as string[],
       ...(driverId ? { driverId } : {}),
     };
-    const tokens = signTokens(app, payload);
+    const tokens = signTokens(app, payload, user.tokenVersion);
     return reply.send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
@@ -109,10 +161,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const body = req.body as { refreshToken?: string };
     if (!body.refreshToken) return reply.code(400).send({ error: 'refreshToken required' });
     try {
-      const decoded = app.jwt.verify(body.refreshToken) as { sub: string; type: string };
+      const decoded = app.jwt.verify(body.refreshToken) as { sub: string; type: string; tv?: number };
       if (decoded.type !== 'refresh') throw new Error('wrong token type');
       const user = await findUserById(decoded.sub);
       if (!user) return reply.code(401).send({ error: 'User not found' });
+      // P-SES6: Token version check — revokes all existing RTs on role change or soft-delete
+      if (decoded.tv !== undefined && decoded.tv !== user.tokenVersion) {
+        return reply.code(401).send({ error: 'Session invalidated. Please log in again.' });
+      }
       // Re-attach driverId for driver role — omitting it causes empty route list after token expiry
       let driverId: string | undefined;
       if (user.role === 'driver') {
@@ -127,7 +183,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         orgId: user.orgId,
         depotIds: user.depotIds as string[],
         ...(driverId ? { driverId } : {}),
-      });
+      }, user.tokenVersion);
       return reply.send(tokens);
     } catch {
       return reply.code(401).send({ error: 'Invalid refresh token' });
@@ -183,14 +239,19 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
 
       if (resendKey) {
+        const { randomUUID } = await import('crypto');
         fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
           body: JSON.stringify({
             from: `MyDashRx <noreply@${senderDomain}>`,
             to: email,
-            subject: 'Your MyDashRx login link',
+            subject: 'Your MyDashRx login link (expires in 15 min)',
+            headers: { 'X-Entity-Ref-ID': randomUUID() },
+            track_clicks: false,
+            track_opens: false,
             html: `
+              <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Click to complete your MyDashRx sign-in. This link expires in 15 minutes.</span>
               <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
                 <h2 style="color:#0F4C81;margin:0 0 8px">Sign in to MyDashRx</h2>
                 <p style="color:#374151;margin:0 0 24px;font-size:15px">Click the button below to sign in. This link expires in 15 minutes and can only be used once.</p>
@@ -206,22 +267,42 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return reply.send(ok);
   });
 
+  // P-ML2: Step 1 — GET validates token and records first click, does NOT consume it
+  // Scanners pre-fetch GET links; consuming on GET means scanner eats the token before user sees it.
   app.get('/magic-link/verify', async (req, reply) => {
     const { token } = req.query as { token?: string };
     if (!token) return reply.code(400).send({ error: 'Token required' });
 
     const tokenHash = signToken(token);
-    const [record] = await db
-      .select()
-      .from(magicLinkTokens)
-      .where(and(
-        eq(magicLinkTokens.tokenHash, tokenHash),
-        isNull(magicLinkTokens.usedAt),
-        gt(magicLinkTokens.expiresAt, new Date()),
-      ))
-      .limit(1);
 
-    if (!record) return reply.code(400).send({ error: 'This link is invalid or has expired. Please request a new one.' });
+    // P-ML4: Granular errors — check existence, then usedAt, then expiry separately
+    const [record] = await db.select().from(magicLinkTokens)
+      .where(eq(magicLinkTokens.tokenHash, tokenHash)).limit(1);
+    if (!record) return reply.code(400).send({ error: 'This link is invalid. Please request a new one.' });
+    if (record.usedAt) return reply.code(400).send({ error: 'This link has already been used. Please request a new one.' });
+    if (record.expiresAt <= new Date()) return reply.code(400).send({ error: 'This link has expired. Please request a new one.' });
+
+    // P-ML2: Record first click for analytics — but do NOT mark usedAt
+    if (!record.firstClickedAt) {
+      await db.update(magicLinkTokens).set({ firstClickedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
+    }
+
+    return reply.send({ valid: true, email: record.email, token });
+  });
+
+  // P-ML2: Step 2 — POST /magic-link/confirm consumes token and issues JWT
+  app.post('/magic-link/confirm', async (req, reply) => {
+    const { token } = req.body as { token?: string };
+    if (!token) return reply.code(400).send({ error: 'Token required' });
+
+    const tokenHash = signToken(token);
+
+    // P-ML4: Granular errors on confirm too
+    const [record] = await db.select().from(magicLinkTokens)
+      .where(eq(magicLinkTokens.tokenHash, tokenHash)).limit(1);
+    if (!record) return reply.code(400).send({ error: 'This link is invalid. Please request a new one.' });
+    if (record.usedAt) return reply.code(400).send({ error: 'This link has already been used. Please request a new one.' });
+    if (record.expiresAt <= new Date()) return reply.code(400).send({ error: 'This link has expired. Please request a new one.' });
 
     await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
 
@@ -239,7 +320,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const tokens = signTokens(app, {
       sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
       depotIds: user.depotIds as string[], ...(driverId ? { driverId } : {}),
-    });
+    }, user.tokenVersion);
     return reply.send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },

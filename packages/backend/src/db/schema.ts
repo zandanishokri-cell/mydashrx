@@ -13,6 +13,7 @@ import {
   uniqueIndex,
   time,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 export const roleEnum = pgEnum('role', [
@@ -66,6 +67,9 @@ export const organizations = pgTable('organizations', {
   stripeSubscriptionId: text('stripe_subscription_id'),
   stripeSubscriptionStatus: text('stripe_subscription_status').default('inactive'),
   pendingApproval: boolean('pending_approval').notNull().default(false),
+  approvalReminderSentAt: jsonb('approval_reminder_sent_at').$type<Record<string, string>>(),
+  approvedAt: timestamp('approved_at'),
+  onboardingEmailSentAt: jsonb('onboarding_email_sent_at').default('{}'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });
@@ -85,6 +89,9 @@ export const users = pgTable(
     notificationPreferences: jsonb('notification_preferences').notNull().default('{"route_completed":true,"stop_failed":true,"stop_assigned":true}'),
     mustChangePassword: boolean('must_change_password').notNull().default(false),
     pendingApproval: boolean('pending_approval').notNull().default(false),
+    failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
+    lockedUntil: timestamp('locked_until'),
+    tokenVersion: integer('token_version').notNull().default(0),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },
@@ -519,5 +526,9 @@ export const magicLinkTokens = pgTable('magic_link_tokens', {
   tokenHash: text('token_hash').notNull().unique(),
   expiresAt: timestamp('expires_at').notNull(),
   usedAt: timestamp('used_at'),
+  firstClickedAt: timestamp('first_clicked_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
-}, (t) => ({ emailIdx: index('magic_link_email_idx').on(t.email) }));
+}, (t) => ({
+  emailIdx: index('magic_link_email_idx').on(t.email),
+  activeTokenIdx: index('mlt_active_idx').on(t.tokenHash).where(sql`used_at IS NULL AND expires_at > NOW()`),
+}));
