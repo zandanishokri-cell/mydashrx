@@ -24,7 +24,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /admin/stats
   app.get('/stats', { preHandler: auth }, async () => {
-    const since30d = new Date(Date.now() - 30 * 86400000);
+    const since30d = new Date(Date.now() - 30 * 86400000).toISOString();
 
     const [allOrgs, allDrivers, stops30d, stopsAll] = await Promise.all([
       db.select({ id: organizations.id, billingPlan: organizations.billingPlan })
@@ -81,7 +81,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /admin/orgs
   app.get('/orgs', { preHandler: auth }, async () => {
-    const since30d = new Date(Date.now() - 30 * 86400000);
+    const since30d = new Date(Date.now() - 30 * 86400000).toISOString();
 
     const orgs = await db
       .select()
@@ -116,7 +116,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
   // GET /admin/orgs/:orgId
   app.get('/orgs/:orgId', { preHandler: auth }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
-    const since30d = new Date(Date.now() - 30 * 86400000);
+    const since30d = new Date(Date.now() - 30 * 86400000).toISOString();
 
     const [org] = await db.select().from(organizations)
       .where(eq(organizations.id, orgId));

@@ -114,7 +114,7 @@ export const drivers = pgTable(
       .references(() => organizations.id),
     name: text('name').notNull(),
     email: text('email').notNull(),
-    phone: varchar('phone', { length: 20 }).notNull(),
+    phone: varchar('phone', { length: 20 }).notNull().default(''),
     passwordHash: text('password_hash').notNull(),
     licenseNumber: text('license_number'),
     drugCapable: boolean('drug_capable').notNull().default(false),
