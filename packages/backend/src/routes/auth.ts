@@ -1,6 +1,9 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, createHmac, randomBytes } from 'crypto';
+
+const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? randomBytes(32).toString('hex');
+const signToken = (t: string) => createHmac('sha256', MAGIC_LINK_SECRET).update(t).digest('hex');
 import { db } from '../db/connection.js';
 import { users, organizations, drivers, magicLinkTokens } from '../db/schema.js';
 import { eq, and, isNull, gt, count } from 'drizzle-orm';
@@ -141,6 +144,12 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
   // ─── Magic Link ───────────────────────────────────────────────────────────────
   app.post('/magic-link/request', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const start = Date.now();
+    const minResponse = async () => {
+      const elapsed = Date.now() - start;
+      if (elapsed < 200) await new Promise(r => setTimeout(r, 200 - elapsed));
+    };
+
     const { email } = req.body as { email?: string };
     if (!email || !z.string().email().safeParse(email).success) {
       return reply.code(400).send({ error: 'Valid email required' });
@@ -154,7 +163,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     // Always return the same message — never reveal rate limit or account existence
     const ok = { message: 'If an account exists, a login link has been sent to that address.' };
-    if (recentCount >= 3) return reply.send(ok);
+    if (recentCount >= 3) { await minResponse(); return reply.send(ok); }
 
     // Invalidate any prior unused tokens for this email — only the newest link works
     await db.update(magicLinkTokens)
@@ -162,7 +171,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(magicLinkTokens.email, email), isNull(magicLinkTokens.usedAt)));
 
     const token = randomBytes(32).toString('hex');
-    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const tokenHash = signToken(token);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
     await db.insert(magicLinkTokens).values({ email, tokenHash, expiresAt });
 
@@ -193,6 +202,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    await minResponse();
     return reply.send(ok);
   });
 
@@ -200,7 +210,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const { token } = req.query as { token?: string };
     if (!token) return reply.code(400).send({ error: 'Token required' });
 
-    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const tokenHash = signToken(token);
     const [record] = await db
       .select()
       .from(magicLinkTokens)

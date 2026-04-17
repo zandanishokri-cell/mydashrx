@@ -1,15 +1,21 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 
 type Step = 1 | 2 | 3;
 
-const STEPS = ['Pharmacy info', 'Your account', 'Review'];
+const STEPS = [
+  { label: 'Pharmacy info', time: '~1 min' },
+  { label: 'Your account', time: '~1 min' },
+  { label: 'Review', time: '~30 sec' },
+];
+
+const DRAFT_KEY = 'pharmacy_wizard_draft';
 
 function StepIndicator({ current }: { current: Step }) {
   return (
     <div className="flex items-center gap-2 mb-8">
-      {STEPS.map((label, i) => {
+      {STEPS.map(({ label, time }, i) => {
         const step = (i + 1) as Step;
         const active = step === current;
         const done = step < current;
@@ -18,8 +24,11 @@ function StepIndicator({ current }: { current: Step }) {
             <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${done ? 'bg-green-500 text-white' : active ? 'bg-[#0F4C81] text-white' : 'bg-gray-100 text-gray-400'}`}>
               {done ? '✓' : step}
             </div>
-            <span className={`text-xs ${active ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>{label}</span>
-            {i < STEPS.length - 1 && <div className="w-6 h-px bg-gray-200 mx-1" />}
+            <div className="flex flex-col">
+              <span className={`text-xs leading-tight ${active ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>{label}</span>
+              {active && <span className="text-[10px] text-gray-400 leading-tight">{time}</span>}
+            </div>
+            {i < STEPS.length - 1 && <div className="w-5 h-px bg-gray-200 mx-1" />}
           </div>
         );
       })}
@@ -27,15 +36,35 @@ function StepIndicator({ current }: { current: Step }) {
   );
 }
 
+const emptyForm = { orgName: '', orgPhone: '', orgAddress: '', adminName: '', adminEmail: '' };
+
 export default function PharmacySignupPage() {
   const [step, setStep] = useState<Step>(1);
-  const [form, setForm] = useState({
-    orgName: '', orgPhone: '', orgAddress: '',
-    adminName: '', adminEmail: '',
-  });
+  const [form, setForm] = useState(emptyForm);
+  const [draftSaved, setDraftSaved] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState(false);
+
+  // Restore draft on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(DRAFT_KEY);
+      if (saved) setForm(JSON.parse(saved));
+    } catch { /* ignore */ }
+  }, []);
+
+  // Persist draft on form change
+  useEffect(() => {
+    const hasData = Object.values(form).some(v => v !== '');
+    if (!hasData) return;
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(form));
+      setDraftSaved(true);
+      const t = setTimeout(() => setDraftSaved(false), 1500);
+      return () => clearTimeout(t);
+    } catch { /* ignore */ }
+  }, [form]);
 
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [key]: e.target.value }));
@@ -45,6 +74,7 @@ export default function PharmacySignupPage() {
     setError('');
     try {
       await api.post('/signup/pharmacy', form);
+      localStorage.removeItem(DRAFT_KEY);
       setSubmitted(true);
     } catch (err: any) {
       const raw = (err as Error).message ?? '';
@@ -78,7 +108,10 @@ export default function PharmacySignupPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F7F8FC] py-10">
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-        <a href="/login" className="text-xs text-gray-400 hover:text-gray-600 mb-6 block">← Back to sign in</a>
+        <div className="flex items-center justify-between mb-6">
+          <a href="/login" className="text-xs text-gray-400 hover:text-gray-600">← Back to sign in</a>
+          {draftSaved && <span className="text-xs text-gray-400">Draft saved</span>}
+        </div>
         <h1 className="text-2xl font-bold text-[#0F4C81] mb-1" style={{ fontFamily: 'var(--font-sora)' }}>
           Join MyDashRx
         </h1>

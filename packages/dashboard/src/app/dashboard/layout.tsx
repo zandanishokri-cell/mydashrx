@@ -7,6 +7,8 @@ import { api } from '@/lib/api';
 import { LayoutDashboard, Route, Map, Users, LogOut, Search, BarChart2, Target, Shield, Scale, Menu, X, Zap, CreditCard, Settings2, ChevronDown, Crown, RefreshCw, TrendingUp } from 'lucide-react';
 import NotificationPanel from '@/components/NotificationPanel';
 import { CommandPalette } from '@/components/CommandPalette';
+import { useIdleTimeout } from '@/hooks/useIdleTimeout';
+import { IdleWarningModal } from '@/components/IdleWarningModal';
 
 // Which roles can see each nav item. '*' = all authenticated roles.
 const NAV_ROLE_MAP: Record<string, string[]> = {
@@ -55,6 +57,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
   const profileRef = useRef<HTMLDivElement>(null);
   const onboardingChecked = useRef(false);
   // useState(null) ensures server and client render identically (no hydration mismatch).
@@ -62,13 +65,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [user, setUser] = useState<ReturnType<typeof getUser>>(null);
   useEffect(() => { setUser(getUser()); }, []);
 
+  const { showWarning, extendSession, countdown } = useIdleTimeout();
+
   const navItems = [
     ...baseNavItems.filter(item => {
       const allowed = NAV_ROLE_MAP[item.href];
       if (!allowed || !user?.role) return true;
       return allowed.includes('*') || allowed.includes(user.role);
     }),
-    ...(user?.role === 'super_admin' ? [{ href: '/dashboard/admin', label: 'Platform Admin', icon: Crown }] : []),
+    ...(user?.role === 'super_admin' ? [
+      { href: '/dashboard/admin', label: 'Platform Admin', icon: Crown },
+      { href: '/admin/approvals', label: 'Approvals', icon: Crown, badge: pendingCount },
+    ] : []),
   ];
 
   useEffect(() => {
@@ -115,6 +123,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => document.removeEventListener('keydown', handler);
   }, []);
 
+  // Poll pending approvals count for super_admin badge
+  useEffect(() => {
+    if (user?.role !== 'super_admin') return;
+    const fetch = () => {
+      api.get<{ org: unknown; admin: unknown }[]>('/admin/approvals')
+        .then(list => setPendingCount(list.length))
+        .catch(() => {});
+    };
+    fetch();
+    const interval = setInterval(fetch, 60_000);
+    return () => clearInterval(interval);
+  }, [user]);
+
   // Onboarding check: redirect new orgs with no depots to setup wizard
   useEffect(() => {
     if (onboardingChecked.current) return;
@@ -129,7 +150,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const handleSignOut = () => { clearSession(); router.replace('/login'); };
 
-  const isActive = (item: typeof navItems[0]) =>
+  const isActive = (item: { href: string; exact?: boolean }) =>
     item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(item.href + '/');
 
   const userName = user?.name ?? 'User';
@@ -137,8 +158,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // Render nav links as plain JSX (not as a component) to avoid React treating
   // a new function type on every render, which causes unnecessary unmount/remount.
-  const navLinks = navItems.map(({ href, label, icon: Icon, exact }) => {
-    const active = isActive({ href, label, icon: Icon, exact });
+  const navLinks = navItems.map((item) => {
+    const { href, label, icon: Icon } = item;
+    const exact = (item as any).exact as boolean | undefined;
+    const badge = (item as any).badge as number | undefined;
+    const active = isActive({ href, exact });
     return (
       <Link
         key={href}
@@ -150,7 +174,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }`}
       >
         <Icon size={15} />
-        {label}
+        <span className="flex-1">{label}</span>
+        {badge != null && badge > 0 && (
+          <span className="bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
+            {badge > 9 ? '9+' : badge}
+          </span>
+        )}
       </Link>
     );
   });
@@ -264,6 +293,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       <main className="flex-1 overflow-auto mt-14 md:mt-0">{children}</main>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {showWarning && <IdleWarningModal countdown={countdown} onExtend={extendSession} />}
     </div>
   );
 }
