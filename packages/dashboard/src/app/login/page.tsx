@@ -99,7 +99,18 @@ function LoginForm() {
         </button>
       </form>
 
-      <div className="mt-6 pt-6 border-t border-gray-100">
+      <div className="mt-5 pt-5 border-t border-gray-100 text-center space-y-2">
+        <p className="text-xs text-gray-400">
+          New pharmacy?{' '}
+          <a href="/signup/pharmacy" className="text-[#0F4C81] hover:underline font-medium">Apply for access</a>
+        </p>
+        <p className="text-xs text-gray-400">
+          Driver?{' '}
+          <a href="/signup/driver" className="text-[#0F4C81] hover:underline font-medium">Create driver account</a>
+        </p>
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-gray-100">
         <button
           onClick={() => { setShowPassword(p => !p); setError(''); }}
           className="text-xs text-gray-400 hover:text-gray-600 transition-colors"

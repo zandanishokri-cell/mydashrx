@@ -243,6 +243,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const user = await findUserByEmail(record.email);
     if (!user || user.deletedAt) return reply.code(404).send({ error: 'No account found for this email.' });
+    if (user.pendingApproval) return reply.code(403).send({ pendingApproval: true, error: 'Your account is pending admin approval. You will receive an email when approved.' });
 
     let driverId: string | undefined;
     if (user.role === 'driver') {

@@ -65,6 +65,7 @@ export const organizations = pgTable('organizations', {
   stripeCustomerId: text('stripe_customer_id'),
   stripeSubscriptionId: text('stripe_subscription_id'),
   stripeSubscriptionStatus: text('stripe_subscription_status').default('inactive'),
+  pendingApproval: boolean('pending_approval').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });
@@ -83,6 +84,7 @@ export const users = pgTable(
     depotIds: jsonb('depot_ids').notNull().default('[]'),
     notificationPreferences: jsonb('notification_preferences').notNull().default('{"route_completed":true,"stop_failed":true,"stop_assigned":true}'),
     mustChangePassword: boolean('must_change_password').notNull().default(false),
+    pendingApproval: boolean('pending_approval').notNull().default(false),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },
@@ -484,6 +486,19 @@ export const automationLog = pgTable('automation_log', {
   detail: text('detail'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (t) => ({ orgIdx: index('auto_log_org_idx').on(t.orgId) }));
+
+// ─── Staff Invitations ────────────────────────────────────────────────────────
+export const staffInvitations = pgTable('staff_invitations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  email: text('email').notNull(),
+  role: roleEnum('role').notNull().default('pharmacist'),
+  tokenHash: text('token_hash').notNull().unique(),
+  invitedBy: uuid('invited_by').notNull().references(() => users.id),
+  expiresAt: timestamp('expires_at').notNull(),
+  acceptedAt: timestamp('accepted_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({ orgIdx: index('staff_inv_org_idx').on(t.orgId) }));
 
 // ─── Magic Link Tokens ────────────────────────────────────────────────────────
 export const magicLinkTokens = pgTable('magic_link_tokens', {

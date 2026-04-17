@@ -20,6 +20,7 @@ import staticFiles from '@fastify/static';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { authRoutes } from './routes/auth.js';
+import { signupRoutes } from './routes/signup.js';
 import { organizationRoutes } from './routes/organizations.js';
 import { depotRoutes } from './routes/depots.js';
 import { driverRoutes } from './routes/drivers.js';
@@ -99,6 +100,7 @@ await app.register(staticFiles, { root: uploadDir, prefix: '/uploads/', decorate
 
 // Routes
 await app.register(authRoutes, { prefix: '/api/v1/auth' });
+await app.register(signupRoutes, { prefix: '/api/v1/signup' });
 await app.register(organizationRoutes, { prefix: '/api/v1/orgs' });
 await app.register(depotRoutes, { prefix: '/api/v1/orgs/:orgId/depots' });
 await app.register(driverRoutes, { prefix: '/api/v1/orgs/:orgId/drivers' });

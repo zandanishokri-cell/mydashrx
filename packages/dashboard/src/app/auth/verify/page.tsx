@@ -28,11 +28,15 @@ function VerifyContent() {
       .catch((err: Error) => {
         const raw = err.message ?? '';
         const match = raw.match(/\{.*\}/);
-        let msg = 'This link is invalid or has expired.';
         if (match) {
-          try { msg = JSON.parse(match[0]).error ?? msg; } catch { /* use default */ }
+          try {
+            const parsed = JSON.parse(match[0]);
+            if (parsed.pendingApproval) { router.replace('/pending-approval'); return; }
+            setErrorMsg(parsed.error ?? 'This link is invalid or has expired.');
+          } catch { setErrorMsg('This link is invalid or has expired.'); }
+        } else {
+          setErrorMsg('This link is invalid or has expired.');
         }
-        setErrorMsg(msg);
         setStatus('error');
       });
   }, [token]);
