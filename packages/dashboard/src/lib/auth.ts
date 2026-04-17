@@ -23,6 +23,15 @@ export function setSession(tokens: {
 }
 
 export function clearSession() {
+  const rt = typeof window !== 'undefined' ? localStorage.getItem('refreshToken') : null;
+  if (rt) {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+    fetch(`${base}/api/v1/auth/logout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: rt }),
+    }).catch(() => {});
+  }
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');

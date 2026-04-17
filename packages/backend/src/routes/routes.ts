@@ -13,8 +13,10 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     const [plan] = await db.select({ orgId: plans.orgId, depotId: plans.depotId }).from(plans)
       .where(and(eq(plans.id, planId), isNull(plans.deletedAt))).limit(1);
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
-    if (role === 'dispatcher' && depotIds?.length > 0 && !depotIds.includes(plan.depotId)) {
-      return reply.code(403).send({ error: 'Access denied to this depot' });
+    if (role === 'dispatcher') {
+      if (!depotIds?.length || !depotIds.includes(plan.depotId)) {
+        return reply.code(403).send({ error: 'Access denied' });
+      }
     }
     return db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
   });

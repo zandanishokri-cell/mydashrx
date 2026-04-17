@@ -185,7 +185,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  app.post('/refresh', async (req, reply) => {
+  app.post('/refresh', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
     const body = req.body as { refreshToken?: string };
     if (!body.refreshToken) return reply.code(400).send({ error: 'refreshToken required' });
 
@@ -199,23 +199,30 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     // --- Stateful path: jti present = token was seeded on login ---
     if (decoded.jti) {
-      const rows = await db.execute(
-        sql`SELECT id, family_id, status, user_id FROM refresh_tokens WHERE jti = ${decoded.jti} FOR UPDATE`
-      );
-      const row = (rows as unknown as Array<{ id: string; family_id: string; status: string; user_id: string }>)[0];
+      const jti = decoded.jti;
+      let txStatus: 'not_found' | 'used' | 'revoked' | 'active' = 'not_found';
+      let txFamilyId = '';
 
-      if (!row) return reply.code(401).send({ error: 'Unknown token' });
+      await db.transaction(async (tx) => {
+        const rows = await tx.execute(
+          sql`SELECT id, family_id, status FROM refresh_tokens WHERE jti = ${jti} FOR UPDATE`
+        );
+        const row = (rows as unknown as Array<{ id: string; family_id: string; status: string }>)[0];
+        if (!row) return;
+        if (row.status === 'used') {
+          txStatus = 'used';
+          await tx.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.familyId, row.family_id));
+          return;
+        }
+        if (row.status === 'revoked') { txStatus = 'revoked'; return; }
+        txStatus = 'active';
+        txFamilyId = row.family_id;
+        await tx.update(refreshTokens).set({ status: 'used', usedAt: new Date() }).where(eq(refreshTokens.jti, jti));
+      });
 
-      if (row.status === 'used') {
-        // Replay attack detected — revoke entire family
-        await db.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.familyId, row.family_id));
-        return reply.code(401).send({ error: 'Token reuse detected. All sessions revoked.' });
-      }
-      if (row.status === 'revoked') {
-        return reply.code(401).send({ error: 'Session revoked. Please log in again.' });
-      }
-
-      await db.update(refreshTokens).set({ status: 'used', usedAt: new Date() }).where(eq(refreshTokens.jti, decoded.jti));
+      if (txStatus === 'not_found') return reply.code(401).send({ error: 'Unknown token' });
+      if (txStatus === 'used') return reply.code(401).send({ error: 'Token reuse detected. All sessions revoked.' });
+      if (txStatus === 'revoked') return reply.code(401).send({ error: 'Session revoked. Please log in again.' });
 
       const user = await findUserById(decoded.sub);
       if (!user || user.deletedAt) return reply.code(401).send({ error: 'User not found' });
@@ -236,11 +243,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         depotIds: user.depotIds as string[],
         ...(user.mustChangePassword ? { mustChangePw: true } : {}),
         ...(driverId ? { driverId } : {}),
-      }, user.tokenVersion, { jti: newJti, familyId: row.family_id });
+      }, user.tokenVersion, { jti: newJti, familyId: txFamilyId });
 
       await db.insert(refreshTokens).values({
         jti: newJti,
-        familyId: row.family_id,
+        familyId: txFamilyId,
         userId: user.id,
         ip: req.ip,
         userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
@@ -276,6 +283,20 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     } catch {
       return reply.code(401).send({ error: 'Invalid refresh token' });
     }
+  });
+
+  app.post('/logout', async (req, reply) => {
+    const { refreshToken } = req.body as { refreshToken?: string };
+    if (refreshToken) {
+      try {
+        const decoded = app.jwt.verify(refreshToken) as { jti?: string };
+        if (decoded.jti) {
+          await db.update(refreshTokens).set({ status: 'revoked' })
+            .where(eq(refreshTokens.jti, decoded.jti)).catch(() => {});
+        }
+      } catch { /* invalid token — no-op, silent */ }
+    }
+    return reply.code(204).send();
   });
 
   app.get('/me', async (req, reply) => {

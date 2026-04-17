@@ -9,13 +9,26 @@ import { uploadBuffer } from '../services/storage.js';
 import type { StopStatus } from '@mydash-rx/shared';
 import { todayInTz } from '../utils/date.js';
 
+async function resolveDriverId(
+  user: { driverId?: string; email: string; orgId: string },
+): Promise<string | null> {
+  if (user.driverId) return user.driverId;
+  const [dr] = await db
+    .select({ id: drivers.id })
+    .from(drivers)
+    .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt)))
+    .limit(1);
+  return dr?.id ?? null;
+}
+
 export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   // GET /driver/me — driver profile + status
   app.get('/me', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const [driver] = await db
       .select({ id: drivers.id, name: drivers.name, status: drivers.status })
       .from(drivers)
@@ -28,9 +41,10 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   // GET /driver/me/routes — driver's active routes
   app.get('/me/routes', {
     preHandler: requireRole('driver'),
-  }, async (req) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+  }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const today = todayInTz();
 
     const myRoutes = await db
@@ -64,8 +78,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.get('/me/routes/:routeId', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { routeId } = req.params as { routeId: string };
 
     const [route] = await db
@@ -93,8 +108,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.get('/me/routes/:routeId/stops', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { routeId } = req.params as { routeId: string };
 
     const [route] = await db.select().from(routes).where(eq(routes.id, routeId)).limit(1);
@@ -109,8 +125,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.post('/me/stops/:stopId/barcode', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { stopId } = req.params as { stopId: string };
     const { barcode } = req.body as { barcode?: string };
 
@@ -145,8 +162,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/me/stops/:stopId/status', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { stopId } = req.params as { stopId: string };
     const { status, failureReason, failureNote } = req.body as {
       status: StopStatus; failureReason?: string; failureNote?: string;
@@ -176,8 +194,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.post('/me/stops/:stopId/photo', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const driverUser = req.user as { sub: string; driverId?: string };
-    const driverId = driverUser.driverId ?? driverUser.sub;
+    const driverUser = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(driverUser);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { stopId } = req.params as { stopId: string };
     // Verify ownership before accepting file upload
     const [stop] = await db.select({ id: stops.id, routeId: stops.routeId })
@@ -220,8 +239,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.get('/me/stops/:stopId', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { stopId } = req.params as { stopId: string };
     const [stop] = await db.select().from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
@@ -235,8 +255,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.get('/me/stops/:stopId/pod', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { stopId } = req.params as { stopId: string };
     const [stop] = await db.select({ id: stops.id, routeId: stops.routeId })
       .from(stops).where(eq(stops.id, stopId)).limit(1);
@@ -254,8 +275,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
     const { stopId } = req.params as { stopId: string };
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
 
     // Verify driver owns this stop's route
     const [stopCheck] = await db.select({ id: stops.id, routeId: stops.routeId, orgId: stops.orgId, recipientName: stops.recipientName, address: stops.address })
@@ -350,8 +372,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.get('/me/stops/:stopId/cs-required', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { stopId } = req.params as { stopId: string };
     const [stop] = await db.select().from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
@@ -370,8 +393,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/me/status', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { status } = req.body as { status?: string };
     if (status !== 'available' && status !== 'offline') {
       return reply.code(400).send({ error: 'status must be available or offline' });
@@ -388,8 +412,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.post('/me/location', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { lat, lng, routeId } = req.body as { lat: number; lng: number; routeId?: string };
     if (lat == null || lng == null || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
       return reply.code(400).send({ error: 'Invalid lat/lng' });
@@ -416,8 +441,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/me/routes/:routeId/start', {
     preHandler: requireRole('driver'),
   }, async (req, reply) => {
-    const user = req.user as { sub: string; driverId?: string };
-    const driverId = user.driverId ?? user.sub;
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { routeId } = req.params as { routeId: string };
     const [route] = await db.select().from(routes).where(and(eq(routes.id, routeId), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
@@ -447,8 +473,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /me/stops/:stopId/return-confirm — driver confirms package returned to pharmacy
   app.post('/me/stops/:stopId/return-confirm', { preHandler: requireRole('driver') }, async (req, reply) => {
-    const jwtUser = req.user as { sub: string; driverId?: string; orgId: string };
-    const driverId = jwtUser.driverId ?? jwtUser.sub;
+    const jwtUser = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(jwtUser);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { stopId } = req.params as { stopId: string };
 
     const [stop] = await db

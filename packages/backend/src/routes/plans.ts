@@ -38,7 +38,8 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     const conditions = [eq(plans.orgId, orgId), isNull(plans.deletedAt)];
     if (date) conditions.push(eq(plans.date, date));
     if (depotId) conditions.push(eq(plans.depotId, depotId));
-    if (user.role === 'dispatcher' && user.depotIds?.length > 0) {
+    if (user.role === 'dispatcher') {
+      if (!user.depotIds?.length) return [];
       conditions.push(inArray(plans.depotId, user.depotIds));
     }
     const planList = await db.select().from(plans).where(and(...conditions)).orderBy(plans.date);
@@ -65,8 +66,10 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
       .limit(1);
     if (!plan) return reply.code(404).send({ error: 'Not found' });
-    if (user.role === 'dispatcher' && user.depotIds?.length > 0 && !user.depotIds.includes(plan.depotId)) {
-      return reply.code(403).send({ error: 'Access denied to this depot' });
+    if (user.role === 'dispatcher') {
+      if (!user.depotIds?.length || !user.depotIds.includes(plan.depotId)) {
+        return reply.code(403).send({ error: 'Access denied' });
+      }
     }
     const planRoutes = await db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
     return { ...plan, routes: planRoutes };

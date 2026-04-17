@@ -127,7 +127,8 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
   }, async (req) => {
     const { routeId } = req.params as { routeId: string };
     const { orgId: userOrgId, role, depotIds } = req.user as { orgId: string; role: string; depotIds: string[] };
-    if (role === 'dispatcher' && (depotIds as string[])?.length > 0) {
+    if (role === 'dispatcher') {
+      if (!(depotIds as string[])?.length) return [];
       const [routePlan] = await db
         .select({ depotId: plans.depotId })
         .from(routes)
