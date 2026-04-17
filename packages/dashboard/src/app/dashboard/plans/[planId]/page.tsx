@@ -186,7 +186,10 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
 
   const reorderStops = useCallback(async (routeId: string, stopIds: string[]) => {
     try {
-      await api.patch(`/routes/${routeId}/stops/reorder`, { stopIds });
+      const result = await api.patch<{ stopOrder: string[]; estimatedDuration: number; activeStopCount: number }>(
+        `/routes/${routeId}/stops/reorder`, { stopIds }
+      );
+      setRoutes(prev => prev.map(r => r.id === routeId ? { ...r, estimatedDuration: result.estimatedDuration } : r));
     } catch {
       setError('Failed to reorder stops — order restored');
       loadPlan();

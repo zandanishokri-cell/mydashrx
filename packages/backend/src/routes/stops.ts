@@ -218,8 +218,17 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
         db.update(stops).set({ sequenceNumber: idx }).where(and(eq(stops.id, id), eq(stops.routeId, routeId), isNull(stops.deletedAt)))
       )
     );
-    await db.update(routes).set({ stopOrder: stopIds }).where(eq(routes.id, routeId));
-    return { ok: true };
+
+    // Count non-terminal stops to compute updated ETA
+    const routeStops = await db
+      .select({ status: stops.status })
+      .from(stops)
+      .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)));
+    const activeStopCount = routeStops.filter(s => !(TERMINAL_STATUSES as string[]).includes(s.status)).length;
+    const estimatedDuration = activeStopCount * 8 * 60; // seconds, 8 min/stop
+
+    await db.update(routes).set({ stopOrder: stopIds, estimatedDuration }).where(eq(routes.id, routeId));
+    return { stopOrder: stopIds, estimatedDuration, activeStopCount };
   });
 
   app.patch('/:stopId/status', {
