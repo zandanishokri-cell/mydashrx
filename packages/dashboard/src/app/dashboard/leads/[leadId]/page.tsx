@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import {
   ArrowLeft, Phone, Mail, ExternalLink, Star, Calendar,
-  Tag, Save, Send, X, Clock, Sparkles
+  Tag, Save, Send, X, Clock, Sparkles, Trash2
 } from 'lucide-react';
 
 interface Lead {
@@ -60,6 +60,8 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
   const [sendingEmail, setSendingEmail] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -169,6 +171,19 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
     }
   };
 
+  const deleteLead = async () => {
+    if (!user || !lead) return;
+    setDeleting(true);
+    try {
+      await api.del(`/orgs/${user.orgId}/leads/${lead.id}`);
+      router.push('/dashboard/leads');
+    } catch {
+      showToast('Failed to delete lead');
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-6 space-y-4">
@@ -210,6 +225,13 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
         </div>
         <div className="flex items-center gap-2">
           <ScoreBadge score={lead.score} />
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="p-2 rounded-lg border border-red-200 text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+            title="Delete lead"
+          >
+            <Trash2 size={14} />
+          </button>
           <button
             onClick={() => setShowEmailModal(true)}
             className="bg-[#0F4C81] hover:bg-[#0a3d6b] text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
@@ -465,6 +487,42 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
                 className="flex-1 bg-[#0F4C81] hover:bg-[#0a3d6b] text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-60"
               >
                 <Send size={13} /> {sendingEmail ? 'Sending…' : 'Send Email'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <Trash2 size={18} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900 text-sm">Delete Lead</h3>
+                <p className="text-xs text-gray-500 mt-0.5">This action cannot be undone.</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-700 mb-6">
+              Are you sure you want to delete <span className="font-medium">{lead.name}</span>? All outreach history and notes will be permanently removed.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteLead}
+                disabled={deleting}
+                className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-60"
+              >
+                <Trash2 size={13} /> {deleting ? 'Deleting…' : 'Delete Lead'}
               </button>
             </div>
           </div>

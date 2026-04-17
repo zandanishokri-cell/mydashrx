@@ -41,7 +41,8 @@ function parseCityState(address: string): { city: string; state: string; zip: st
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
-  const auth = requireRole('dispatcher', 'pharmacy_admin', 'super_admin');
+  // Leads are sales intelligence — restricted to admin roles only (not dispatchers)
+  const auth = requireRole('pharmacy_admin', 'super_admin');
 
   // GET /orgs/:orgId/leads/stats
   app.get('/stats', { preHandler: auth }, async (req) => {
