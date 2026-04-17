@@ -9,6 +9,16 @@ import { Modal } from '@/components/ui/Modal';
 import { FormField, SelectField } from '@/components/ui/FormField';
 import { ArrowLeft, Award, CheckCircle2, XCircle, TrendingUp, Pencil, ExternalLink } from 'lucide-react';
 
+type PerfRange = '7d' | '30d' | '90d' | 'custom';
+const localDateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const rangeParams = (range: PerfRange, from: string, to: string) => {
+  const now = new Date();
+  if (range === '7d') return { from: localDateStr(new Date(now.getTime() - 6 * 86400000)), to: localDateStr(now) };
+  if (range === '30d') return { from: localDateStr(new Date(now.getTime() - 29 * 86400000)), to: localDateStr(now) };
+  if (range === '90d') return { from: localDateStr(new Date(now.getTime() - 89 * 86400000)), to: localDateStr(now) };
+  return { from, to };
+};
+
 interface PerformanceData {
   driverId: string;
   driverName: string;
@@ -80,16 +90,38 @@ export default function DriverDetailPage() {
   const [perf, setPerf] = useState<PerformanceData | null>(null);
   const [recentStops, setRecentStops] = useState<Stop[]>([]);
   const [loading, setLoading] = useState(true);
+  const [perfLoading, setPerfLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [perfRange, setPerfRange] = useState<PerfRange>('30d');
+  const [perfFrom, setPerfFrom] = useState('');
+  const [perfTo, setPerfTo] = useState('');
+
+  const loadPerf = useCallback(async (range: PerfRange, from: string, to: string) => {
+    if (!user) return;
+    setPerfLoading(true);
+    try {
+      const { from: f, to: t } = rangeParams(range, from, to);
+      const params = new URLSearchParams();
+      if (f) params.set('from', f);
+      if (t) params.set('to', t);
+      const perfData = await api.get<PerformanceData>(`/orgs/${user.orgId}/drivers/${driverId}/performance?${params}`);
+      setPerf(perfData);
+    } catch (e) { console.error(e); }
+    finally { setPerfLoading(false); }
+  }, [user, driverId]);
 
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
+      const { from: f, to: t } = rangeParams('30d', '', '');
+      const params = new URLSearchParams();
+      if (f) params.set('from', f);
+      if (t) params.set('to', t);
       const [driverData, perfData] = await Promise.all([
         api.get<Driver>(`/orgs/${user.orgId}/drivers/${driverId}`),
-        api.get<PerformanceData>(`/orgs/${user.orgId}/drivers/${driverId}/performance`),
+        api.get<PerformanceData>(`/orgs/${user.orgId}/drivers/${driverId}/performance?${params}`),
       ]);
       setDriver(driverData);
       setPerf(perfData);
@@ -182,7 +214,7 @@ export default function DriverDetailPage() {
       {/* Performance stats */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-gray-700">30-Day Performance</h3>
+          <h3 className="text-sm font-semibold text-gray-700">Driver Performance</h3>
           {perf.rank && (
             <span className="flex items-center gap-1.5 text-sm font-semibold text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
               <Award size={14} />
@@ -190,21 +222,71 @@ export default function DriverDetailPage() {
             </span>
           )}
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <StatCard label="Total Stops" value={perf.summary.totalStops} />
-          <StatCard
-            label="Completion Rate"
-            value={`${perf.summary.completionRate}%`}
-            sub={`${perf.summary.completed} completed`}
-          />
-          <StatCard label="Avg Stops/Day" value={perf.summary.avgStopsPerDay} sub={`${perf.summary.activeDays} active days`} />
-          <StatCard
-            label="On-Time Rate"
-            value={perf.summary.onTimeRate !== null ? `${perf.summary.onTimeRate}%` : '—'}
-            sub={perf.summary.onTimeRate !== null ? 'within delivery window' : 'no window data'}
-          />
-          <StatCard label="Failed Stops" value={perf.summary.failed} sub={perf.summary.failed > 0 ? 'See reasons below' : 'Clean record'} />
+        {/* Range selector */}
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden text-xs font-medium">
+            {(['7d', '30d', '90d'] as PerfRange[]).map(r => (
+              <button
+                key={r}
+                onClick={() => { setPerfRange(r); loadPerf(r, perfFrom, perfTo); }}
+                className={`px-3 py-1.5 transition-colors ${perfRange === r ? 'bg-[#0F4C81] text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                {r}
+              </button>
+            ))}
+            <button
+              onClick={() => setPerfRange('custom')}
+              className={`px-3 py-1.5 transition-colors ${perfRange === 'custom' ? 'bg-[#0F4C81] text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              Custom
+            </button>
+          </div>
+          {perfRange === 'custom' && (
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={perfFrom}
+                onChange={e => setPerfFrom(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#0F4C81]"
+              />
+              <span className="text-xs text-gray-400">–</span>
+              <input
+                type="date"
+                value={perfTo}
+                onChange={e => setPerfTo(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#0F4C81]"
+              />
+              <button
+                onClick={() => loadPerf('custom', perfFrom, perfTo)}
+                disabled={!perfFrom || !perfTo}
+                className="px-3 py-1 text-xs bg-[#0F4C81] text-white rounded-lg disabled:opacity-40 hover:bg-[#0a3d6b] transition-colors"
+              >
+                Apply
+              </button>
+            </div>
+          )}
         </div>
+        {perfLoading ? (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 animate-pulse">
+            {[1,2,3,4,5].map(i => <div key={i} className="h-20 bg-gray-100 rounded-xl" />)}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <StatCard label="Total Stops" value={perf.summary.totalStops} />
+            <StatCard
+              label="Completion Rate"
+              value={`${perf.summary.completionRate}%`}
+              sub={`${perf.summary.completed} completed`}
+            />
+            <StatCard label="Avg Stops/Day" value={perf.summary.avgStopsPerDay} sub={`${perf.summary.activeDays} active days`} />
+            <StatCard
+              label="On-Time Rate"
+              value={perf.summary.onTimeRate !== null ? `${perf.summary.onTimeRate}%` : '—'}
+              sub={perf.summary.onTimeRate !== null ? 'within delivery window' : 'no window data'}
+            />
+            <StatCard label="Failed Stops" value={perf.summary.failed} sub={perf.summary.failed > 0 ? 'See reasons below' : 'Clean record'} />
+          </div>
+        )}
       </div>
 
       {/* Daily delivery chart */}

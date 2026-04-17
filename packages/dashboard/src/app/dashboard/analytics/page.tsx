@@ -24,6 +24,7 @@ interface AnalyticsData {
 }
 
 const localDateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const isToday = (dateStr: string) => dateStr === localDateStr(new Date());
 
 const defaultRange = (): DateRange => {
   const now = new Date();
@@ -263,8 +264,14 @@ export default function AnalyticsPage() {
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
             <div className="bg-white rounded-xl border border-gray-100 p-4">
               <p className="text-xs text-gray-500 mb-1">Total stops</p>
-              <div className="flex items-end gap-2">
+              <div className="flex items-end gap-2 flex-wrap">
                 <span className="text-2xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>{data.summary.total}</span>
+                {isToday(dateRange.to) && (
+                  <span className="flex items-center gap-1 text-xs text-green-600 font-medium mb-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
+                    LIVE
+                  </span>
+                )}
                 {data.weekOverWeekChange !== null && (
                   <span className={`text-xs mb-0.5 flex items-center gap-0.5 font-medium px-1.5 py-0.5 rounded-full ${
                     data.weekOverWeekChange >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'
