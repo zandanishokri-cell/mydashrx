@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { enqueueAction } from '@/lib/offline-queue';
@@ -25,9 +25,9 @@ const FAILURE_REASONS = [
   'No safe drop location', 'ID required not present', 'Signature required not present', 'Other',
 ];
 
-export default function StopDetailPage({ params }: { params: { stopId: string } }) {
+export default function StopDetailPage() {
   const router = useRouter();
-  const { stopId } = params;
+  const { stopId } = useParams<{ stopId: string }>();
   const [stop, setStop] = useState<Stop | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

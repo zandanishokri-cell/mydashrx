@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { ArrowLeft, MapPin, CheckCircle2, XCircle, Clock, Navigation, Play, PartyPopper } from 'lucide-react';
 
@@ -41,9 +41,9 @@ const fmtETA = (remainingStops: number): string => {
   return eta.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 };
 
-export default function DriverRoutePage({ params }: { params: { routeId: string } }) {
+export default function DriverRoutePage() {
   const router = useRouter();
-  const { routeId } = params;
+  const { routeId } = useParams<{ routeId: string }>();
   const [stops, setStops] = useState<Stop[]>([]);
   const [routeStatus, setRouteStatus] = useState('');
   const [loading, setLoading] = useState(true);

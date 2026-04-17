@@ -24,7 +24,7 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
         totalStops: sql<number>`count(distinct ${stops.id})::int`,
       })
       .from(drivers)
-      .leftJoin(routes, eq(routes.driverId, drivers.id))
+      .leftJoin(routes, and(eq(routes.driverId, drivers.id), isNull(routes.deletedAt)))
       .leftJoin(stops, and(eq(stops.routeId, routes.id), isNull(stops.deletedAt)))
       .where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt)))
       .groupBy(drivers.id);
@@ -96,15 +96,21 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     if (jwtUser?.role === 'driver' && jwtUser?.driverId !== driverId) {
       return reply.code(403).send({ error: 'Forbidden' });
     }
+    // Only transition to on_route if driver was available — don't clobber offline status
     await db.update(drivers).set({
-      currentLat: lat, currentLng: lng, lastPingAt: new Date(), status: 'on_route',
+      currentLat: lat, currentLng: lng, lastPingAt: new Date(),
     }).where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId)));
+    await db.update(drivers).set({ status: 'on_route' })
+      .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId), eq(drivers.status, 'available')));
     return { ok: true };
   });
 
   app.patch('/:driverId/status', { preHandler: requireRole('driver', 'dispatcher', 'super_admin') }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
     const { status } = req.body as { status: 'available' | 'on_route' | 'offline' };
+    if (!['available', 'on_route', 'offline'].includes(status)) {
+      return reply.code(400).send({ error: 'Invalid status value' });
+    }
     // Drivers can only update their own status
     const jwtUser = (req as any).user;
     if (jwtUser?.role === 'driver' && jwtUser?.driverId !== driverId) {
@@ -164,8 +170,9 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
 
     const to = query.to ?? todayInTz();
     const from = query.from ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.now() - 30 * 86400000));
-    const fromTs = new Date(from + 'T00:00:00');
-    const toTs = new Date(to + 'T23:59:59');
+    // Parse as UTC midnight to avoid server-local-timezone ambiguity
+    const fromTs = new Date(from + 'T00:00:00Z');
+    const toTs = new Date(to + 'T23:59:59Z');
 
     const [driver] = await db
       .select({ id: drivers.id, name: drivers.name })
