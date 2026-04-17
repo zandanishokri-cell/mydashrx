@@ -10,6 +10,8 @@ export function getUser(): User | null {
   }
 }
 
+const authChannel = typeof window !== 'undefined' ? new BroadcastChannel('mydashrx_auth') : null;
+
 export function setSession(tokens: {
   accessToken: string;
   refreshToken: string;
@@ -24,6 +26,7 @@ export function clearSession() {
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
+  authChannel?.postMessage({ type: 'logout' });
 }
 
 export function isAuthenticated(): boolean {

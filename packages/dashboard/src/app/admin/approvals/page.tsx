@@ -1,6 +1,8 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { getUser } from '@/lib/auth';
 
 type PendingOrg = {
   org: { id: string; name: string; createdAt: string };
@@ -16,6 +18,8 @@ function timeAgo(dateStr: string) {
 }
 
 export default function ApprovalsPage() {
+  const router = useRouter();
+  const user = getUser();
   const [pending, setPending] = useState<PendingOrg[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -24,6 +28,12 @@ export default function ApprovalsPage() {
   const [rejectReason, setRejectReason] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
+
+  useEffect(() => {
+    if (!user || user.role !== 'super_admin') router.replace('/dashboard');
+  }, []);
+
+  if (!user || user.role !== 'super_admin') return null;
 
   const load = () => {
     setLoading(true);
