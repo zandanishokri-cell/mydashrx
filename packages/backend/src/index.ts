@@ -167,6 +167,7 @@ const optionalEnvs: [string, string][] = [
   ['STRIPE_WEBHOOK_SECRET', 'Billing webhooks'],
   ['TWILIO_ACCOUNT_SID', 'SMS/IVR'],
   ['TWILIO_AUTH_TOKEN', 'SMS/IVR'],
+  ['TWILIO_FROM_NUMBER', 'SMS sending'],
 ];
 for (const [key, feature] of optionalEnvs) {
   if (!process.env[key]) console.warn(`[CONFIG] ${key} not set — ${feature} will be unavailable`);
