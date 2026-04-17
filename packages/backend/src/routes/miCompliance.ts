@@ -5,6 +5,10 @@ import { eq, and, count, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 const ADMIN_ROLES = ['pharmacy_admin', 'super_admin'] as const;
+const READ_ROLES = ['pharmacy_admin', 'super_admin', 'pharmacist'] as const;
+
+const VALID_CATEGORIES = ['maps_reporting', 'id_verification', 'record_retention', 'pharmacy_licensure', 'data_destruction', 'breach_readiness'];
+const VALID_SOURCES = ['LARA', 'Board of Pharmacy', 'MDHHS', 'AG', 'Legislature'];
 
 const defaultItems = [
   { category: 'maps_reporting', itemName: 'Daily MAPS reporting configured for controlled substances', legalRef: 'MCL 333.17735' },
@@ -57,7 +61,7 @@ function categoryStatus(items: { status: string }[]): string {
 
 export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   // Dashboard
-  app.get('/dashboard', { preHandler: requireRole(...ADMIN_ROLES) }, async (req) => {
+  app.get('/dashboard', { preHandler: requireRole(...READ_ROLES) }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const items = await db.select().from(miComplianceItems).where(eq(miComplianceItems.orgId, orgId));
     const updates = await db.select().from(regulatoryUpdates).where(eq(regulatoryUpdates.orgId, orgId));
@@ -89,7 +93,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // List items
-  app.get('/items', { preHandler: requireRole(...ADMIN_ROLES) }, async (req) => {
+  app.get('/items', { preHandler: requireRole(...READ_ROLES) }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { category } = req.query as { category?: string };
     const where = category
@@ -103,6 +107,9 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as { category: string; itemName: string; legalRef?: string; notes?: string; dueDate?: string };
     if (!body.itemName?.trim()) return reply.code(400).send({ error: 'itemName is required' });
+    if (!body.category || !VALID_CATEGORIES.includes(body.category)) {
+      return reply.code(400).send({ error: `Invalid category. Must be one of: ${VALID_CATEGORIES.join(', ')}` });
+    }
     const [item] = await db.insert(miComplianceItems).values({
       orgId,
       category: body.category,
@@ -155,7 +162,7 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // List regulatory updates
-  app.get('/regulatory', { preHandler: requireRole(...ADMIN_ROLES) }, async (req) => {
+  app.get('/regulatory', { preHandler: requireRole(...READ_ROLES) }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { unacknowledged } = req.query as { unacknowledged?: string };
     const where = unacknowledged === 'true'
@@ -170,6 +177,9 @@ export const miComplianceRoutes: FastifyPluginAsync = async (app) => {
     const { orgId } = req.params as { orgId: string };
     const body = req.body as { title: string; summary: string; source: string; impactLevel?: string; effectiveDate?: string; url?: string };
     if (!body.title?.trim() || !body.summary?.trim()) return reply.code(400).send({ error: 'title and summary are required' });
+    if (body.source !== undefined && !VALID_SOURCES.includes(body.source)) {
+      return reply.code(400).send({ error: `Invalid source. Must be one of: ${VALID_SOURCES.join(', ')}` });
+    }
     if (body.impactLevel !== undefined && !VALID_IMPACT_LEVELS.includes(body.impactLevel)) {
       return reply.code(400).send({ error: `Invalid impactLevel. Must be one of: ${VALID_IMPACT_LEVELS.join(', ')}` });
     }
