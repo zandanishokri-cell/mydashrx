@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { organizations, users, stops, drivers } from '../db/schema.js';
-import { eq, isNull, sql, gte, count } from 'drizzle-orm';
+import { eq, isNull, sql, gte, count, and } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 const PLAN_PRICES: Record<string, number> = {
@@ -183,5 +183,119 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     }).returning();
 
     return { org, adminUser: { id: user.id, email: user.email, name: user.name } };
+  });
+
+  // ─── Approval Queue ────────────────────────────────────────────────────────
+
+  // GET /admin/approvals — list pending orgs with their admin user
+  app.get('/approvals', { preHandler: auth }, async () => {
+    const pendingOrgs = await db
+      .select()
+      .from(organizations)
+      .where(and(eq(organizations.pendingApproval, true), isNull(organizations.deletedAt)))
+      .orderBy(organizations.createdAt);
+
+    const results = await Promise.all(pendingOrgs.map(async (org) => {
+      const [admin] = await db
+        .select({ id: users.id, name: users.name, email: users.email, createdAt: users.createdAt })
+        .from(users)
+        .where(and(eq(users.orgId, org.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)))
+        .limit(1);
+      return { org, admin: admin ?? null };
+    }));
+
+    return results;
+  });
+
+  // POST /admin/approvals/:orgId/approve
+  app.post('/approvals/:orgId/approve', { preHandler: auth }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+
+    await db.update(organizations).set({ pendingApproval: false }).where(eq(organizations.id, orgId));
+    await db.update(users).set({ pendingApproval: false }).where(and(eq(users.orgId, orgId), isNull(users.deletedAt)));
+
+    // Send welcome email to pharmacy admin
+    const [admin] = await db.select({ email: users.email, name: users.name })
+      .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
+
+    const resendKey = process.env.RESEND_API_KEY;
+    const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+
+    if (admin && resendKey) {
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+        body: JSON.stringify({
+          from: `MyDashRx <noreply@${senderDomain}>`,
+          to: admin.email,
+          subject: `Welcome to MyDashRx — ${org.name} is approved!`,
+          html: `
+            <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+              <h2 style="color:#0F4C81;margin:0 0 8px">You're approved!</h2>
+              <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${admin.name},</p>
+              <p style="color:#374151;margin:0 0 24px;font-size:15px"><strong>${org.name}</strong> has been approved on MyDashRx. You can now sign in and start managing your deliveries.</p>
+              <a href="${dashUrl}/login" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Sign in to MyDashRx</a>
+            </div>`,
+        }),
+      }).catch(() => {});
+    }
+
+    return { success: true, orgId };
+  });
+
+  // POST /admin/approvals/:orgId/reject
+  app.post('/approvals/:orgId/reject', { preHandler: auth }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { reason } = (req.body as { reason?: string }) ?? {};
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+
+    const now = new Date();
+    await db.update(organizations).set({ deletedAt: now }).where(eq(organizations.id, orgId));
+    await db.update(users).set({ deletedAt: now }).where(eq(users.orgId, orgId));
+
+    const [admin] = await db.select({ email: users.email, name: users.name })
+      .from(users).where(eq(users.orgId, orgId)).limit(1);
+
+    const resendKey = process.env.RESEND_API_KEY;
+    const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+
+    if (admin && resendKey) {
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+        body: JSON.stringify({
+          from: `MyDashRx <noreply@${senderDomain}>`,
+          to: admin.email,
+          subject: `MyDashRx — Application update for ${org.name}`,
+          html: `
+            <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+              <h2 style="color:#374151;margin:0 0 8px">Application update</h2>
+              <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${admin.name},</p>
+              <p style="color:#374151;margin:0 0 8px;font-size:15px">Thank you for applying to MyDashRx. After review, we are unable to approve <strong>${org.name}</strong> at this time.</p>
+              ${reason ? `<p style="color:#374151;margin:0 0 16px;font-size:14px;background:#f9fafb;padding:12px;border-radius:8px">${reason}</p>` : ''}
+              <p style="color:#6b7280;font-size:13px">If you believe this is an error, contact <a href="mailto:support@mydashrx.com">support@mydashrx.com</a>.</p>
+            </div>`,
+        }),
+      }).catch(() => {});
+    }
+
+    return { success: true, orgId };
+  });
+
+  // POST /admin/approvals/batch — batch approve or reject
+  app.post('/approvals/batch', { preHandler: auth }, async (req, reply) => {
+    const { orgIds, action } = req.body as { orgIds?: string[]; action?: 'approve' | 'reject' };
+    if (!Array.isArray(orgIds) || orgIds.length === 0) return reply.code(400).send({ error: 'orgIds array required' });
+    if (action !== 'approve' && action !== 'reject') return reply.code(400).send({ error: 'action must be approve or reject' });
+
+    await Promise.all(orgIds.map(id =>
+      app.inject({ method: 'POST', url: `/api/v1/admin/approvals/${id}/${action}`, headers: req.headers as any })
+    ));
+
+    return { success: true, processed: orgIds.length };
   });
 };
