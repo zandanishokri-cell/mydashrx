@@ -6,6 +6,7 @@ import { requireRole } from '../middleware/requireRole.js';
 import { runComplianceScan, isDeploymentBlocked } from '../compliance/scanner.js';
 
 const ADMIN = requireRole('pharmacy_admin', 'super_admin');
+const ADMIN_READ = requireRole('pharmacy_admin', 'super_admin', 'pharmacist');
 
 function computeScannerScore(findings: { severity: string; count: number }[]): number {
   const p0 = findings.filter(f => f.severity === 'P0' && f.count > 0).length;
@@ -18,7 +19,7 @@ function computeScannerScore(findings: { severity: string; count: number }[]): n
 export const complianceRoutes: FastifyPluginAsync = async (app) => {
 
   // ─── Dashboard summary ───────────────────────────────────────────────────────
-  app.get('/dashboard', { preHandler: ADMIN }, async (req) => {
+  app.get('/dashboard', { preHandler: ADMIN_READ }, async (req) => {
     const { orgId } = req.params as { orgId: string };
 
     const [checks, baaRows, recentAudit] = await Promise.all([
@@ -72,7 +73,7 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ─── BAA Registry ─────────────────────────────────────────────────────────────
-  app.get('/baa', { preHandler: ADMIN }, async (req) => {
+  app.get('/baa', { preHandler: ADMIN_READ }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     return db.select().from(baaRegistry).where(eq(baaRegistry.orgId, orgId)).orderBy(baaRegistry.createdAt);
   });
@@ -144,7 +145,7 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ─── Audit Logs ───────────────────────────────────────────────────────────────
-  app.get('/audit-logs', { preHandler: ADMIN }, async (req, reply) => {
+  app.get('/audit-logs', { preHandler: ADMIN_READ }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const {
       user: userFilter, action, resource, from, to,
@@ -214,7 +215,7 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ─── Compliance Checks ────────────────────────────────────────────────────────
-  app.get('/checks', { preHandler: ADMIN }, async (req) => {
+  app.get('/checks', { preHandler: ADMIN_READ }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     return db.select().from(complianceChecks).where(eq(complianceChecks.orgId, orgId));
   });
@@ -330,7 +331,7 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /orgs/:orgId/compliance/score-history — last 30 scan score data points
-  app.get('/score-history', { preHandler: ADMIN }, async (req) => {
+  app.get('/score-history', { preHandler: ADMIN_READ }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const rows = await db
       .select({
@@ -347,7 +348,7 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ─── Michigan Compliance Checklist ──────────────────────────────────────────
-  app.get('/mi-checklist', { preHandler: ADMIN }, async (req) => {
+  app.get('/mi-checklist', { preHandler: ADMIN_READ }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     return db.select().from(miComplianceItems)
       .where(eq(miComplianceItems.orgId, orgId))
@@ -379,7 +380,7 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
     return row;
   });
 
-  app.get('/scan/latest', { preHandler: ADMIN }, async (req) => {
+  app.get('/scan/latest', { preHandler: ADMIN_READ }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const rows = await db
       .select()

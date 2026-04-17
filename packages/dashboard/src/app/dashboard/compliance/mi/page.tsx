@@ -46,8 +46,9 @@ const STATUS_LABEL: Record<string, string> = {
 
 function statusIcon(status: string) {
   if (status === 'compliant') return <CheckCircle2 size={15} className="text-emerald-500" />;
-  if (status === 'in_progress') return <Clock size={15} className="text-blue-500" />;
-  return <AlertTriangle size={15} className="text-amber-500" />;
+  if (status === 'warning') return <AlertTriangle size={15} className="text-amber-500" />;
+  if (status === 'non_compliant') return <AlertTriangle size={15} className="text-red-500" />;
+  return <Clock size={15} className="text-gray-400" />; // pending
 }
 
 export default function MiCompliancePage() {

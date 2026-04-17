@@ -3,7 +3,7 @@ import {
   stops, proofOfDeliveries, baaRegistry, auditLogs, organizations,
   drivers, routes, plans, recurringDeliveries, complianceChecks, miComplianceItems,
 } from '../db/schema.js';
-import { eq, and, isNull, lt, gt, ne, or, count, sql, inArray, notInArray } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, lt, gt, ne, or, count, sql, inArray, notInArray } from 'drizzle-orm';
 
 export type Severity = 'P0' | 'P1' | 'P2' | 'P3';
 
@@ -95,6 +95,7 @@ async function hipaaChecks(orgId: string): Promise<ComplianceFinding[]> {
     .where(and(
       eq(baaRegistry.orgId, orgId),
       eq(baaRegistry.baaStatus, 'signed'),
+      isNotNull(baaRegistry.expiresAt),
       lt(baaRegistry.expiresAt, in30Days()),
       gt(baaRegistry.expiresAt, new Date()),
     ));
