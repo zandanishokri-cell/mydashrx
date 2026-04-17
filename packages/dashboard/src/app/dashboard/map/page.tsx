@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
-import { RefreshCw, AlertTriangle, Clock, WifiOff } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Clock, WifiOff, Crosshair } from 'lucide-react';
 
 const LiveMap = dynamic(() => import('@/components/LiveMap').then((m) => m.LiveMap), { ssr: false });
 
@@ -89,9 +89,12 @@ export default function MapPage() {
   const [routeStops, setRouteStops] = useState<StopMarker[]>([]);
   const [stopsLoading, setStopsLoading] = useState(false);
   const [stopsError, setStopsError] = useState(false);
+  const [staleTick, setStaleTick] = useState(0);
+  const [fitToDriver, setFitToDriver] = useState<string | null>(null);
   const lastFetchedRouteIdRef = useRef<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const staleCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -131,6 +134,19 @@ export default function MapPage() {
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [load]);
+
+  // Force re-render every 60s to catch stale-ping threshold crossings between data polls
+  useEffect(() => {
+    staleCheckRef.current = setInterval(() => setStaleTick((t) => t + 1), 60000);
+    return () => { if (staleCheckRef.current) clearInterval(staleCheckRef.current); };
+  }, []);
+
+  // Reset fitToDriver after one frame so the effect fires once per click
+  useEffect(() => {
+    if (!fitToDriver) return;
+    const id = setTimeout(() => setFitToDriver(null), 0);
+    return () => clearTimeout(id);
+  }, [fitToDriver]);
 
   // Fetch stop pins only when the highlighted route actually changes — not on every 15s poll
   useEffect(() => {
@@ -219,6 +235,7 @@ export default function MapPage() {
               highlightedDriverId={highlightedDriverId}
               depotLatLng={null}
               onMarkerClick={handleMarkerClick}
+              fitToDriver={fitToDriver}
             />
           )}
         </div>
@@ -240,6 +257,7 @@ export default function MapPage() {
           ) : (
             <div className="divide-y divide-gray-50">
               {(liveData?.activeRoutes ?? []).map((r) => {
+                void staleTick; // dependency — ensures re-eval every 60s for stale threshold
                 const stale = isStale(r.lastPingAt);
                 const selected = highlightedDriverId === r.driverId;
                 return (
@@ -296,6 +314,15 @@ export default function MapPage() {
                       <span className="text-xs text-gray-400">{timeAgo(r.lastPingAt)}</span>
                       <span className="text-xs text-gray-400">Est. {fmtTime(r.estimatedCompletion)}</span>
                     </div>
+                    {selected && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setFitToDriver(r.driverId); }}
+                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 px-2 py-1 mt-1.5 rounded hover:bg-blue-50 transition-colors"
+                        title="Fit map to route"
+                      >
+                        <Crosshair size={12} /> Fit to route
+                      </button>
+                    )}
                   </button>
                 );
               })}

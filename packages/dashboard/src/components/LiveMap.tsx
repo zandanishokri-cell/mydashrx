@@ -28,6 +28,16 @@ interface Props {
   highlightedDriverId?: string | null;
   depotLatLng?: [number, number] | null;
   onMarkerClick?: (driverId: string) => void;
+  fitToDriver?: string | null;
+}
+
+let pulseStyleInjected = false;
+function injectPulseStyle() {
+  if (pulseStyleInjected || typeof document === 'undefined') return;
+  const style = document.createElement('style');
+  style.textContent = `@keyframes map-pulse{0%,100%{box-shadow:0 0 0 0 rgba(234,179,8,0.6)}50%{box-shadow:0 0 0 8px rgba(234,179,8,0)}}.map-pulse{animation:map-pulse 1.5s ease-in-out infinite}`;
+  document.head.appendChild(style);
+  pulseStyleInjected = true;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -46,18 +56,14 @@ const DRIVER_COLORS: Record<string, string> = {
 
 const driverMarkerHtml = (name: string, status: string, highlighted: boolean) => {
   const bg = DRIVER_COLORS[status] ?? '#0F4C81';
-  const initials = name
-    .split(' ')
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase();
+  const initials = name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   const size = highlighted ? 40 : 32;
   const border = highlighted ? '3px solid #fbbf24' : '3px solid white';
   const shadow = highlighted
     ? '0 0 0 3px rgba(251,191,36,0.4),0 3px 10px rgba(0,0,0,0.4)'
     : '0 2px 6px rgba(0,0,0,0.3)';
-  return `<div style="background:${bg};color:white;width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${highlighted ? 14 : 12}px;font-weight:700;border:${border};box-shadow:${shadow};cursor:pointer;transition:all .2s">${initials}</div>`;
+  const pulseClass = highlighted ? ' map-pulse' : '';
+  return `<div class="${pulseClass.trim()}" style="background:${bg};color:white;width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${highlighted ? 14 : 12}px;font-weight:700;border:${border};box-shadow:${shadow};cursor:pointer;transition:all .2s">${initials}</div>`;
 };
 
 export function LiveMap({
@@ -68,6 +74,7 @@ export function LiveMap({
   highlightedDriverId = null,
   depotLatLng = null,
   onMarkerClick,
+  fitToDriver = null,
 }: Props) {
   const mapRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -78,6 +85,7 @@ export function LiveMap({
 
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return;
+    injectPulseStyle();
 
     import('leaflet').then((L) => {
       if (mapRef.current) return;
@@ -199,6 +207,22 @@ export function LiveMap({
       }
     });
   }, [highlightedDriverId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fit map to selected driver's stops when fitToDriver prop changes
+  useEffect(() => {
+    if (!fitToDriver || !mapRef.current) return;
+    import('leaflet').then((L) => {
+      const bounds = stops
+        .filter((s) => s.lat != null && s.lng != null)
+        .map((s) => [s.lat, s.lng] as [number, number]);
+      const driver = drivers.find((d) => d.id === fitToDriver);
+      if (bounds.length > 1) {
+        mapRef.current.fitBounds(L.latLngBounds(bounds), { padding: [40, 40], animate: true });
+      } else if (driver?.lat != null && driver?.lng != null) {
+        mapRef.current.setView([driver.lat, driver.lng], 14, { animate: true });
+      }
+    });
+  }, [fitToDriver]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div ref={containerRef} style={{ height: '100%', width: '100%' }} />;
 }
