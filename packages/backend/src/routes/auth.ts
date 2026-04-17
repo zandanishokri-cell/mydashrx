@@ -1,15 +1,31 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { createHmac, randomBytes } from 'crypto';
+import { createHmac, randomBytes, randomUUID } from 'crypto';
 
 const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? randomBytes(32).toString('hex');
 const signToken = (t: string) => createHmac('sha256', MAGIC_LINK_SECRET).update(t).digest('hex');
 import { db } from '../db/connection.js';
-import { users, organizations, drivers, magicLinkTokens } from '../db/schema.js';
+import { users, organizations, drivers, magicLinkTokens, refreshTokens } from '../db/schema.js';
 import { eq, and, isNull, gt, count } from 'drizzle-orm';
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
 import { sql } from 'drizzle-orm';
+
+async function seedRefreshToken(
+  userId: string,
+  familyId: string,
+  jti: string,
+  req: { ip: string; headers: Record<string, string | string[] | undefined> },
+): Promise<void> {
+  await db.insert(refreshTokens).values({
+    jti,
+    familyId,
+    userId,
+    ip: req.ip,
+    userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+    expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+  });
+}
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -114,7 +130,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       ...(user.mustChangePassword ? { mustChangePw: true } : {}),
       ...(driverId ? { driverId } : {}),
     };
-    const tokens = signTokens(app, payload, user.tokenVersion);
+    const jti = randomUUID();
+    const familyId = randomUUID();
+    const tokens = signTokens(app, payload, user.tokenVersion, { jti, familyId });
+    await seedRefreshToken(user.id, familyId, jti, req);
     return reply.send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
@@ -169,30 +188,90 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   app.post('/refresh', async (req, reply) => {
     const body = req.body as { refreshToken?: string };
     if (!body.refreshToken) return reply.code(400).send({ error: 'refreshToken required' });
+
+    let decoded: { sub: string; type: string; tv?: number; jti?: string; familyId?: string };
     try {
-      const decoded = app.jwt.verify(body.refreshToken) as { sub: string; type: string; tv?: number };
-      if (decoded.type !== 'refresh') throw new Error('wrong token type');
+      decoded = app.jwt.verify(body.refreshToken) as typeof decoded;
+      if (decoded.type !== 'refresh') throw new Error('wrong type');
+    } catch {
+      return reply.code(401).send({ error: 'Invalid refresh token' });
+    }
+
+    // --- Stateful path: jti present = token was seeded on login ---
+    if (decoded.jti) {
+      const rows = await db.execute(
+        sql`SELECT id, family_id, status, user_id FROM refresh_tokens WHERE jti = ${decoded.jti} FOR UPDATE`
+      );
+      const row = (rows as unknown as Array<{ id: string; family_id: string; status: string; user_id: string }>)[0];
+
+      if (!row) return reply.code(401).send({ error: 'Unknown token' });
+
+      if (row.status === 'used') {
+        // Replay attack detected — revoke entire family
+        await db.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.familyId, row.family_id));
+        return reply.code(401).send({ error: 'Token reuse detected. All sessions revoked.' });
+      }
+      if (row.status === 'revoked') {
+        return reply.code(401).send({ error: 'Session revoked. Please log in again.' });
+      }
+
+      await db.update(refreshTokens).set({ status: 'used', usedAt: new Date() }).where(eq(refreshTokens.jti, decoded.jti));
+
       const user = await findUserById(decoded.sub);
-      if (!user) return reply.code(401).send({ error: 'User not found' });
-      // P-SES6: Token version check — revokes all existing RTs on role change or soft-delete
+      if (!user || user.deletedAt) return reply.code(401).send({ error: 'User not found' });
       if (decoded.tv !== undefined && decoded.tv !== user.tokenVersion) {
         return reply.code(401).send({ error: 'Session invalidated. Please log in again.' });
       }
-      // Re-attach driverId for driver role — omitting it causes empty route list after token expiry
+
       let driverId: string | undefined;
       if (user.role === 'driver') {
-        const [driverRecord] = await db.select({ id: drivers.id }).from(drivers)
+        const [dr] = await db.select({ id: drivers.id }).from(drivers)
           .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt))).limit(1);
-        driverId = driverRecord?.id;
+        driverId = dr?.id;
       }
+
+      const newJti = randomUUID();
       const tokens = signTokens(app, {
-        sub: user.id,
-        email: user.email,
-        role: user.role,
-        orgId: user.orgId,
+        sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
         depotIds: user.depotIds as string[],
+        ...(user.mustChangePassword ? { mustChangePw: true } : {}),
         ...(driverId ? { driverId } : {}),
-      }, user.tokenVersion);
+      }, user.tokenVersion, { jti: newJti, familyId: row.family_id });
+
+      await db.insert(refreshTokens).values({
+        jti: newJti,
+        familyId: row.family_id,
+        userId: user.id,
+        ip: req.ip,
+        userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+        expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+      });
+
+      return reply.send(tokens);
+    }
+
+    // --- Stateless fallback: pre-P-SES3 tokens without jti. Migrate to stateful on first use. ---
+    try {
+      const user = await findUserById(decoded.sub);
+      if (!user) return reply.code(401).send({ error: 'User not found' });
+      if (decoded.tv !== undefined && decoded.tv !== user.tokenVersion) {
+        return reply.code(401).send({ error: 'Session invalidated. Please log in again.' });
+      }
+      let driverId: string | undefined;
+      if (user.role === 'driver') {
+        const [dr] = await db.select({ id: drivers.id }).from(drivers)
+          .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt))).limit(1);
+        driverId = dr?.id;
+      }
+      const newJti = randomUUID();
+      const newFamilyId = randomUUID();
+      const tokens = signTokens(app, {
+        sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
+        depotIds: user.depotIds as string[],
+        ...(user.mustChangePassword ? { mustChangePw: true } : {}),
+        ...(driverId ? { driverId } : {}),
+      }, user.tokenVersion, { jti: newJti, familyId: newFamilyId });
+      await seedRefreshToken(user.id, newFamilyId, newJti, req);
       return reply.send(tokens);
     } catch {
       return reply.code(401).send({ error: 'Invalid refresh token' });
@@ -326,12 +405,15 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       driverId = dr?.id;
     }
 
+    const mlJti = randomUUID();
+    const mlFamilyId = randomUUID();
     const tokens = signTokens(app, {
       sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
       depotIds: user.depotIds as string[],
       ...(user.mustChangePassword ? { mustChangePw: true } : {}),
       ...(driverId ? { driverId } : {}),
-    }, user.tokenVersion);
+    }, user.tokenVersion, { jti: mlJti, familyId: mlFamilyId });
+    await seedRefreshToken(user.id, mlFamilyId, mlJti, req);
     return reply.send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
@@ -370,7 +452,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .select({ pendingApproval: organizations.pendingApproval, approvedAt: organizations.approvedAt, rejectedAt: organizations.rejectedAt, rejectionReason: organizations.rejectionReason })
       .from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Organization not found' });
-    const status = org.rejectedAt ? 'rejected' : org.approvedAt ? 'approved' : 'pending';
+    const status = org.rejectedAt ? 'rejected' : (org.approvedAt || !org.pendingApproval) ? 'approved' : 'pending';
     return {
       status,
       ...(org.rejectedAt ? { reason: org.rejectionReason, rejectedAt: org.rejectedAt } : {}),

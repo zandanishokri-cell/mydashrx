@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens } from '../db/schema.js';
+import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens } from '../db/schema.js';
 import { eq, isNull, sql, gte, count, and, desc, lt, or, isNotNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
@@ -401,7 +401,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     return { sent, checked: pending.length };
   });
 
-  // POST /admin/jobs/cleanup-tokens — P-CLN2: Delete expired/used magic link tokens older than 24hr
+  // POST /admin/jobs/cleanup-tokens — P-CLN2 + P-CLN3: Delete expired/used magic link tokens + stale refresh tokens
   app.post('/jobs/cleanup-tokens', { preHandler: auth }, async () => {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const deleted = await db.delete(magicLinkTokens).where(
@@ -410,6 +410,13 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         and(isNotNull(magicLinkTokens.usedAt), lt(magicLinkTokens.createdAt, cutoff)),
       )
     ).returning({ id: magicLinkTokens.id });
-    return { deleted: deleted.length };
+
+    // P-CLN3: Delete used/revoked refresh tokens past expiry
+    const rtResult = await db.execute(
+      sql`DELETE FROM refresh_tokens WHERE (status = 'used' OR status = 'revoked') AND expires_at < NOW() - INTERVAL '1 day' RETURNING id`
+    );
+    const refreshTokensDeleted = (rtResult as unknown as Array<unknown>).length;
+
+    return { deleted: deleted.length, refreshTokensDeleted };
   });
 };

@@ -17,12 +17,18 @@ export function signTokens(
   app: FastifyInstance,
   payload: Omit<JWTPayload, 'iat' | 'exp'>,
   tokenVersion?: number,
+  rtMeta?: { jti: string; familyId: string },
 ): { accessToken: string; refreshToken: string } {
   const accessToken = app.jwt.sign(payload as object, {
     expiresIn: process.env.JWT_EXPIRES_IN ?? '15m',
   });
   const refreshToken = app.jwt.sign(
-    { sub: payload.sub, type: 'refresh', ...(tokenVersion !== undefined ? { tv: tokenVersion } : {}) } as object,
+    {
+      sub: payload.sub,
+      type: 'refresh',
+      ...(tokenVersion !== undefined ? { tv: tokenVersion } : {}),
+      ...(rtMeta ? { jti: rtMeta.jti, familyId: rtMeta.familyId } : {}),
+    } as object,
     { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '90d' },
   );
   return { accessToken, refreshToken };

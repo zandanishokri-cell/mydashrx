@@ -2,12 +2,11 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 
-type Step = 1 | 2 | 3;
+type Step = 1 | 2;
 
 const STEPS = [
   { label: 'Pharmacy info', time: '~1 min' },
   { label: 'Your account', time: '~1 min' },
-  { label: 'Review', time: '~30 sec' },
 ];
 
 const DRAFT_KEY = 'pharmacy_wizard_draft';
@@ -38,15 +37,20 @@ function StepIndicator({ current }: { current: Step }) {
 
 const emptyForm = { orgName: '', orgPhone: '', orgAddress: '', adminName: '', adminEmail: '' };
 
+const validateEmail = (v: string) => {
+  if (!v) return '';
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? '' : 'Please enter a valid work email';
+};
+
 export default function PharmacySignupPage() {
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState(emptyForm);
+  const [emailError, setEmailError] = useState('');
   const [draftSaved, setDraftSaved] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState(false);
 
-  // Restore draft on mount
   useEffect(() => {
     try {
       const saved = localStorage.getItem(DRAFT_KEY);
@@ -54,7 +58,6 @@ export default function PharmacySignupPage() {
     } catch { /* ignore */ }
   }, []);
 
-  // Persist draft on form change
   useEffect(() => {
     const hasData = Object.values(form).some(v => v !== '');
     if (!hasData) return;
@@ -97,9 +100,29 @@ export default function PharmacySignupPage() {
             </svg>
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Application submitted!</h2>
-          <p className="text-gray-500 text-sm mb-2">We've received your application for <strong>{form.orgName}</strong>.</p>
-          <p className="text-gray-500 text-sm mb-6">Our team will review it and contact <strong>{form.adminEmail}</strong> within 24 hours.</p>
-          <a href="/login" className="text-sm text-[#0F4C81] hover:underline">Back to sign in</a>
+          <p className="text-gray-500 text-sm mb-1">
+            We&apos;ve received your application for <strong>{form.orgName}</strong>.
+          </p>
+          <p className="text-gray-500 text-sm mb-5">
+            Our team will review it and contact <strong>{form.adminEmail}</strong> within 2–4 business hours.
+          </p>
+
+          <div className="bg-blue-50 rounded-xl p-4 text-left mb-5">
+            <p className="text-xs font-semibold text-blue-800 mb-2">While you wait</p>
+            <ul className="space-y-1.5 text-xs text-blue-700">
+              <li>• Gather your pharmacy NPI number and state license</li>
+              <li>• Prepare your staff list (names + emails)</li>
+              <li>• Download the MyDashRx driver app</li>
+            </ul>
+          </div>
+
+          <a
+            href={`mailto:onboarding@mydashrx.com?subject=MyDashRx%20Onboarding%20Call&body=Hi%2C%20I%27d%20like%20to%20schedule%20a%20call%20before%20${encodeURIComponent(form.orgName)}%20goes%20live.`}
+            className="block w-full bg-[#0F4C81] text-white rounded-lg py-2.5 text-sm font-medium hover:bg-[#0d3d69] transition-colors mb-3"
+          >
+            Book a 15-min onboarding call
+          </a>
+          <a href="/login" className="text-xs text-gray-400 hover:text-gray-600">Back to sign in</a>
         </div>
       </div>
     );
@@ -137,7 +160,7 @@ export default function PharmacySignupPage() {
             </div>
             <button
               onClick={() => setStep(2)}
-              disabled={!form.orgName}
+              disabled={!form.orgName.trim() || form.orgName.trim().length < 2}
               className="w-full bg-[#0F4C81] text-white rounded-lg py-2.5 text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-40 transition-colors mt-2"
             >
               Continue
@@ -153,38 +176,30 @@ export default function PharmacySignupPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Work email</label>
-              <input type="email" value={form.adminEmail} onChange={set('adminEmail')} placeholder="jane@yourpharmacy.com" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+              <input
+                type="email"
+                value={form.adminEmail}
+                onChange={e => { set('adminEmail')(e); if (emailError) setEmailError(validateEmail(e.target.value)); }}
+                onBlur={e => setEmailError(validateEmail(e.target.value))}
+                placeholder="jane@yourpharmacy.com"
+                className={`w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 ${emailError ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-200'}`}
+              />
+              {emailError && <p className="text-red-500 text-xs mt-1">{emailError}</p>}
             </div>
-            <div className="flex gap-3 mt-2">
-              <button onClick={() => setStep(1)} className="flex-1 border border-gray-200 text-gray-600 rounded-lg py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors">Back</button>
-              <button
-                onClick={() => setStep(3)}
-                disabled={!form.adminName || !form.adminEmail}
-                className="flex-1 bg-[#0F4C81] text-white rounded-lg py-2.5 text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-40 transition-colors"
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-        )}
 
-        {step === 3 && (
-          <div className="space-y-4">
-            <div className="bg-gray-50 rounded-xl p-4 space-y-3 text-sm">
-              <div className="flex justify-between"><span className="text-gray-500">Pharmacy</span><span className="font-medium">{form.orgName}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Phone</span><span>{form.orgPhone}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Address</span><span className="text-right max-w-[200px]">{form.orgAddress}</span></div>
-              <div className="border-t border-gray-200 pt-3 flex justify-between"><span className="text-gray-500">Admin name</span><span className="font-medium">{form.adminName}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Admin email</span><span>{form.adminEmail}</span></div>
+            {/* Mini-summary of Step 1 for confidence before submit */}
+            <div className="bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-500">
+              <span className="font-medium text-gray-700">{form.orgName}</span>
+              {form.orgPhone && <> · {form.orgPhone}</>}
             </div>
-            <p className="text-xs text-gray-400">After submission, our team will review your application and activate your account within 24 hours.</p>
+
             {error && <p className="text-red-500 text-sm">{error}</p>}
             <div className="flex gap-3">
-              <button onClick={() => setStep(2)} className="flex-1 border border-gray-200 text-gray-600 rounded-lg py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors">Back</button>
+              <button onClick={() => setStep(1)} className="flex-1 border border-gray-200 text-gray-600 rounded-lg py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors">Back</button>
               <button
                 onClick={submit}
-                disabled={loading}
-                className="flex-1 bg-[#0F4C81] text-white rounded-lg py-2.5 text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
+                disabled={loading || !form.adminName.trim() || form.adminName.trim().length < 2 || !form.adminEmail || !!validateEmail(form.adminEmail)}
+                className="flex-1 bg-[#0F4C81] text-white rounded-lg py-2.5 text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-40 transition-colors"
               >
                 {loading ? 'Submitting…' : 'Submit application'}
               </button>

@@ -534,3 +534,19 @@ export const magicLinkTokens = pgTable('magic_link_tokens', {
   emailIdx: index('magic_link_email_idx').on(t.email),
   activeTokenIdx: index('mlt_active_idx').on(t.tokenHash).where(sql`used_at IS NULL AND expires_at > NOW()`),
 }));
+
+export const refreshTokens = pgTable('refresh_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  jti: uuid('jti').notNull().unique(),
+  familyId: uuid('family_id').notNull(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  status: text('status').notNull().default('active'), // 'active' | 'used' | 'revoked'
+  ip: text('ip'),
+  userAgent: text('user_agent'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  usedAt: timestamp('used_at'),
+  expiresAt: timestamp('expires_at').notNull(),
+}, (t) => ({
+  familyIdx: index('rt_family_idx').on(t.familyId),
+  userStatusIdx: index('rt_user_status_idx').on(t.userId, t.status),
+}));
