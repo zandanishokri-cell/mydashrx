@@ -1,11 +1,11 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 
 type PendingOrg = {
-  org: { id: string; name: string; createdAt: string; riskFlags?: string[] | null };
+  org: { id: string; name: string; createdAt: string; riskFlags?: string[] | null; hipaaBaaStatus?: string; billingPlan?: string; approvalReminderSentAt?: Record<string, string> | null };
   admin: { id: string; name: string; email: string; createdAt: string } | null;
 };
 
@@ -77,6 +77,126 @@ function getAgingClass(createdAt: string): { border: string; badge: string; labe
   };
 }
 
+function DetailDrawer({
+  item,
+  acting,
+  onApprove,
+  onReject,
+  onClose,
+}: {
+  item: PendingOrg;
+  acting: Record<string, 'approving' | 'rejecting'>;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+  onClose: () => void;
+}) {
+  const { org, admin } = item;
+  const aging = getAgingClass(org.createdAt);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
+      {/* Drawer */}
+      <div className="fixed top-0 right-0 h-full w-[420px] bg-white shadow-2xl z-50 flex flex-col border-l border-gray-100 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-900 text-base truncate pr-4">{org.name}</h2>
+          <button
+            onClick={onClose}
+            className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {/* Status badge */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${aging.badge}`}>
+              {aging.label}
+            </span>
+            <SlaCountdown createdAt={org.createdAt} />
+          </div>
+
+          {/* Risk flags */}
+          {org.riskFlags && org.riskFlags.length > 0 && (
+            <div className="bg-orange-50 border border-orange-100 rounded-xl px-4 py-3">
+              <p className="text-xs font-semibold text-orange-700 uppercase tracking-wide mb-1.5">Risk Flags</p>
+              <div className="flex flex-wrap gap-1.5">
+                {org.riskFlags.map(flag => (
+                  <span key={flag} className="px-2 py-0.5 bg-orange-100 text-orange-800 text-xs rounded-full font-medium">
+                    {flag}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Org details */}
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Organization</p>
+            <DetailRow label="Name" value={org.name} />
+            <DetailRow label="Applied" value={new Date(org.createdAt).toLocaleString()} />
+            {org.hipaaBaaStatus && <DetailRow label="HIPAA BAA" value={org.hipaaBaaStatus} />}
+            {org.billingPlan && <DetailRow label="Plan" value={org.billingPlan} />}
+          </div>
+
+          {/* Admin contact */}
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Admin Contact</p>
+            {admin ? (
+              <>
+                <DetailRow label="Name" value={admin.name} />
+                <DetailRow label="Email" value={admin.email} />
+                <DetailRow label="Registered" value={timeAgo(admin.createdAt)} />
+              </>
+            ) : (
+              <p className="text-sm text-gray-400 italic">No admin user linked</p>
+            )}
+          </div>
+        </div>
+
+        {/* Footer actions */}
+        <div className="px-5 py-4 border-t border-gray-100 flex gap-3">
+          <button
+            onClick={() => onApprove(org.id)}
+            disabled={!!acting[org.id]}
+            className="flex-1 bg-green-600 text-white text-sm font-semibold rounded-xl py-2.5 hover:bg-green-700 disabled:opacity-50 transition-colors"
+          >
+            {acting[org.id] === 'approving' ? 'Approving…' : 'Approve'}
+          </button>
+          <button
+            onClick={() => onReject(org.id)}
+            disabled={!!acting[org.id]}
+            className="flex-1 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl py-2.5 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            Reject
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between py-1.5 border-b border-gray-50 last:border-0">
+      <span className="text-xs text-gray-400 w-24 shrink-0">{label}</span>
+      <span className="text-sm text-gray-800 text-right break-all">{value}</span>
+    </div>
+  );
+}
+
 export default function ApprovalsPage() {
   const router = useRouter();
   const user = getUser();
@@ -96,6 +216,8 @@ export default function ApprovalsPage() {
   const [confirmingBatchApprove, setConfirmingBatchApprove] = useState(false);
   const [approveUndoTimer, setApproveUndoTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [undoToast, setUndoToast] = useState<{ orgIds: string[]; count: number } | null>(null);
+  // P-ADM16: Slideout detail panel
+  const [selectedOrg, setSelectedOrg] = useState<PendingOrg | null>(null);
 
   useEffect(() => {
     if (!user || user.role !== 'super_admin') router.replace('/dashboard');
@@ -107,7 +229,6 @@ export default function ApprovalsPage() {
     setLoading(true);
     api.get<PendingOrg[]>('/admin/approvals')
       .then(data => {
-        // Sort oldest first — highest urgency at top
         const sorted = [...data].sort((a, b) =>
           new Date(a.org.createdAt).getTime() - new Date(b.org.createdAt).getTime()
         );
@@ -117,7 +238,7 @@ export default function ApprovalsPage() {
       .finally(() => setLoading(false));
     api.get<AuditEntry[]>('/admin/audit-log')
       .then(setAuditLog)
-      .catch(() => {}); // non-blocking — audit log endpoint may not exist yet
+      .catch(() => {});
   };
 
   useEffect(() => { load(); }, []);
@@ -128,7 +249,8 @@ export default function ApprovalsPage() {
       await api.post(`/admin/approvals/${orgId}/approve`, {});
       setPending(p => p.filter(r => r.org.id !== orgId));
       setSelected(s => { s.delete(orgId); return new Set(s); });
-      load(); // refresh audit log
+      if (selectedOrg?.org.id === orgId) setSelectedOrg(null);
+      load();
     } catch { setError('Failed to approve'); }
     finally { setActing(a => { const n = { ...a }; delete n[orgId]; return n; }); }
   };
@@ -146,9 +268,17 @@ export default function ApprovalsPage() {
       setRejectReason('');
       setRejectReasonCode('');
       setSelected(s => { s.delete(orgId); return new Set(s); });
-      load(); // refresh audit log
+      if (selectedOrg?.org.id === orgId) setSelectedOrg(null);
+      load();
     } catch { setError('Failed to reject'); }
     finally { setActing(a => { const n = { ...a }; delete n[orgId]; return n; }); }
+  };
+
+  // Opens reject modal for org from either the row or the drawer
+  const openRejectModal = (orgId: string) => {
+    setRejectTarget(orgId);
+    setRejectReason('');
+    setRejectReasonCode('');
   };
 
   const batchApprove = async () => {
@@ -160,8 +290,8 @@ export default function ApprovalsPage() {
       await api.post('/admin/approvals/batch', { orgIds, action: 'approve' });
       setPending(p => p.filter(r => !selected.has(r.org.id)));
       const count = selected.size;
+      if (selectedOrg && selected.has(selectedOrg.org.id)) setSelectedOrg(null);
       setSelected(new Set());
-      // Show undo toast (10s window)
       setUndoToast({ orgIds, count });
       const timer = setTimeout(() => setUndoToast(null), 10000);
       setApproveUndoTimer(timer);
@@ -184,6 +314,7 @@ export default function ApprovalsPage() {
         )
       );
       setPending(p => p.filter(r => !selected.has(r.org.id)));
+      if (selectedOrg && selected.has(selectedOrg.org.id)) setSelectedOrg(null);
       setSelected(new Set());
       setBatchRejectOpen(false);
       setBatchRejectCode('');
@@ -227,16 +358,27 @@ export default function ApprovalsPage() {
         <div className="space-y-3">
           {pending.map(({ org, admin }) => {
             const aging = getAgingClass(org.createdAt);
+            const isSelected = selectedOrg?.org.id === org.id;
             return (
               <div
                 key={org.id}
-                className={`bg-white rounded-xl border p-4 flex items-start gap-4 transition-colors ${selected.has(org.id) ? 'border-blue-200 bg-blue-50/30' : aging.border}`}
+                className={`bg-white rounded-xl border p-4 flex items-start gap-4 transition-colors cursor-pointer ${
+                  selected.has(org.id) ? 'border-blue-200 bg-blue-50/30'
+                  : isSelected ? 'border-[#0F4C81] ring-1 ring-[#0F4C81]/20'
+                  : aging.border
+                }`}
+                onClick={(e) => {
+                  // Don't open drawer when clicking checkbox or action buttons
+                  if ((e.target as HTMLElement).closest('input,button')) return;
+                  setSelectedOrg({ org, admin });
+                }}
               >
                 <input
                   type="checkbox"
                   checked={selected.has(org.id)}
                   onChange={() => toggleSelect(org.id)}
                   className="mt-1 accent-[#0F4C81]"
+                  onClick={e => e.stopPropagation()}
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">
@@ -259,14 +401,14 @@ export default function ApprovalsPage() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button
-                    onClick={() => approve(org.id)}
+                    onClick={(e) => { e.stopPropagation(); approve(org.id); }}
                     disabled={!!acting[org.id]}
                     className="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
                   >
                     {acting[org.id] === 'approving' ? 'Approving…' : 'Approve'}
                   </button>
                   <button
-                    onClick={() => { setRejectTarget(org.id); setRejectReason(''); setRejectReasonCode(''); }}
+                    onClick={(e) => { e.stopPropagation(); openRejectModal(org.id); }}
                     disabled={!!acting[org.id]}
                     className="px-3 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
                   >
@@ -277,6 +419,17 @@ export default function ApprovalsPage() {
             );
           })}
         </div>
+      )}
+
+      {/* P-ADM16: Detail slideout drawer */}
+      {selectedOrg && (
+        <DetailDrawer
+          item={selectedOrg}
+          acting={acting}
+          onApprove={approve}
+          onReject={openRejectModal}
+          onClose={() => setSelectedOrg(null)}
+        />
       )}
 
       {/* Single reject modal */}
