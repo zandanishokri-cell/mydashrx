@@ -16,7 +16,7 @@ import {
   recurringDeliveries,
 } from './schema.js';
 import bcrypt from 'bcryptjs';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 console.log('🌱 Seeding MyDashRx database...');
 
@@ -257,6 +257,35 @@ try {
   }
 } catch (e) {
   console.error('✗ Demo users failed:', e);
+}
+
+// ── Demo Drivers (for driver1@demo.com / driver2@demo.com users) ───────────
+try {
+  const demoDriverUsers = [
+    { email: 'driver1@demo.com', name: 'Demo Driver One' },
+    { email: 'driver2@demo.com', name: 'Demo Driver Two' },
+  ];
+  const demoDriverHash = await bcrypt.hash('Demo123!', 12);
+  for (const d of demoDriverUsers) {
+    const existing = await db.select({ id: drivers.id }).from(drivers)
+      .where(and(eq(drivers.email, d.email), eq(drivers.orgId, demoOrg.id))).limit(1);
+    if (existing.length > 0) {
+      console.log(`ℹ️  Demo driver record already exists: ${d.email}`);
+      continue;
+    }
+    await db.insert(drivers).values({
+      orgId: demoOrg.id,
+      name: d.name,
+      email: d.email,
+      phone: '',
+      passwordHash: demoDriverHash,
+      vehicleType: 'car',
+      status: 'offline',
+    });
+    console.log(`✅ Demo driver record created: ${d.email}`);
+  }
+} catch (e) {
+  console.error('✗ Demo drivers failed:', e);
 }
 
 // ── Demo Depot ─────────────────────────────────────────────────────────────

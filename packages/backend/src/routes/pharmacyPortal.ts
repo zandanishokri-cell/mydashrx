@@ -9,7 +9,7 @@ import { todayInTz } from '../utils/date.js';
 export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
   // GET /pharmacy/my-depot — get this pharmacy's depot info
   app.get('/my-depot', {
-    preHandler: requireRole('pharmacist'),
+    preHandler: requireRole('pharmacist', 'pharmacy_admin'),
   }, async (req, reply) => {
     const user = req.user as { sub: string; depotIds: string[] };
     const depotId = user.depotIds?.[0];
@@ -21,7 +21,7 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /pharmacy/orders — pharmacy sees their submitted stops
   app.get('/orders', {
-    preHandler: requireRole('pharmacist'),
+    preHandler: requireRole('pharmacist', 'pharmacy_admin'),
   }, async (req) => {
     const user = req.user as { sub: string; orgId: string; depotIds: string[] };
     const { status, limit = '50', page = '1' } = req.query as { status?: string; limit?: string; page?: string };
@@ -142,7 +142,7 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /pharmacy/orders/:stopId — order detail with driver + POD
   app.get('/orders/:stopId', {
-    preHandler: requireRole('pharmacist'),
+    preHandler: requireRole('pharmacist', 'pharmacy_admin'),
   }, async (req, reply) => {
     const user = req.user as { sub: string; orgId: string };
     const { stopId } = req.params as { stopId: string };

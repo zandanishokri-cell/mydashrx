@@ -74,6 +74,8 @@ if (!jwtSecret && process.env.NODE_ENV === 'production') {
 }
 await app.register(jwt, {
   secret: jwtSecret ?? 'dev-secret-change-in-prod-only',
+  sign: { algorithm: 'HS256' },
+  verify: { algorithms: ['HS256'] },
 });
 
 await app.register(rateLimit, {

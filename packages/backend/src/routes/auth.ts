@@ -81,8 +81,15 @@ const registerSchema = z.object({
   depotId: z.string().uuid().optional(),
 });
 
+const ipEmailKey = (req: import('fastify').FastifyRequest) => {
+  const xff = req.headers['x-forwarded-for'];
+  const ip = xff ? (Array.isArray(xff) ? xff[0] : xff).split(',')[0].trim() : req.ip;
+  const email = ((req.body as { email?: string } | null)?.email ?? '').toLowerCase();
+  return `${ip}:${email}`;
+};
+
 export const authRoutes: FastifyPluginAsync = async (app) => {
-  app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+  app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: ipEmailKey } } }, async (req, reply) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid request' });
     const { email, password } = parsed.data;
@@ -345,7 +352,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/logout', async (req, reply) => {
-    const { refreshToken } = req.body as { refreshToken?: string };
+    const refreshToken = (req.body as { refreshToken?: string } | null | undefined)?.refreshToken;
     if (refreshToken) {
       try {
         const decoded = app.jwt.verify(refreshToken) as { jti?: string; sub?: string };
@@ -372,7 +379,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ─── Magic Link ───────────────────────────────────────────────────────────────
-  app.post('/magic-link/request', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+  app.post('/magic-link/request', { config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: ipEmailKey } } }, async (req, reply) => {
     const start = Date.now();
     const minResponse = async () => {
       const elapsed = Date.now() - start;
