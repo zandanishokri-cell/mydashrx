@@ -305,12 +305,21 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
   // POST /admin/approvals/:orgId/reject
   app.post('/approvals/:orgId/reject', { preHandler: auth }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
-    const { reason } = (req.body as { reason?: string }) ?? {};
+    const { reason, note } = (req.body as { reason?: string; note?: string }) ?? {};
+
+    const VALID_REASONS = [
+      'missing_license_proof', 'invalid_npi', 'high_fraud_risk',
+      'incomplete_application', 'duplicate_account', 'service_area', 'other',
+    ];
+    if (reason && !VALID_REASONS.includes(reason)) {
+      return reply.code(400).send({ error: `Invalid rejection reason. Must be one of: ${VALID_REASONS.join(', ')}` });
+    }
+
     const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Organization not found' });
 
     await db.update(organizations)
-      .set({ pendingApproval: false, rejectedAt: new Date(), rejectionReason: reason ?? null })
+      .set({ pendingApproval: false, rejectedAt: new Date(), rejectionReason: reason ?? null, rejectionNote: note ?? null })
       .where(eq(organizations.id, orgId));
 
     const [admin] = await db.select({ email: users.email, name: users.name })
@@ -319,7 +328,49 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const resendKey = process.env.RESEND_API_KEY;
     const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
 
+    const RECOVERY_GUIDANCE: Record<string, { heading: string; body: string }> = {
+      missing_license_proof: {
+        heading: 'Pharmacy license documentation is required',
+        body: 'Please upload a copy of your state pharmacy license and DEA registration. Once you have these documents ready, you can reapply and we\'ll review within 24 hours.',
+      },
+      invalid_npi: {
+        heading: 'We couldn\'t verify your NPI number',
+        body: 'Your NPI didn\'t match records in the NPPES database. Please verify your NPI at npiregistry.cms.hhs.gov and reapply with the correct number.',
+      },
+      high_fraud_risk: {
+        heading: 'Your application requires additional verification',
+        body: 'Your application was flagged for additional review. Please contact us at compliance@mydashrx.com to resolve this directly. We respond within 2 business hours.',
+      },
+      incomplete_application: {
+        heading: 'Your application is missing required information',
+        body: 'Please complete all required fields and reapply. If you need help identifying what\'s missing, contact support@mydashrx.com.',
+      },
+      duplicate_account: {
+        heading: 'An account already exists for this pharmacy',
+        body: 'It looks like your pharmacy already has a MyDashRx account. Please contact support@mydashrx.com and we\'ll help you access your existing account.',
+      },
+      service_area: {
+        heading: 'Your pharmacy is outside our current service area',
+        body: 'MyDashRx currently serves pharmacies in Michigan. We\'re expanding — sign up for our waitlist at mydashrx.com and we\'ll notify you when we reach your area.',
+      },
+      other: {
+        heading: 'Your application was not approved',
+        body: 'Please contact support@mydashrx.com for more information. We respond within 2 business hours.',
+      },
+    };
+
+    const guidance = reason ? RECOVERY_GUIDANCE[reason] : null;
+
     if (admin && resendKey) {
+      const reasonLabel: Record<string, string> = {
+        missing_license_proof: 'Missing pharmacy license documentation',
+        invalid_npi: 'NPI number could not be verified',
+        high_fraud_risk: 'Application flagged for additional verification',
+        incomplete_application: 'Application information incomplete',
+        duplicate_account: 'Account already exists for this pharmacy',
+        service_area: 'Outside current service area',
+        other: 'See note below',
+      };
       fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
@@ -332,16 +383,20 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
               <h2 style="color:#374151;margin:0 0 8px">Update on your MyDashRx application</h2>
               <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${admin.name},</p>
               <p style="color:#374151;margin:0 0 16px;font-size:15px">We reviewed the application for <strong>${org.name}</strong> and are unable to approve it at this time.</p>
-              ${reason ? `<div style="background:#fef9ec;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:16px"><p style="color:#92400e;font-size:13px;font-weight:600;margin:0 0 4px">Reason:</p><p style="color:#78350f;font-size:14px;margin:0">${reason}</p></div>` : ''}
-              <p style="color:#6b7280;font-size:14px;margin:0 0 8px">If you believe this is an error or have questions, reply to this email or contact <a href="mailto:support@mydashrx.com" style="color:#0F4C81">support@mydashrx.com</a>. We respond within 2 business hours.</p>
+              ${reason ? `<div style="background:#fef9ec;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:16px">
+                <p style="color:#92400e;font-size:13px;font-weight:600;margin:0 0 4px">Reason: ${reasonLabel[reason] ?? reason}</p>
+                ${guidance ? `<p style="color:#78350f;font-size:14px;margin:8px 0 0"><strong>${guidance.heading}</strong><br>${guidance.body}</p>` : ''}
+                ${note ? `<p style="color:#78350f;font-size:13px;margin:8px 0 0;border-top:1px solid #fde68a;padding-top:8px">Additional note: ${note}</p>` : ''}
+              </div>` : ''}
+              <p style="color:#6b7280;font-size:14px;margin:0 0 8px">Questions? Reply to this email or contact <a href="mailto:support@mydashrx.com" style="color:#0F4C81">support@mydashrx.com</a>. We respond within 2 business hours.</p>
               <p style="color:#9ca3af;font-size:12px;margin-top:24px">Application ref: ${orgId}</p>
             </div>`,
         }),
-      }).catch((e: unknown) => { console.error('[Resend] approval email failed:', e); });
+      }).catch((e: unknown) => { console.error('[Resend] rejection email failed:', e); });
     }
 
     const actor = req.user as { sub: string; email: string };
-    await logAuditAction(actor.sub, actor.email, 'reject_org', orgId, org.name, { reason: reason ?? null });
+    await logAuditAction(actor.sub, actor.email, 'reject_org', orgId, org.name, { reason: reason ?? null, note: note ?? null });
 
     return { success: true, orgId };
   });

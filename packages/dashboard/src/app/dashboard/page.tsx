@@ -6,7 +6,64 @@ import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { SkeletonCard } from '@/components/ui/Skeleton';
-import { Package, Truck, CheckCircle, Calendar, RefreshCw, Plus, Map, Activity, AlertCircle } from 'lucide-react';
+import { Package, Truck, CheckCircle, Calendar, RefreshCw, Plus, Map, Activity, AlertCircle, Circle } from 'lucide-react';
+
+interface OnboardingStatus { hasDepot: boolean; hasDriver: boolean; hasPlan: boolean; hasCompletedStop: boolean; }
+
+const ONBOARDING_STEPS = [
+  { key: 'hasDepot',        label: 'Add your depot',             href: '/dashboard/settings' },
+  { key: 'hasDriver',       label: 'Invite your first driver',   href: '/dashboard/drivers' },
+  { key: 'hasPlan',         label: 'Create a delivery route',    href: '/dashboard/plans' },
+  { key: 'hasCompletedStop',label: 'Complete your first delivery', href: '/dashboard/stops' },
+] as const;
+
+function OnboardingBanner({ orgId }: { orgId: string }) {
+  const [status, setStatus] = useState<OnboardingStatus | null>(null);
+  const [dismissed, setDismissed] = useState(() =>
+    typeof window !== 'undefined' && localStorage.getItem(`onboarding_done_${orgId}`) === '1'
+  );
+
+  useEffect(() => {
+    if (dismissed) return;
+    api.get<OnboardingStatus>('/pharmacy/onboarding-status')
+      .then(s => {
+        if (s.hasDepot && s.hasDriver && s.hasPlan && s.hasCompletedStop) {
+          localStorage.setItem(`onboarding_done_${orgId}`, '1');
+          setDismissed(true);
+        } else {
+          setStatus(s);
+        }
+      })
+      .catch(() => {});
+  }, [orgId, dismissed]);
+
+  if (dismissed || !status) return null;
+
+  const done = ONBOARDING_STEPS.filter(s => status[s.key]).length;
+  const remaining = ONBOARDING_STEPS.filter(s => !status[s.key]);
+
+  return (
+    <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-5">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-semibold text-blue-900">Setup — {done}/{ONBOARDING_STEPS.length} complete</span>
+        <div className="flex items-center gap-2">
+          <div className="w-28 h-1.5 bg-blue-100 rounded-full overflow-hidden">
+            <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${(done / ONBOARDING_STEPS.length) * 100}%` }} />
+          </div>
+          <span className="text-xs text-blue-400">{Math.round((done / ONBOARDING_STEPS.length) * 100)}%</span>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {remaining.map(step => (
+          <Link key={step.key} href={step.href}
+            className="flex items-center gap-1.5 text-xs text-blue-700 bg-white border border-blue-100 px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-colors">
+            <Circle size={10} /> {step.label}
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
 import { localDateStr } from '@/lib/dateUtils';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
@@ -165,6 +222,7 @@ export default function CommandCenter() {
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto">
+      {user?.role === 'pharmacy_admin' && user.orgId && <OnboardingBanner orgId={user.orgId} />}
       {/* Header */}
       <div className="flex items-start justify-between mb-6 gap-3">
         <div>

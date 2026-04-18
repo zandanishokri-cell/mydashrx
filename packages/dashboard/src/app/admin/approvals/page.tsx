@@ -16,12 +16,13 @@ type AuditEntry = {
 };
 
 const REJECTION_REASONS = [
-  { value: 'incomplete_info',    label: 'Incomplete application information' },
-  { value: 'duplicate',          label: 'Duplicate application' },
-  { value: 'license_unverified', label: 'Unable to verify pharmacy license' },
-  { value: 'outside_area',       label: 'Outside current service area' },
-  { value: 'suspicious',         label: 'Suspicious or fraudulent application' },
-  { value: 'other',              label: 'Other (explain below)' },
+  { value: 'missing_license_proof',  label: 'Missing pharmacy license documentation' },
+  { value: 'invalid_npi',            label: 'NPI number could not be verified' },
+  { value: 'high_fraud_risk',        label: 'High fraud risk / suspicious application' },
+  { value: 'incomplete_application', label: 'Application information incomplete' },
+  { value: 'duplicate_account',      label: 'Duplicate account — pharmacy already exists' },
+  { value: 'service_area',           label: 'Outside current service area (Michigan only)' },
+  { value: 'other',                  label: 'Other (explain in note)' },
 ];
 
 function timeAgo(dateStr: string) {
@@ -258,11 +259,10 @@ export default function ApprovalsPage() {
   const reject = async (orgId: string, reasonCode: string) => {
     setActing(a => ({ ...a, [orgId]: 'rejecting' }));
     try {
-      const reasonLabel = REJECTION_REASONS.find(r => r.value === reasonCode)?.label ?? '';
-      const fullReason = reasonCode === 'other'
-        ? rejectReason
-        : `${reasonLabel}${rejectReason ? ': ' + rejectReason : ''}`;
-      await api.post(`/admin/approvals/${orgId}/reject`, { reason: fullReason });
+      await api.post(`/admin/approvals/${orgId}/reject`, {
+        reason: reasonCode || undefined,
+        note: rejectReason || undefined,
+      });
       setPending(p => p.filter(r => r.org.id !== orgId));
       setRejectTarget(null);
       setRejectReason('');
@@ -304,13 +304,12 @@ export default function ApprovalsPage() {
     if (selected.size === 0 || !batchRejectCode) return;
     setBatchLoading(true);
     try {
-      const reasonLabel = REJECTION_REASONS.find(r => r.value === batchRejectCode)?.label ?? '';
-      const fullReason = batchRejectCode === 'other'
-        ? batchRejectNote
-        : `${reasonLabel}${batchRejectNote ? ': ' + batchRejectNote : ''}`;
       await Promise.all(
         Array.from(selected).map(orgId =>
-          api.post(`/admin/approvals/${orgId}/reject`, { reason: fullReason })
+          api.post(`/admin/approvals/${orgId}/reject`, {
+            reason: batchRejectCode || undefined,
+            note: batchRejectNote || undefined,
+          })
         )
       );
       setPending(p => p.filter(r => !selected.has(r.org.id)));

@@ -45,12 +45,12 @@ export function isAuthenticated(): boolean {
 
 const ROLE_REDIRECTS: Record<string, string> = {
   super_admin: '/admin',
-  pharmacy_admin: '/pharmacy/dashboard',
-  dispatcher: '/dispatch/queue',
+  pharmacy_admin: '/dashboard',
+  dispatcher: '/dashboard',
   driver: '/driver/routes',
 };
 
-const ALLOWED_PREFIXES = ['/dashboard', '/admin', '/pharmacy', '/dispatch', '/driver'];
+const ALLOWED_PREFIXES = ['/dashboard', '/admin', '/pharmacy', '/driver'];
 
 export function getRoleRedirect(role?: string, pendingApproval?: boolean): string {
   if (pendingApproval) return '/onboarding/waiting';

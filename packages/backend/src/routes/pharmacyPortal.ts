@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers, proofOfDeliveries } from '../db/schema.js';
-import { eq, and, isNull, desc } from 'drizzle-orm';
+import { eq, and, isNull, desc, count, gt } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { requireDeliveryWrite } from '../middleware/requireOrgRole.js';
 import { todayInTz } from '../utils/date.js';
@@ -202,5 +202,27 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
     if (stop.status !== 'pending') return reply.code(400).send({ error: 'Can only cancel pending stops' });
     await db.update(stops).set({ deletedAt: new Date() }).where(and(eq(stops.id, stopId), eq(stops.orgId, user.orgId)));
     return reply.code(204).send();
+  });
+
+  // GET /pharmacy/onboarding-status — checklist for setup banner
+  app.get('/onboarding-status', {
+    preHandler: requireRole('pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const user = req.user as { orgId: string };
+    const orgId = user.orgId;
+
+    const [depotCount, driverCount, planCount, completedStopCount] = await Promise.all([
+      db.select({ n: count() }).from(depots).where(and(eq(depots.orgId, orgId), isNull(depots.deletedAt))),
+      db.select({ n: count() }).from(drivers).where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt))),
+      db.select({ n: count() }).from(plans).where(and(eq(plans.orgId, orgId), isNull(plans.deletedAt))),
+      db.select({ n: count() }).from(stops).where(and(eq(stops.orgId, orgId), eq(stops.status, 'completed'), isNull(stops.deletedAt))),
+    ]);
+
+    return reply.send({
+      hasDepot: (depotCount[0]?.n ?? 0) > 0,
+      hasDriver: (driverCount[0]?.n ?? 0) > 0,
+      hasPlan: (planCount[0]?.n ?? 0) > 0,
+      hasCompletedStop: (completedStopCount[0]?.n ?? 0) > 0,
+    });
   });
 };

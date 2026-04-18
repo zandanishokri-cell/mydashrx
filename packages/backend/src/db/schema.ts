@@ -72,6 +72,7 @@ export const organizations = pgTable('organizations', {
   onboardingEmailSentAt: jsonb('onboarding_email_sent_at').default('{}'),
   rejectedAt: timestamp('rejected_at'),
   rejectionReason: text('rejection_reason'),
+  rejectionNote: text('rejection_note'),
   riskFlags: jsonb('risk_flags').$type<string[]>(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
