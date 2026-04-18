@@ -6,7 +6,7 @@ const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRE
 const signToken = (t: string) => createHmac('sha256', MAGIC_LINK_SECRET).update(t).digest('hex');
 import { db } from '../db/connection.js';
 import { users, organizations, drivers, magicLinkTokens, refreshTokens, adminAuditLogs } from '../db/schema.js';
-import { eq, and, isNull, gt, count, desc } from 'drizzle-orm';
+import { eq, and, isNull, gt, count, desc, asc, inArray } from 'drizzle-orm';
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
 import { sql } from 'drizzle-orm';
@@ -51,6 +51,31 @@ async function isPasswordPwned(password: string): Promise<boolean> {
   }
 }
 
+const SESSION_CAP = 50;
+
+async function enforceSessionCap(userId: string): Promise<void> {
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(refreshTokens)
+    .where(and(eq(refreshTokens.userId, userId), eq(refreshTokens.status, 'active')));
+
+  const over = (total ?? 0) - SESSION_CAP + 1; // +1 to make room for the new session just inserted
+  if (over <= 0) return;
+
+  const lru = await db
+    .select({ jti: refreshTokens.jti })
+    .from(refreshTokens)
+    .where(and(eq(refreshTokens.userId, userId), eq(refreshTokens.status, 'active')))
+    .orderBy(asc(refreshTokens.createdAt))
+    .limit(over);
+
+  if (lru.length > 0) {
+    await db.update(refreshTokens)
+      .set({ status: 'revoked' })
+      .where(inArray(refreshTokens.jti, lru.map(r => r.jti)));
+  }
+}
+
 async function seedRefreshToken(
   userId: string,
   familyId: string,
@@ -65,6 +90,7 @@ async function seedRefreshToken(
     userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
     expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
   });
+  await enforceSessionCap(userId);
 }
 
 const loginSchema = z.object({

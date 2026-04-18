@@ -179,6 +179,10 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       deliveryNotes?: string;
     };
 
+    if (!body.recipientName || !body.address || body.lat == null || body.lng == null) {
+      return reply.code(400).send({ error: 'recipientName, address, lat, and lng are required' });
+    }
+
     const [stop] = await db.insert(stops).values({
       routeId,
       orgId: userOrgId,

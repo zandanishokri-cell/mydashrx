@@ -317,6 +317,19 @@ try {
   console.error('✗ Demo depot failed:', e);
 }
 
+// ── Assign demo depot to dispatcher ────────────────────────────────────────
+// dispatch@demo.com must have the real depot ID — not an empty or placeholder array.
+try {
+  if (demoDepot!) {
+    await db.update(users)
+      .set({ depotIds: [demoDepot!.id] })
+      .where(and(eq(users.email, 'dispatch@demo.com'), eq(users.orgId, demoOrg.id)));
+    console.log(`✅ dispatch@demo.com depotIds updated to [${demoDepot!.id}]`);
+  }
+} catch (e) {
+  console.error('✗ Dispatcher depot assignment failed:', e);
+}
+
 // ── Demo Leads ─────────────────────────────────────────────────────────────
 try {
   const existingLeads = await db

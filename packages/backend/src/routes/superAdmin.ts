@@ -730,4 +730,118 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
     return { sent };
   });
+
+  // ── Test Seed Endpoint ─────────────────────────────────────────────────────
+  // Creates/resets 4 test accounts (one per role) with known credentials,
+  // auto-approves the test org, seeds depot + driver, revokes stale sessions.
+  // super_admin only. Never runs in production unless explicitly called.
+  app.post('/test-seed', { preHandler: auth }, async (_req, reply) => {
+    const bcrypt = await import('bcryptjs');
+    const TEST_PASSWORD = 'TestSeed123!';
+    const TEST_ORG_NAME = 'MyDashRx Test Pharmacy';
+
+    // ── 1. Ensure test org exists and is approved ────────────────────────────
+    let testOrg = await db.select().from(organizations)
+      .where(eq(organizations.name, TEST_ORG_NAME)).limit(1).then(r => r[0]);
+
+    if (!testOrg) {
+      [testOrg] = await db.insert(organizations).values({
+        name: TEST_ORG_NAME,
+        pendingApproval: false,
+        approvedAt: new Date(),
+      }).returning();
+    } else {
+      await db.update(organizations)
+        .set({ pendingApproval: false, approvedAt: new Date(), rejectedAt: null })
+        .where(eq(organizations.id, testOrg!.id));
+    }
+    const orgId = testOrg!.id;
+
+    // ── 2. Ensure test depot exists ──────────────────────────────────────────
+    let testDepot = await db.select().from(depots)
+      .where(eq(depots.orgId, orgId)).limit(1).then(r => r[0]);
+
+    if (!testDepot) {
+      [testDepot] = await db.insert(depots).values({
+        orgId,
+        name: 'Test Pharmacy Hub',
+        address: '100 Test Ave, Detroit, MI 48226',
+        lat: 42.3314,
+        lng: -83.0458,
+      }).returning();
+    }
+    const depotId = testDepot!.id;
+
+    // ── 3. Upsert test users ─────────────────────────────────────────────────
+    const TEST_ACCOUNTS = [
+      { email: 'test-sa@mydashrx-test.com',         role: 'super_admin'    as const, name: 'Test Super Admin',    depotIds: [] as string[] },
+      { email: 'test-pharmacy@mydashrx-test.com',   role: 'pharmacy_admin' as const, name: 'Test Pharmacy Admin', depotIds: [] as string[] },
+      { email: 'test-dispatcher@mydashrx-test.com', role: 'dispatcher'     as const, name: 'Test Dispatcher',     depotIds: [depotId] },
+      { email: 'test-driver@mydashrx-test.com',     role: 'driver'         as const, name: 'Test Driver',         depotIds: [] as string[] },
+    ];
+
+    const hash = await bcrypt.default.hash(TEST_PASSWORD, 10);
+    const upsertedIds: Record<string, string> = {};
+
+    for (const acct of TEST_ACCOUNTS) {
+      const existing = await db.select({ id: users.id }).from(users)
+        .where(eq(users.email, acct.email)).limit(1).then(r => r[0]);
+
+      if (existing) {
+        await db.update(users).set({
+          passwordHash: hash,
+          depotIds: acct.depotIds,
+          orgId,
+          mustChangePassword: false,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        }).where(eq(users.id, existing.id));
+        upsertedIds[acct.role] = existing.id;
+        // Revoke all existing sessions — fresh slate each seed call
+        await db.update(refreshTokens).set({ status: 'revoked' })
+          .where(and(eq(refreshTokens.userId, existing.id), eq(refreshTokens.status, 'active')));
+      } else {
+        const [created] = await db.insert(users).values({
+          orgId,
+          email: acct.email,
+          passwordHash: hash,
+          name: acct.name,
+          role: acct.role,
+          depotIds: acct.depotIds,
+        }).returning({ id: users.id });
+        upsertedIds[acct.role] = created!.id;
+      }
+    }
+
+    // ── 4. Ensure driver record exists for test-driver ───────────────────────
+    let testDriver = await db.select({ id: drivers.id }).from(drivers)
+      .where(and(eq(drivers.orgId, orgId), eq(drivers.email, 'test-driver@mydashrx-test.com'), isNull(drivers.deletedAt)))
+      .limit(1).then(r => r[0]);
+
+    if (!testDriver) {
+      [testDriver] = await db.insert(drivers).values({
+        orgId,
+        email: 'test-driver@mydashrx-test.com',
+        name: 'Test Driver',
+        passwordHash: hash,
+        phone: '+13135550198',
+        vehicleType: 'car',
+        status: 'available',
+      }).returning({ id: drivers.id });
+    }
+
+    return reply.send({
+      message: 'Test accounts seeded. All sessions cleared.',
+      password: TEST_PASSWORD,
+      orgId,
+      depotId,
+      driverId: testDriver!.id,
+      accounts: {
+        super_admin:    'test-sa@mydashrx-test.com',
+        pharmacy_admin: 'test-pharmacy@mydashrx-test.com',
+        dispatcher:     'test-dispatcher@mydashrx-test.com',
+        driver:         'test-driver@mydashrx-test.com',
+      },
+    });
+  });
 };
