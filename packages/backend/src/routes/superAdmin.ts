@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { db } from '../db/connection.js';
 import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens, depots } from '../db/schema.js';
-import { eq, isNull, sql, gte, count, and, desc, lt, or, isNotNull, inArray } from 'drizzle-orm';
+import { eq, isNull, sql, gte, lte, count, and, desc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 const PLAN_PRICES: Record<string, number> = {
@@ -363,13 +363,61 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     return { success: true, processed: orgIds.length };
   });
 
-  // GET /admin/audit-log — last 50 approval/rejection actions (HIPAA §164.312(b))
-  app.get('/audit-log', { preHandler: auth }, async () => {
-    return db
-      .select()
-      .from(adminAuditLogs)
+  // GET /admin/audit-log — filterable audit trail (HIPAA §164.312(b))
+  app.get('/audit-log', { preHandler: auth }, async (req, reply) => {
+    const { eventTypes, actorEmail, from, to, format, limit: limitStr, offset: offsetStr } = req.query as {
+      eventTypes?: string; actorEmail?: string; from?: string; to?: string;
+      format?: string; limit?: string; offset?: string;
+    };
+
+    const conditions: any[] = [];
+    if (eventTypes) {
+      const types = eventTypes.split(',').map(t => t.trim()).filter(Boolean);
+      if (types.length) conditions.push(inArray(adminAuditLogs.action, types));
+    }
+    if (actorEmail) {
+      conditions.push(sql`${adminAuditLogs.actorEmail} ILIKE ${'%' + actorEmail + '%'}`);
+    }
+    if (from) {
+      const fromDate = new Date(from);
+      if (!isNaN(fromDate.getTime())) conditions.push(gte(adminAuditLogs.createdAt, fromDate));
+    }
+    if (to) {
+      const toDate = new Date(to);
+      if (!isNaN(toDate.getTime())) conditions.push(lte(adminAuditLogs.createdAt, toDate));
+    }
+
+    const pageLimit = Math.min(parseInt(limitStr ?? '100', 10), 500);
+    const pageOffset = parseInt(offsetStr ?? '0', 10);
+
+    const rows = await db.select().from(adminAuditLogs)
+      .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(adminAuditLogs.createdAt))
-      .limit(50);
+      .limit(pageLimit)
+      .offset(pageOffset);
+
+    if (format === 'csv') {
+      // P-SEC11: CSV export itself is an auditable event (HIPAA)
+      const actor = (req as any).user as { sub: string; email: string };
+      await db.insert(adminAuditLogs).values({
+        actorId: actor.sub,
+        actorEmail: actor.email,
+        action: 'audit_log_exported',
+        targetId: actor.sub,
+        targetName: actor.email,
+        metadata: { eventTypes: eventTypes ?? 'all', actorEmail: actorEmail ?? 'all', from: from ?? null, to: to ?? null, rowCount: rows.length },
+      }).catch(() => {});
+
+      const csvHeader = 'id,action,actorEmail,targetName,createdAt,metadata\n';
+      const csvRows = rows.map(r =>
+        `"${r.id}","${r.action}","${r.actorEmail}","${r.targetName}","${r.createdAt?.toISOString() ?? ''}","${JSON.stringify(r.metadata ?? {}).replace(/"/g, '""')}"`
+      ).join('\n');
+      reply.header('Content-Type', 'text/csv');
+      reply.header('Content-Disposition', `attachment; filename="audit-log-${new Date().toISOString().slice(0,10)}.csv"`);
+      return reply.send(csvHeader + csvRows);
+    }
+
+    return rows;
   });
 
   // GET /admin/approvals/:orgId/approve-link — P-ADM11: HMAC-signed one-click approve URL
@@ -522,6 +570,32 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         }
         await db.update(organizations)
           .set({ approvalReminderSentAt: { ...(org.approvalReminderSentAt as object ?? {}), adminEsc24h: now.toISOString() } })
+          .where(eq(organizations.id, org.id));
+        sent++;
+      }
+
+      // P-ADM14: Slack 48hr escalation — pings Slack channel when signup stalls 47-48h
+      const slack48hSent = (org.approvalReminderSentAt as any)?.adminSlack48h;
+      const slackWebhook = process.env.SLACK_WEBHOOK_URL;
+      if (ageMin >= 47 * 60 && !slack48hSent && slackWebhook) {
+        const orgAge = Math.round(ageMin / 60);
+        await fetch(slackWebhook, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            blocks: [
+              { type: 'header', text: { type: 'plain_text', text: `🚨 Signup stalled ${orgAge}h — ${org.name}` } },
+              { type: 'section', text: { type: 'mrkdwn', text: `*${org.name}* has been pending approval for *${orgAge} hours*.\nThis pharmacy can't deliver prescriptions until approved.` } },
+              { type: 'actions', elements: [
+                { type: 'button', text: { type: 'plain_text', text: 'Review in Dashboard' },
+                  url: `${dashUrl}/admin/approvals`, style: 'primary' }
+              ]}
+            ]
+          }),
+        }).catch((e: unknown) => { console.error('[ADM14] Slack escalation failed:', e); });
+
+        await db.update(organizations)
+          .set({ approvalReminderSentAt: { ...(org.approvalReminderSentAt as object ?? {}), adminSlack48h: now.toISOString() } })
           .where(eq(organizations.id, org.id));
         sent++;
       }

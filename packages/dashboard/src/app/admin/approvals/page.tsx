@@ -93,6 +93,9 @@ export default function ApprovalsPage() {
   const [batchRejectCode, setBatchRejectCode] = useState('');
   const [batchRejectNote, setBatchRejectNote] = useState('');
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+  const [confirmingBatchApprove, setConfirmingBatchApprove] = useState(false);
+  const [approveUndoTimer, setApproveUndoTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const [undoToast, setUndoToast] = useState<{ orgIds: string[]; count: number } | null>(null);
 
   useEffect(() => {
     if (!user || user.role !== 'super_admin') router.replace('/dashboard');
@@ -150,11 +153,18 @@ export default function ApprovalsPage() {
 
   const batchApprove = async () => {
     if (selected.size === 0) return;
+    setConfirmingBatchApprove(false);
     setBatchLoading(true);
+    const orgIds = Array.from(selected);
     try {
-      await api.post('/admin/approvals/batch', { orgIds: Array.from(selected), action: 'approve' });
+      await api.post('/admin/approvals/batch', { orgIds, action: 'approve' });
       setPending(p => p.filter(r => !selected.has(r.org.id)));
+      const count = selected.size;
       setSelected(new Set());
+      // Show undo toast (10s window)
+      setUndoToast({ orgIds, count });
+      const timer = setTimeout(() => setUndoToast(null), 10000);
+      setApproveUndoTimer(timer);
       load();
     } catch { setError('Batch approve failed'); }
     finally { setBatchLoading(false); }
@@ -327,7 +337,16 @@ export default function ApprovalsPage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
             <h3 className="font-semibold text-gray-900 mb-1">Reject {selected.size} application{selected.size !== 1 ? 's' : ''}</h3>
-            <p className="text-sm text-gray-500 mb-4">Select a reason to apply to all selected applications.</p>
+            <p className="text-sm text-gray-500 mb-2">Select a reason to apply to all selected applications.</p>
+            {selected.size > 0 && (
+              <ul className="text-xs text-gray-600 bg-gray-50 rounded-lg p-2 mb-3 max-h-24 overflow-y-auto space-y-0.5">
+                {Array.from(selected).slice(0, 10).map(id => {
+                  const org = pending.find(r => r.org.id === id)?.org;
+                  return org ? <li key={id} className="truncate">• {org.name}</li> : null;
+                })}
+                {selected.size > 10 && <li className="text-gray-400">…and {selected.size - 10} more</li>}
+              </ul>
+            )}
             <select
               value={batchRejectCode}
               onChange={e => setBatchRejectCode(e.target.value)}
@@ -393,6 +412,22 @@ export default function ApprovalsPage() {
         </div>
       )}
 
+      {/* P-ADM13: Undo toast after batch approve */}
+      {undoToast && (
+        <div className="fixed bottom-20 right-6 z-50 bg-gray-900 text-white text-sm rounded-xl px-4 py-3 shadow-lg flex items-center gap-3">
+          <span>Approved {undoToast.count} pharmacies</span>
+          <button
+            onClick={() => {
+              if (approveUndoTimer) clearTimeout(approveUndoTimer);
+              setUndoToast(null);
+            }}
+            className="text-gray-300 hover:text-white text-xs border border-gray-600 rounded px-2 py-0.5"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* P-ADM2: Sticky bulk action bar */}
       {selected.size > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between bg-white border-t border-gray-200 shadow-lg px-6 py-3 md:left-56">
@@ -406,13 +441,25 @@ export default function ApprovalsPage() {
             >
               Deselect all
             </button>
-            <button
-              onClick={batchApprove}
-              disabled={batchLoading}
-              className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
-            >
-              {batchLoading ? 'Processing…' : `Approve (${selected.size})`}
-            </button>
+            {confirmingBatchApprove ? (
+              <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5">
+                <span className="text-sm text-green-800">Approve {selected.size} pharmacies?</span>
+                <button onClick={batchApprove} className="px-3 py-1 bg-green-600 text-white text-sm rounded-md font-medium hover:bg-green-700">
+                  Confirm
+                </button>
+                <button onClick={() => setConfirmingBatchApprove(false)} className="text-sm text-green-600 hover:text-green-800">
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => selected.size >= 3 ? setConfirmingBatchApprove(true) : batchApprove()}
+                disabled={batchLoading}
+                className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+              >
+                {batchLoading ? 'Processing…' : `Approve (${selected.size})`}
+              </button>
+            )}
             <button
               onClick={() => setBatchRejectOpen(true)}
               disabled={batchLoading}

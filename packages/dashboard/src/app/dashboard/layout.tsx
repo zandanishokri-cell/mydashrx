@@ -77,6 +77,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     ...(user?.role === 'super_admin' ? [
       { href: '/dashboard/admin', label: 'Platform Admin', icon: Crown },
       { href: '/admin/approvals', label: 'Approvals', icon: Crown, badge: pendingCount },
+      { href: '/admin/audit-log', label: 'Audit Log', icon: Shield },
     ] : []),
   ];
 
