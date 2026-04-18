@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 
 type PendingOrg = {
-  org: { id: string; name: string; createdAt: string };
+  org: { id: string; name: string; createdAt: string; riskFlags?: string[] | null };
   admin: { id: string; name: string; email: string; createdAt: string } | null;
 };
 
@@ -30,6 +30,32 @@ function timeAgo(dateStr: string) {
   if (hrs < 1) return 'just now';
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function useLiveTimer() {
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => forceUpdate(n => n + 1), 60_000);
+    return () => clearInterval(interval);
+  }, []);
+}
+
+function SlaCountdown({ createdAt }: { createdAt: string }) {
+  useLiveTimer();
+  const elapsedMs = Date.now() - new Date(createdAt).getTime();
+  const fmt = (ms: number) => {
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+  if (elapsedMs < 4 * 3600000) {
+    const remaining = 4 * 3600000 - elapsedMs;
+    return <span className="text-xs text-green-600">{fmt(remaining)} left</span>;
+  }
+  if (elapsedMs < 24 * 3600000) {
+    return <span className="text-xs text-amber-600">Past SLA by {fmt(elapsedMs - 4 * 3600000)}</span>;
+  }
+  return <span className="text-xs text-red-600">⚠ Overdue by {fmt(elapsedMs - 24 * 3600000)}</span>;
 }
 
 function getAgingClass(createdAt: string): { border: string; badge: string; label: string } {
@@ -203,18 +229,23 @@ export default function ApprovalsPage() {
                   className="mt-1 accent-[#0F4C81]"
                 />
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
+                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                     <p className="font-semibold text-gray-900 truncate">{org.name}</p>
                     <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${aging.badge}`}>
                       {aging.label}
                     </span>
+                    {org.riskFlags && org.riskFlags.length > 0 && (
+                      <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-orange-50 text-orange-700 border border-orange-200">
+                        ⚠ {org.riskFlags.join(', ')}
+                      </span>
+                    )}
                   </div>
                   {admin ? (
                     <p className="text-sm text-gray-500">{admin.name} · <span className="text-gray-400">{admin.email}</span></p>
                   ) : (
                     <p className="text-sm text-gray-400 italic">No admin user found</p>
                   )}
-                  <p className="text-xs text-gray-400 mt-1">Applied {timeAgo(org.createdAt)}</p>
+                  <div className="mt-1"><SlaCountdown createdAt={org.createdAt} /></div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button

@@ -21,6 +21,7 @@
     "@fastify/static": "^6.12.0",
     "@mydash-rx/shared": "*",
     "bcryptjs": "^2.4.3",
+    "disposable-email-domains": "^1.0.62",
     "dotenv": "^16.4.0",
     "drizzle-orm": "^0.30.0",
     "fastify": "^4.26.0",

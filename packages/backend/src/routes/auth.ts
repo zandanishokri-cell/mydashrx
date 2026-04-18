@@ -64,7 +64,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         // P-LCK1-EMAIL: Security alert on 3rd attempt
         if (attempts === 3) {
           const resendKey = process.env.RESEND_API_KEY;
-          const senderDomain = process.env.SENDER_DOMAIN ?? 'cartana.life';
+          const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
           const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
           if (resendKey) {
             fetch('https://api.resend.com/emails', {

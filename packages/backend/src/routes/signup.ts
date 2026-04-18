@@ -3,7 +3,8 @@ import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
 import { z } from 'zod';
 import { db } from '../db/connection.js';
 import { organizations, users, drivers, staffInvitations } from '../db/schema.js';
-import { eq, and, isNull, gt, inArray } from 'drizzle-orm';
+import { eq, and, isNull, gt, sql } from 'drizzle-orm';
+import disposableDomains from 'disposable-email-domains';
 import { hashPassword, signTokens, findUserByEmail } from '../services/auth.js';
 
 const pharmacySignupSchema = z.object({
@@ -25,6 +26,19 @@ const acceptInviteSchema = z.object({
   token: z.string().min(10),
   name: z.string().min(2).max(100),
 });
+
+async function assessSignupRisk(orgName: string, adminEmail: string): Promise<string[]> {
+  const flags: string[] = [];
+  const domain = adminEmail.split('@')[1]?.toLowerCase() ?? '';
+  if ((disposableDomains as string[]).includes(domain)) flags.push('disposable_email');
+  const similar = await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(sql`lower(${organizations.name}) ILIKE ${`%${orgName.toLowerCase().slice(0, 10)}%`}`)
+    .limit(3);
+  if (similar.length > 0) flags.push('similar_org_name');
+  return flags;
+}
 
 async function sendApplicantConfirmation(orgName: string, adminEmail: string, adminName: string) {
   const resendKey = process.env.RESEND_API_KEY;
@@ -88,6 +102,31 @@ async function notifySuperAdmins(orgName: string, adminEmail: string) {
       }),
     }).catch((e: unknown) => { console.error('[Resend] super-admin notify failed:', e); })
   ));
+
+  // P-ADM13: Slack webhook notification
+  const slackWebhook = process.env.SLACK_WEBHOOK_URL;
+  if (slackWebhook) {
+    fetch(slackWebhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        blocks: [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: `*New pharmacy signup — review needed*\n*Org:* ${orgName}\n*Admin:* ${adminEmail}` },
+          },
+          {
+            type: 'actions',
+            elements: [{ type: 'button', text: { type: 'plain_text', text: 'Review in Admin Panel →' }, url: `${dashUrl}/admin/approvals`, style: 'primary' }],
+          },
+          {
+            type: 'context',
+            elements: [{ type: 'mrkdwn', text: `SLA: respond within 4 hours · Sent ${new Date().toUTCString()}` }],
+          },
+        ],
+      }),
+    }).catch((e: unknown) => { console.error('[Slack] pharmacy signup notify failed:', e); });
+  }
 }
 
 export const signupRoutes: FastifyPluginAsync = async (app) => {
@@ -100,9 +139,12 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     const existing = await findUserByEmail(adminEmail);
     if (existing) return reply.code(409).send({ error: 'An account with this email already exists.' });
 
+    const riskFlags = await assessSignupRisk(orgName, adminEmail);
+
     const [org] = await db.insert(organizations).values({
       name: orgName,
       pendingApproval: true,
+      ...(riskFlags.length > 0 ? { riskFlags } : {}),
     }).returning();
 
     const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
