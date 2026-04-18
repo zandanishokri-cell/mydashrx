@@ -19,8 +19,13 @@ export function signTokens(
   tokenVersion?: number,
   rtMeta?: { jti: string; familyId: string },
 ): { accessToken: string; refreshToken: string } {
+  // P-RBAC10: dispatcher and pharmacist get 5min AT (shorter window = less risk if stolen)
+  const restrictedRoles = ['dispatcher', 'pharmacist'];
+  const atExpiry = restrictedRoles.includes(payload.role as string)
+    ? '5m'
+    : (process.env.JWT_EXPIRES_IN ?? '15m');
   const accessToken = app.jwt.sign(payload as object, {
-    expiresIn: process.env.JWT_EXPIRES_IN ?? '15m',
+    expiresIn: atExpiry,
   });
   const refreshToken = app.jwt.sign(
     {

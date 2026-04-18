@@ -5,11 +5,51 @@ import { createHmac, randomBytes, randomUUID } from 'crypto';
 const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? randomBytes(32).toString('hex');
 const signToken = (t: string) => createHmac('sha256', MAGIC_LINK_SECRET).update(t).digest('hex');
 import { db } from '../db/connection.js';
-import { users, organizations, drivers, magicLinkTokens, refreshTokens } from '../db/schema.js';
+import { users, organizations, drivers, magicLinkTokens, refreshTokens, adminAuditLogs } from '../db/schema.js';
 import { eq, and, isNull, gt, count, desc } from 'drizzle-orm';
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
 import { sql } from 'drizzle-orm';
+import { createHash } from 'crypto';
+
+// P-SEC11: HIPAA auth audit log — non-blocking, never fails auth flows
+async function logAuthEvent(
+  event: string,
+  opts: { userId?: string; email: string; ip: string; orgId?: string; metadata?: Record<string, unknown> },
+): Promise<void> {
+  const zeroId = '00000000-0000-0000-0000-000000000000';
+  try {
+    await db.insert(adminAuditLogs).values({
+      actorId: opts.userId ?? zeroId,
+      actorEmail: opts.email,
+      action: event,
+      targetId: opts.userId ?? zeroId,
+      targetName: opts.email,
+      metadata: { ip: opts.ip, ...(opts.orgId ? { orgId: opts.orgId } : {}), ...opts.metadata },
+    });
+  } catch { /* non-blocking */ }
+}
+
+// P-SEC12: HIBP k-anonymity breach detection — fail open on any error
+async function isPasswordPwned(password: string): Promise<boolean> {
+  try {
+    const sha1 = createHash('sha1').update(password).digest('hex').toUpperCase();
+    const prefix = sha1.slice(0, 5);
+    const suffix = sha1.slice(5);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, {
+      signal: controller.signal,
+      headers: { 'Add-Padding': 'true' },
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return false;
+    const text = await res.text();
+    return text.split('\r\n').some(line => line.toUpperCase().startsWith(suffix));
+  } catch {
+    return false;
+  }
+}
 
 async function seedRefreshToken(
   userId: string,
@@ -92,7 +132,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
           ...(lockUntil ? { lockedUntil: lockUntil } : {}),
         }).where(eq(users.id, user.id));
       }
-      return reply.code(401).send({ error: 'Invalid credentials' });
+      // P-SEC11: log login_failed (only when user exists — prevents email enumeration)
+    if (user) await logAuthEvent('login_failed', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined, metadata: { reason: 'wrong_password' } });
+    return reply.code(401).send({ error: 'Invalid credentials' });
     }
 
     if (user.deletedAt) return reply.code(401).send({ error: 'Account deactivated' });
@@ -134,6 +176,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const familyId = randomUUID();
     const tokens = signTokens(app, payload, user.tokenVersion, { jti, familyId });
     await seedRefreshToken(user.id, familyId, jti, req);
+    // P-SEC11: log login_success
+    await logAuthEvent('login_success', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
     return reply.send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
@@ -304,10 +348,15 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const { refreshToken } = req.body as { refreshToken?: string };
     if (refreshToken) {
       try {
-        const decoded = app.jwt.verify(refreshToken) as { jti?: string };
+        const decoded = app.jwt.verify(refreshToken) as { jti?: string; sub?: string };
         if (decoded.jti) {
           await db.update(refreshTokens).set({ status: 'revoked' })
             .where(eq(refreshTokens.jti, decoded.jti)).catch(() => {});
+        }
+        // P-SEC11: log logout
+        if (decoded.sub) {
+          const u = await findUserById(decoded.sub);
+          if (u) await logAuthEvent('logout', { userId: u.id, email: u.email, ip: req.ip, orgId: u.orgId ?? undefined });
         }
       } catch { /* invalid token — no-op, silent */ }
     }
@@ -356,6 +405,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const otpCode = createHmac('sha256', MAGIC_LINK_SECRET).update(otpPlain).digest('hex');
     const expiresAt = new Date(Date.now() + 30 * 60_000);
     await db.insert(magicLinkTokens).values({ email, tokenHash, otpCode, expiresAt });
+    // P-SEC11: log magic_link_requested (non-enumerable — always fires regardless of user existence)
+    await logAuthEvent('magic_link_requested', { email, ip: req.ip });
 
     const user = await findUserByEmail(email);
     if (user && !user.deletedAt) {
@@ -458,6 +509,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       ...(driverId ? { driverId } : {}),
     }, user.tokenVersion, { jti: mlJti, familyId: mlFamilyId });
     await seedRefreshToken(user.id, mlFamilyId, mlJti, req);
+    // P-SEC11: log magic_link_used
+    await logAuthEvent('magic_link_used', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
     return reply.send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
@@ -534,17 +587,31 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const user = await findUserById(payload.sub);
     if (!user) return reply.code(404).send({ error: 'User not found' });
 
+    // P-SEC12: HIBP breach detection — block known-breached passwords
+    const pwned = await isPasswordPwned(newPassword);
+    if (pwned) {
+      return reply.code(400).send({ error: 'This password has appeared in a known data breach and cannot be used. Please choose a different password.' });
+    }
+
     const newHash = await hashPassword(newPassword);
     const [updated] = await db.update(users)
       .set({ passwordHash: newHash, mustChangePassword: false })
       .where(eq(users.id, payload.sub))
       .returning({ id: users.id, name: users.name, email: users.email, role: users.role, orgId: users.orgId, depotIds: users.depotIds, mustChangePassword: users.mustChangePassword });
 
+    // P-SEC10: Revoke all active RTs — attacker cannot continue after victim changes password
+    await db.update(refreshTokens)
+      .set({ status: 'revoked' })
+      .where(and(eq(refreshTokens.userId, payload.sub), eq(refreshTokens.status, 'active')));
+
     // Keep drivers.passwordHash in sync — prevents stale hash if a direct-driver-auth path is ever added
     if (user.role === 'driver') {
       await db.update(drivers).set({ passwordHash: newHash })
         .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt)));
     }
+
+    // P-SEC11: log password_changed
+    await logAuthEvent('password_changed', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
 
     return { user: updated };
   });

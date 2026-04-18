@@ -1,11 +1,19 @@
 import type { FastifyPluginAsync } from 'fastify';
 import crypto from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, drivers, adminAuditLogs } from '../db/schema.js';
-import { eq, isNull, and, sql } from 'drizzle-orm';
+import { organizations, users, drivers, adminAuditLogs, depots } from '../db/schema.js';
+import { eq, isNull, and, sql, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import bcrypt from 'bcryptjs';
 import { checkDriverLimit } from '../utils/usageLimits.js';
+
+// P-RBAC11: Validate that all provided depotIds belong to the org — prevents cross-org depot injection
+async function validateDepotIds(orgId: string, depotIds: string[]): Promise<boolean> {
+  if (!depotIds.length) return true;
+  const found = await db.select({ id: depots.id }).from(depots)
+    .where(and(inArray(depots.id, depotIds), eq(depots.orgId, orgId), isNull(depots.deletedAt)));
+  return found.length === depotIds.length;
+}
 
 async function logRoleChange(
   actorId: string, actorEmail: string,
@@ -136,6 +144,10 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       updates.tokenVersion = sql`${users.tokenVersion} + 1`;
     }
     if (body.depotIds !== undefined) {
+      // P-RBAC11: Validate all depot IDs belong to this org
+      if (!(await validateDepotIds(orgId, body.depotIds))) {
+        return reply.code(400).send({ error: 'One or more depot IDs are invalid for this organization' });
+      }
       updates.depotIds = body.depotIds;
       // P-RBAC6: depot change invalidates AT immediately — same pattern as role change
       updates.tokenVersion = sql`${users.tokenVersion} + 1`;
@@ -222,6 +234,11 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
           limit: driverLimitCheck.limit,
         });
       }
+    }
+
+    // P-RBAC11: Validate depot IDs belong to this org before creating user
+    if (body.depotIds?.length && !(await validateDepotIds(orgId, body.depotIds))) {
+      return reply.code(400).send({ error: 'One or more depot IDs are invalid for this organization' });
     }
 
     const tempPassword = crypto.randomBytes(6).toString('base64url');

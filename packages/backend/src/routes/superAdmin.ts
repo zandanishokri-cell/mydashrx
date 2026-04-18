@@ -441,7 +441,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .where(
         and(
           inArray(users.role, ['dispatcher', 'pharmacist']),
-          eq(users.depotIds, sql`'[]'::jsonb`),
+          sql`json_array_length(${users.depotIds}::json) = 0`,
           isNull(users.deletedAt),
           eq(organizations.pendingApproval, false),
           isNull(organizations.deletedAt),
