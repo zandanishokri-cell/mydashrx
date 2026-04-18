@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers, proofOfDeliveries } from '../db/schema.js';
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { requireDeliveryWrite } from '../middleware/requireOrgRole.js';
 import { todayInTz } from '../utils/date.js';
 
 export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
@@ -69,7 +70,7 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
   // POST /pharmacy/orders — pharmacy submits a new delivery stop
   // This creates/finds a draft plan for today and adds the stop
   app.post('/orders', {
-    preHandler: requireRole('pharmacist'),
+    preHandler: requireDeliveryWrite(),
   }, async (req, reply) => {
     const user = req.user as { sub: string; orgId: string; depotIds: string[] };
     const depotId = user.depotIds?.[0];
@@ -186,7 +187,7 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
 
   // DELETE /pharmacy/orders/:stopId — cancel a pending stop
   app.delete('/orders/:stopId', {
-    preHandler: requireRole('pharmacist'),
+    preHandler: requireDeliveryWrite(),
   }, async (req, reply) => {
     const user = req.user as { sub: string; orgId: string };
     const { stopId } = req.params as { stopId: string };
