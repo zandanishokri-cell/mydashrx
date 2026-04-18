@@ -616,6 +616,40 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return { user: updated };
   });
 
+  // GET /auth/sessions — list active sessions (P-SES10, HIPAA §164.312(a)(2)(iii))
+  app.get('/sessions', async (req, reply) => {
+    try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
+    const payload = req.user as { sub: string; jti?: string };
+    const now = new Date();
+    const rows = await db.select({
+      jti: refreshTokens.jti,
+      ip: refreshTokens.ip,
+      userAgent: refreshTokens.userAgent,
+      createdAt: refreshTokens.createdAt,
+      expiresAt: refreshTokens.expiresAt,
+    }).from(refreshTokens)
+      .where(and(
+        eq(refreshTokens.userId, payload.sub),
+        eq(refreshTokens.status, 'active'),
+        gt(refreshTokens.expiresAt, now),
+      ))
+      .orderBy(desc(refreshTokens.createdAt));
+    return rows.map(r => ({ ...r, isCurrent: r.jti === payload.jti }));
+  });
+
+  // DELETE /auth/sessions/:jti — revoke single session (P-SES10)
+  app.delete('/sessions/:jti', async (req, reply) => {
+    try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
+    const payload = req.user as { sub: string };
+    const { jti } = req.params as { jti: string };
+    const [row] = await db.select({ userId: refreshTokens.userId })
+      .from(refreshTokens).where(eq(refreshTokens.jti, jti)).limit(1);
+    if (!row) return reply.code(404).send({ error: 'Session not found' });
+    if (row.userId !== payload.sub) return reply.code(403).send({ error: 'Forbidden' });
+    await db.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.jti, jti));
+    return reply.code(204).send();
+  });
+
   // GET /auth/org-status — approval state for authenticated user (P-ADM7)
   app.get('/org-status', async (req, reply) => {
     try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
