@@ -77,8 +77,9 @@ function VerifyContent() {
       .then((tokens) => {
         setSession(tokens);
         setStatus('success');
-        const dest = resolveNext();
-        router.replace((tokens.user as any).mustChangePassword ? '/change-password' : dest);
+        const u = tokens.user as any;
+        const dest = resolveNext(u.role, u.org?.pendingApproval);
+        router.replace(u.mustChangePassword ? '/change-password' : dest);
       })
       .catch((err: Error) => {
         const raw = err.message ?? '';
@@ -103,8 +104,9 @@ function VerifyContent() {
     try {
       const tokens = await api.post<AuthTokens>('/auth/magic-link/verify-code', { email: otpEmail, code: otpCode });
       setSession(tokens);
-      const dest = resolveNext();
-      router.replace((tokens.user as any).mustChangePassword ? '/change-password' : dest);
+      const u = tokens.user as any;
+      const dest = resolveNext(u.role, u.org?.pendingApproval);
+      router.replace(u.mustChangePassword ? '/change-password' : dest);
     } catch (err: Error | unknown) {
       const raw = (err as Error).message ?? '';
       const match = raw.match(/\{.*\}/);

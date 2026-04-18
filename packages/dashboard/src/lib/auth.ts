@@ -43,12 +43,24 @@ export function isAuthenticated(): boolean {
   return !!(getUser() && localStorage.getItem('accessToken'));
 }
 
-const ALLOWED_PREFIXES = ['/dashboard'];
+const ROLE_REDIRECTS: Record<string, string> = {
+  super_admin: '/admin',
+  pharmacy_admin: '/pharmacy/dashboard',
+  dispatcher: '/dispatch/queue',
+  driver: '/driver/routes',
+};
 
-export function resolveNext(): string {
-  if (typeof window === 'undefined') return '/dashboard';
+const ALLOWED_PREFIXES = ['/dashboard', '/admin', '/pharmacy', '/dispatch', '/driver'];
+
+export function getRoleRedirect(role?: string, pendingApproval?: boolean): string {
+  if (pendingApproval) return '/onboarding/waiting';
+  return ROLE_REDIRECTS[role ?? ''] ?? '/dashboard';
+}
+
+export function resolveNext(role?: string, pendingApproval?: boolean): string {
+  if (typeof window === 'undefined') return getRoleRedirect(role, pendingApproval);
   const next = sessionStorage.getItem('postAuthRedirect');
   if (next) sessionStorage.removeItem('postAuthRedirect');
   if (next && ALLOWED_PREFIXES.some(p => next.startsWith(p))) return next;
-  return '/dashboard';
+  return getRoleRedirect(role, pendingApproval);
 }
