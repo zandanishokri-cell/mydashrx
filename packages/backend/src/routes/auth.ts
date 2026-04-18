@@ -354,7 +354,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const tokenHash = signToken(token);
     const otpPlain = Math.floor(100_000 + Math.random() * 900_000).toString();
     const otpCode = createHmac('sha256', MAGIC_LINK_SECRET).update(otpPlain).digest('hex');
-    const expiresAt = new Date(Date.now() + 15 * 60_000);
+    const expiresAt = new Date(Date.now() + 30 * 60_000);
     await db.insert(magicLinkTokens).values({ email, tokenHash, otpCode, expiresAt });
 
     const user = await findUserByEmail(email);
@@ -373,7 +373,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
           body: JSON.stringify({
             from: `MyDashRx <noreply@${senderDomain}>`,
             to: email,
-            subject: 'Your MyDashRx login link (expires in 15 min)',
+            subject: 'Your MyDashRx login link (expires in 30 min)',
             headers: { 'X-Entity-Ref-ID': randomUUID() },
             track_clicks: false,
             track_opens: false,
@@ -381,7 +381,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
               <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Click to complete your MyDashRx sign-in. This link expires in 15 minutes.</span>
               <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
                 <h2 style="color:#0F4C81;margin:0 0 8px">Sign in to MyDashRx</h2>
-                <p style="color:#374151;margin:0 0 24px;font-size:15px">Click the button below to sign in. This link expires in 15 minutes and can only be used once.</p>
+                <p style="color:#374151;margin:0 0 24px;font-size:15px">Click the button below to sign in. This link expires in 30 minutes and can only be used once.</p>
                 <a href="${magicUrl}" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Sign in to MyDashRx</a>
                 <div style="margin-top:20px;text-align:center;border-top:1px solid #eee;padding-top:16px">
                   <p style="color:#666;font-size:13px;margin:0 0 8px">Or enter this code instead:</p>

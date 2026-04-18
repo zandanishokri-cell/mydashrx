@@ -20,14 +20,29 @@ function VerifyContent() {
 
   useEffect(() => {
     if (!token) { setStatus('error'); setErrorMsg('No sign-in token found. Please request a new link.'); return; }
-    api.get<{ valid: boolean; email: string; token: string }>(`/auth/magic-link/verify?token=${encodeURIComponent(token)}`)
+    const verifyUrl = `/auth/magic-link/verify?token=${encodeURIComponent(token)}`;
+    const parseErr = (err: Error) => {
+      const raw = err.message ?? '';
+      const match = raw.match(/\{.*\}/s);
+      let msg = 'This link is invalid or has expired.';
+      if (match) { try { const p = JSON.parse(match[0]); msg = p.error ?? msg; } catch { /* ignore */ } }
+      return msg;
+    };
+    api.get<{ valid: boolean; email: string; token: string }>(verifyUrl)
       .then((res) => { setValidatedEmail(res.email); setStatus('valid'); })
-      .catch((err: Error) => {
-        const raw = err.message ?? '';
-        const match = raw.match(/\{.*\}/);
-        let msg = 'This link is invalid or has expired.';
-        if (match) {
-          try { const p = JSON.parse(match[0]); msg = p.error ?? msg; } catch { /* ignore */ }
+      .catch(async (err: Error) => {
+        const msg = parseErr(err);
+        // If the error looks like a network/cold-start failure (not a specific API error),
+        // wait 35s for Render to wake up and retry once.
+        if (msg === 'This link is invalid or has expired.') {
+          await new Promise(r => setTimeout(r, 35_000));
+          try {
+            const res = await api.get<{ valid: boolean; email: string; token: string }>(verifyUrl);
+            setValidatedEmail(res.email); setStatus('valid'); return;
+          } catch (retryErr: unknown) {
+            setErrorMsg(parseErr(retryErr as Error));
+            setStatus('error'); return;
+          }
         }
         setErrorMsg(msg);
         setStatus('error');
@@ -147,7 +162,7 @@ function VerifyContent() {
     return (
       <div className="text-center">
         <div className="w-10 h-10 border-2 border-[#0F4C81] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-gray-600 text-sm">Verifying your link…</p>
+        <p className="text-gray-600 text-sm">Verifying your link… (this may take up to 30 seconds)</p>
       </div>
     );
   }
