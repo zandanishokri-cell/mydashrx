@@ -98,6 +98,10 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
 
     const date = body.deliveryDate ?? todayInTz();
 
+    // Validate depot exists (P-BUG-DEPOT-FK: depotId from JWT may be a placeholder)
+    const [depotRow] = await db.select({ id: depots.id }).from(depots).where(eq(depots.id, depotId)).limit(1);
+    if (!depotRow) return reply.code(400).send({ error: 'Assigned depot not found. Please contact your administrator.' });
+
     // Find or create a draft plan for this depot+date
     let [plan] = await db.select().from(plans)
       .where(and(eq(plans.orgId, user.orgId), eq(plans.depotId, depotId), eq(plans.date, date), isNull(plans.deletedAt)))

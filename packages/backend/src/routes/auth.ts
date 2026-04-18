@@ -633,7 +633,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         eq(refreshTokens.status, 'active'),
         gt(refreshTokens.expiresAt, now),
       ))
-      .orderBy(desc(refreshTokens.createdAt));
+      .orderBy(desc(refreshTokens.createdAt))
+      .limit(50);
     return rows.map(r => ({ ...r, isCurrent: r.jti === payload.jti }));
   });
 

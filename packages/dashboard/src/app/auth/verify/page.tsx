@@ -5,6 +5,8 @@ import { api } from '@/lib/api';
 import { setSession, resolveNext } from '@/lib/auth';
 import type { AuthTokens } from '@mydash-rx/shared';
 
+const LINK_EXPIRY_SECS = 15 * 60;
+
 function VerifyContent() {
   const router = useRouter();
   const params = useSearchParams();
@@ -17,6 +19,26 @@ function VerifyContent() {
   const [otpCode, setOtpCode] = useState('');
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState('');
+  const [secsLeft, setSecsLeft] = useState(LINK_EXPIRY_SECS);
+
+  // Expiry countdown — runs while link is active
+  useEffect(() => {
+    if (status === 'confirming' || status === 'success' || status === 'error') return;
+    const t = setInterval(() => setSecsLeft(s => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [status]);
+
+  // Auto-redirect when countdown hits 0
+  useEffect(() => {
+    if (secsLeft === 0 && (status === 'validating' || status === 'valid')) {
+      router.push('/login?expired=1');
+    }
+  }, [secsLeft, status]);
+
+  const expiryMins = Math.floor(secsLeft / 60);
+  const expirySecs = secsLeft % 60;
+  const expiryStr = secsLeft > 60 ? `${expiryMins}m ${expirySecs}s` : `${secsLeft}s`;
+  const expiryColor = secsLeft < 30 ? 'text-red-500' : secsLeft < 120 ? 'text-amber-500' : 'text-gray-400';
 
   useEffect(() => {
     if (!token) { setStatus('error'); setErrorMsg('No sign-in token found. Please request a new link.'); return; }
@@ -162,7 +184,10 @@ function VerifyContent() {
     return (
       <div className="text-center">
         <div className="w-10 h-10 border-2 border-[#0F4C81] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-gray-600 text-sm">Verifying your link… (this may take up to 30 seconds)</p>
+        <p className="text-gray-600 text-sm mb-2">Verifying your link… (this may take up to 30 seconds)</p>
+        <p className={`text-xs ${expiryColor}`}>
+          {secsLeft > 0 ? `Link valid for ${expiryStr}` : 'Link may have expired — redirecting…'}
+        </p>
       </div>
     );
   }
@@ -184,7 +209,9 @@ function VerifyContent() {
         >
           Sign in to MyDashRx
         </button>
-        <p className="text-xs text-gray-400 mt-4">This link expires in 15 minutes and can only be used once.</p>
+        <p className={`text-xs mt-4 ${expiryColor}`}>
+          {secsLeft > 0 ? `Link valid for ${expiryStr} · single use` : 'Link may have expired'}
+        </p>
         <button onClick={() => setShowOtp(true)} className="mt-3 text-xs text-gray-400 hover:text-[#0F4C81] block w-full">
           Use verification code instead
         </button>

@@ -27,18 +27,35 @@ function LoginForm() {
   const [countdown, setCountdown] = useState(900);
   const [canResend, setCanResend] = useState(false);
   const [resending, setResending] = useState(false);
+  const [resendCount, setResendCount] = useState(0);
+  const [resendCooldown, setResendCooldown] = useState(30);
+  const [expiredNotice, setExpiredNotice] = useState(false);
 
   const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
 
   useEffect(() => {
+    if (params.get('expired') === '1') setExpiredNotice(true);
+  }, []);
+
+  useEffect(() => {
     if (!sent) return;
     const interval = setInterval(() => setCountdown(s => Math.max(0, s - 1)), 1000);
-    const resendTimer = setTimeout(() => setCanResend(true), 60_000);
     const pwTimer = setTimeout(() => setShowPassword(true), 300_000);
-    return () => { clearInterval(interval); clearTimeout(resendTimer); clearTimeout(pwTimer); };
+    return () => { clearInterval(interval); clearTimeout(pwTimer); };
   }, [sent]);
+
+  // Exponential cooldown: 30s → 60s → 120s
+  useEffect(() => {
+    if (!sent) return;
+    const COOLDOWNS = [30, 60, 120];
+    const secs = COOLDOWNS[Math.min(resendCount, COOLDOWNS.length - 1)];
+    setResendCooldown(secs);
+    setCanResend(false);
+    const t = setTimeout(() => setCanResend(true), secs * 1000);
+    return () => clearTimeout(t);
+  }, [sent, resendCount]);
 
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
@@ -66,11 +83,16 @@ function LoginForm() {
     try {
       await api.post('/auth/magic-link/request', { email });
       setCountdown(900);
-      setCanResend(false);
+      setResendCount(c => c + 1);
     } catch { /* silent */ } finally {
       setResending(false);
     }
   };
+
+  const resendCopy =
+    resendCount === 0 ? 'Send again' :
+    resendCount === 1 ? 'Still waiting? Send another link' :
+    'Send one more link';
 
   const signInWithPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,14 +131,16 @@ function LoginForm() {
         }
         <p className="text-gray-400 text-xs mb-5">Using Outlook or corporate email? Links may take 2–3 minutes.</p>
         <div className="space-y-2">
-          {canResend && (
+          {canResend ? (
             <button
               onClick={resendLink}
               disabled={resending}
               className="block w-full text-sm text-[#0F4C81] hover:underline disabled:opacity-50"
             >
-              {resending ? 'Resending…' : 'Resend link'}
+              {resending ? 'Resending…' : resendCopy}
             </button>
+          ) : (
+            <p className="text-xs text-gray-400">Send another link in {resendCooldown}s</p>
           )}
           <button
             onClick={() => { setSent(false); setEmail(''); setShowPassword(false); }}
@@ -164,6 +188,11 @@ function LoginForm() {
         <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm">
           <p className="font-semibold mb-0.5">Opening in an in-app browser</p>
           <p className="text-xs text-amber-600">Login links may not work here. Tap the <span className="font-medium">⋯</span> menu and choose <span className="font-medium">Open in Browser</span> for best results.</p>
+        </div>
+      )}
+      {expiredNotice && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
+          Your sign-in link expired. Enter your email below to get a fresh one.
         </div>
       )}
       {reasonMsg && (

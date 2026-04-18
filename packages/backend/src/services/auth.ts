@@ -24,9 +24,10 @@ export function signTokens(
   const atExpiry = restrictedRoles.includes(payload.role as string)
     ? '5m'
     : (process.env.JWT_EXPIRES_IN ?? '15m');
-  const accessToken = app.jwt.sign(payload as object, {
-    expiresIn: atExpiry,
-  });
+  const accessToken = app.jwt.sign(
+    { ...payload as object, ...(rtMeta ? { jti: rtMeta.jti } : {}) },
+    { expiresIn: atExpiry },
+  );
   const refreshToken = app.jwt.sign(
     {
       sub: payload.sub,
