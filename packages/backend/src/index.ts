@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-// Build-14 deployed — P-SEC10/11/12, P-RBAC10/11, P-BUG9, P-BUG12
+// Build-15 live — P-SEC11-UI, P-ADM13, P-ADM14
 // Surface startup errors clearly before anything else runs
 process.on('uncaughtException', (err) => {
   console.error('STARTUP CRASH - uncaughtException:', err.message, err.stack);
