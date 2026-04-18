@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
+import { useFirstVisit } from '@/hooks/useFirstVisit';
 import {
   Building2, Users, Warehouse, Bell, Check, X, Copy,
   Plus, Trash2, Pencil, Loader2, ChevronDown, AlertCircle,
@@ -228,6 +229,7 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
   const [showInvite, setShowInvite] = useState(false);
   const [tempPassInfo, setTempPassInfo] = useState<{ name: string; email: string; pass: string } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<OrgUser | null>(null);
+  const showMemberTip = useFirstVisit('mdrx_member_tip');
   const [copied, setCopied] = useState(false);
 
   const [invite, setInvite] = useState({ name: '', email: '', role: 'dispatcher' as Role, depotIds: [] as string[] });
@@ -322,12 +324,19 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
       )}
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">{members.length} member{members.length !== 1 ? 's' : ''}</p>
-        <button
-          onClick={() => setShowInvite(true)}
-          className="flex items-center gap-2 px-3 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] transition-colors"
-        >
-          <Plus size={14} /> Invite Member
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          {showMemberTip && (
+            <p className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-1.5 max-w-xs text-right">
+              Invite dispatchers, pharmacists, and drivers to your team.
+            </p>
+          )}
+          <button
+            onClick={() => setShowInvite(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] transition-colors"
+          >
+            <Plus size={14} /> Invite Member
+          </button>
+        </div>
       </div>
 
       <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
@@ -543,6 +552,7 @@ function DepotsTab({ orgId }: { orgId: string }) {
   const [showAdd, setShowAdd] = useState(false);
   const [editTarget, setEditTarget] = useState<Depot | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Depot | null>(null);
+  const showDepotTip = useFirstVisit('mdrx_depot_tip');
   const [form, setForm] = useState({ name: '', address: '', phone: '', lat: '', lng: '' });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -660,19 +670,33 @@ function DepotsTab({ orgId }: { orgId: string }) {
       )}
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">{depots.length} depot{depots.length !== 1 ? 's' : ''}</p>
-        <button
-          onClick={() => { resetForm(); setShowAdd(true); }}
-          className="flex items-center gap-2 px-3 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] transition-colors"
-        >
-          <Plus size={14} /> Add Depot
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          {showDepotTip && (
+            <p className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-1.5 max-w-xs text-right">
+              Add a depot to enable route creation and driver assignments.
+            </p>
+          )}
+          <button
+            onClick={() => { resetForm(); setShowAdd(true); }}
+            className="flex items-center gap-2 px-3 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d6b] transition-colors"
+          >
+            <Plus size={14} /> Add Depot
+          </button>
+        </div>
       </div>
 
       <div className="space-y-3">
         {depots.map(d => (
           <div key={d.id} className="rounded-xl border border-gray-200 bg-white px-4 py-4 flex items-start justify-between gap-4">
             <div>
-              <p className="font-medium text-gray-800 text-sm">{d.name}</p>
+              <div className="flex items-center gap-2">
+                <p className="font-medium text-gray-800 text-sm">{d.name}</p>
+                {d.lat === 0 && d.lng === 0 && (
+                  <span className="px-1.5 py-0.5 text-xs font-medium rounded-full bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
+                    No coordinates
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-gray-500 mt-0.5">{d.address}</p>
               {d.phone && <p className="text-xs text-gray-400 mt-0.5">{d.phone}</p>}
             </div>

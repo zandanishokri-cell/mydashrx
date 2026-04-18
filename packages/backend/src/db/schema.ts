@@ -526,6 +526,7 @@ export const magicLinkTokens = pgTable('magic_link_tokens', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: text('email').notNull(),
   tokenHash: text('token_hash').notNull().unique(),
+  otpCode: varchar('otp_code', { length: 64 }),
   expiresAt: timestamp('expires_at').notNull(),
   usedAt: timestamp('used_at'),
   firstClickedAt: timestamp('first_clicked_at'),

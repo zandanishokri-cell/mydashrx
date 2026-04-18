@@ -6,7 +6,7 @@ const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? randomBytes(32).toStr
 const signToken = (t: string) => createHmac('sha256', MAGIC_LINK_SECRET).update(t).digest('hex');
 import { db } from '../db/connection.js';
 import { users, organizations, drivers, magicLinkTokens, refreshTokens } from '../db/schema.js';
-import { eq, and, isNull, gt, count } from 'drizzle-orm';
+import { eq, and, isNull, gt, count, desc } from 'drizzle-orm';
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
 import { sql } from 'drizzle-orm';
@@ -203,20 +203,26 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       let txStatus: 'not_found' | 'used' | 'revoked' | 'active' = 'not_found';
       let txFamilyId = '';
 
+      let txStoredIp: string | null = null;
+      let txStoredUa: string | null = null;
+
       await db.transaction(async (tx) => {
         const rows = await tx.execute(
-          sql`SELECT id, family_id, status FROM refresh_tokens WHERE jti = ${jti} FOR UPDATE`
+          sql`SELECT id, family_id, status, ip, user_agent FROM refresh_tokens WHERE jti = ${jti} FOR UPDATE`
         );
-        const row = (rows as unknown as Array<{ id: string; family_id: string; status: string }>)[0];
+        const row = (rows as unknown as Array<{ id: string; family_id: string; status: string; ip: string | null; user_agent: string | null }>)[0];
         if (!row) return;
         if (row.status === 'used') {
           txStatus = 'used';
           await tx.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.familyId, row.family_id));
+          console.warn(JSON.stringify({ event: 'rt_replay_detected', familyId: row.family_id, ip: req.ip, ua: req.headers['user-agent'], ts: new Date().toISOString() }));
           return;
         }
         if (row.status === 'revoked') { txStatus = 'revoked'; return; }
         txStatus = 'active';
         txFamilyId = row.family_id;
+        txStoredIp = row.ip;
+        txStoredUa = row.user_agent;
         await tx.update(refreshTokens).set({ status: 'used', usedAt: new Date() }).where(eq(refreshTokens.jti, jti));
       });
 
@@ -224,9 +230,17 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       if (txStatus === 'used') return reply.code(401).send({ error: 'Token reuse detected. All sessions revoked.' });
       if (txStatus === 'revoked') return reply.code(401).send({ error: 'Session revoked. Please log in again.' });
 
+      // P-SEC7: IP/UA binding mismatch — log only (Phase 1), don't reject (mobile IPs change)
+      const ipMismatch = txStoredIp && txStoredIp !== req.ip;
+      const uaMismatch = txStoredUa && txStoredUa !== req.headers['user-agent'];
+      if (ipMismatch || uaMismatch) {
+        console.warn(JSON.stringify({ event: 'rt_binding_mismatch', storedIp: txStoredIp, requestIp: req.ip, uaMismatch: !!uaMismatch, ts: new Date().toISOString() }));
+      }
+
       const user = await findUserById(decoded.sub);
       if (!user || user.deletedAt) return reply.code(401).send({ error: 'User not found' });
       if (decoded.tv !== undefined && decoded.tv !== user.tokenVersion) {
+        console.warn(JSON.stringify({ event: 'rt_token_version_mismatch', userId: user.id, storedTv: decoded.tv, currentTv: user.tokenVersion, ip: req.ip, ts: new Date().toISOString() }));
         return reply.code(401).send({ error: 'Session invalidated. Please log in again.' });
       }
 
@@ -254,6 +268,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
       });
 
+      console.log(JSON.stringify({ event: 'rt_rotated', userId: user.id, familyId: txFamilyId, ip: req.ip, ts: new Date().toISOString() }));
       return reply.send(tokens);
     }
 
@@ -337,8 +352,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const token = randomBytes(32).toString('hex');
     const tokenHash = signToken(token);
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    await db.insert(magicLinkTokens).values({ email, tokenHash, expiresAt });
+    const otpPlain = Math.floor(100_000 + Math.random() * 900_000).toString();
+    const otpCode = createHmac('sha256', MAGIC_LINK_SECRET).update(otpPlain).digest('hex');
+    const expiresAt = new Date(Date.now() + 15 * 60_000);
+    await db.insert(magicLinkTokens).values({ email, tokenHash, otpCode, expiresAt });
 
     const user = await findUserByEmail(email);
     if (user && !user.deletedAt) {
@@ -346,6 +363,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       const magicUrl = `${dashUrl}/auth/verify?token=${token}`;
       const resendKey = process.env.RESEND_API_KEY;
       const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+      const otpDisplay = `${otpPlain.slice(0, 3)} ${otpPlain.slice(3)}`;
 
       if (resendKey) {
         const { randomUUID } = await import('crypto');
@@ -365,6 +383,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
                 <h2 style="color:#0F4C81;margin:0 0 8px">Sign in to MyDashRx</h2>
                 <p style="color:#374151;margin:0 0 24px;font-size:15px">Click the button below to sign in. This link expires in 15 minutes and can only be used once.</p>
                 <a href="${magicUrl}" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Sign in to MyDashRx</a>
+                <div style="margin-top:20px;text-align:center;border-top:1px solid #eee;padding-top:16px">
+                  <p style="color:#666;font-size:13px;margin:0 0 8px">Or enter this code instead:</p>
+                  <p style="font-size:32px;font-weight:700;letter-spacing:8px;color:#0F4C81;margin:0">${otpDisplay}</p>
+                  <p style="color:#999;font-size:11px;margin:8px 0 0">Works on any device &bull; Expires in 15 min</p>
+                </div>
                 <p style="color:#9ca3af;font-size:12px;margin-top:24px">If you didn't request this, you can safely ignore this email.</p>
               </div>`,
           }),
@@ -440,6 +463,67 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
     });
   });
+
+  // P-ML5: OTP fallback — verify 6-digit code instead of clicking magic link
+  app.post('/magic-link/verify-code',
+    { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } },
+    async (req, reply) => {
+      const { email, code } = req.body as { email?: string; code?: string };
+      if (!email || !z.string().email().safeParse(email).success || !code) {
+        return reply.code(400).send({ error: 'Email and 6-digit code required' });
+      }
+      const normalizedCode = code.replace(/\s/g, '');
+      if (!/^\d{6}$/.test(normalizedCode)) {
+        return reply.code(400).send({ error: 'Code must be 6 digits' });
+      }
+
+      const hashed = createHmac('sha256', MAGIC_LINK_SECRET).update(normalizedCode).digest('hex');
+
+      const user = await findUserByEmail(email);
+      if (!user || user.deletedAt) {
+        // Constant-time delay to prevent email enumeration
+        await new Promise(r => setTimeout(r, 200));
+        return reply.code(400).send({ error: 'Invalid or expired code' });
+      }
+
+      const [record] = await db.select().from(magicLinkTokens)
+        .where(and(
+          eq(magicLinkTokens.email, email),
+          eq(magicLinkTokens.otpCode, hashed),
+          isNull(magicLinkTokens.usedAt),
+          gt(magicLinkTokens.expiresAt, new Date()),
+        ))
+        .orderBy(desc(magicLinkTokens.createdAt))
+        .limit(1);
+
+      if (!record) return reply.code(400).send({ error: 'Invalid or expired code' });
+
+      await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
+
+      if (user.pendingApproval) return reply.code(403).send({ pendingApproval: true, error: 'Your account is pending admin approval.' });
+
+      let driverId: string | undefined;
+      if (user.role === 'driver') {
+        const [dr] = await db.select({ id: drivers.id }).from(drivers)
+          .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt))).limit(1);
+        driverId = dr?.id;
+      }
+
+      const mlJti = randomUUID();
+      const mlFamilyId = randomUUID();
+      const tokens = signTokens(app, {
+        sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
+        depotIds: user.depotIds as string[],
+        ...(user.mustChangePassword ? { mustChangePw: true } : {}),
+        ...(driverId ? { driverId } : {}),
+      }, user.tokenVersion, { jti: mlJti, familyId: mlFamilyId });
+      await seedRefreshToken(user.id, mlFamilyId, mlJti, req);
+      return reply.send({
+        ...tokens,
+        user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
+      });
+    },
+  );
 
   app.post('/change-password', async (req, reply) => {
     try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }

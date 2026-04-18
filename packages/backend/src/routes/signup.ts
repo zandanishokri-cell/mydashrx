@@ -18,6 +18,7 @@ const driverSignupSchema = z.object({
   name: z.string().min(2).max(100),
   email: z.string().email(),
   phone: z.string().min(7).max(20),
+  orgId: z.string().uuid().optional(),
 });
 
 const acceptInviteSchema = z.object({
@@ -124,17 +125,19 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
   app.post('/driver', { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (req, reply) => {
     const parsed = driverSignupSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request' });
-    const { name, email, phone } = parsed.data;
+    const { name, email, phone, orgId } = parsed.data;
 
     const existing = await findUserByEmail(email);
     if (existing) return reply.code(409).send({ error: 'An account with this email already exists.' });
 
-    // Drivers join the first active (non-pending) org for now
-    const [org] = await db
-      .select()
-      .from(organizations)
-      .where(and(isNull(organizations.deletedAt), eq(organizations.pendingApproval, false)))
-      .limit(1);
+    // Use submitted orgId if provided, otherwise fall back to first active org
+    const orgQuery = db.select().from(organizations)
+      .where(and(isNull(organizations.deletedAt), eq(organizations.pendingApproval, false)));
+    const [org] = orgId
+      ? await db.select().from(organizations)
+          .where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt), eq(organizations.pendingApproval, false)))
+          .limit(1)
+      : await orgQuery.limit(1);
 
     if (!org) return reply.code(400).send({ error: 'No active organization available for driver signup.' });
 

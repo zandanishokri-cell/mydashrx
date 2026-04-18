@@ -5,11 +5,20 @@ import { api } from '@/lib/api';
 import { setSession } from '@/lib/auth';
 import type { AuthTokens } from '@mydash-rx/shared';
 
+const IAB_RE = /FBAN|FBAV|Instagram|LinkedInApp|GSA/i;
+function useIsInAppBrowser() {
+  const [isIAB, setIsIAB] = useState(false);
+  useEffect(() => { setIsIAB(IAB_RE.test(navigator.userAgent)); }, []);
+  return isIAB;
+}
+
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const prefill = params.get('prefill') ?? '';
   const reason = params.get('reason');
+  const nextParam = params.get('next') ?? '';
+  const isIAB = useIsInAppBrowser();
 
   const [email, setEmail] = useState(prefill);
   const [sent, setSent] = useState(false);
@@ -38,6 +47,9 @@ function LoginForm() {
     setLoading(true);
     setError('');
     try {
+      if (nextParam && nextParam.startsWith('/dashboard')) {
+        sessionStorage.setItem('postAuthRedirect', nextParam);
+      }
       await api.post('/auth/magic-link/request', { email });
       setCountdown(900);
       setCanResend(false);
@@ -148,6 +160,12 @@ function LoginForm() {
       </h1>
       <p className="text-gray-500 text-sm mb-6">Pharmacy Delivery Management</p>
 
+      {isIAB && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm">
+          <p className="font-semibold mb-0.5">Opening in an in-app browser</p>
+          <p className="text-xs text-amber-600">Login links may not work here. Tap the <span className="font-medium">⋯</span> menu and choose <span className="font-medium">Open in Browser</span> for best results.</p>
+        </div>
+      )}
       {reasonMsg && (
         <div className="mb-4 p-3 bg-amber-50 border border-amber-100 rounded-lg text-amber-700 text-sm">
           {reasonMsg}

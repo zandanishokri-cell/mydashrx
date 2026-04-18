@@ -42,3 +42,13 @@ export function isAuthenticated(): boolean {
   if (typeof window === 'undefined') return false;
   return !!(getUser() && localStorage.getItem('accessToken'));
 }
+
+const ALLOWED_PREFIXES = ['/dashboard'];
+
+export function resolveNext(): string {
+  if (typeof window === 'undefined') return '/dashboard';
+  const next = sessionStorage.getItem('postAuthRedirect');
+  if (next) sessionStorage.removeItem('postAuthRedirect');
+  if (next && ALLOWED_PREFIXES.some(p => next.startsWith(p))) return next;
+  return '/dashboard';
+}

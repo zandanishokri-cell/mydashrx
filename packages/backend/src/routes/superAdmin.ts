@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens } from '../db/schema.js';
+import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens, depots } from '../db/schema.js';
 import { eq, isNull, sql, gte, count, and, desc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
@@ -441,7 +441,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .where(
         and(
           inArray(users.role, ['dispatcher', 'pharmacist']),
-          sql`${users.depotIds}::jsonb = '[]'::jsonb`,
+          eq(users.depotIds, sql`'[]'::jsonb`),
           isNull(users.deletedAt),
           eq(organizations.pendingApproval, false),
           isNull(organizations.deletedAt),
@@ -570,5 +570,90 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const refreshTokensDeleted = (rtResult as unknown as Array<unknown>).length;
 
     return { deleted: deleted.length, refreshTokensDeleted };
+  });
+
+  // P-ONB9: Onboarding nudge cron — POST /admin/jobs/onboarding-nudges
+  // Triggered by external cron. Sends depot nudge at 4h, driver nudge at 68h, setup-call offer at 164h post-approval.
+  app.post('/jobs/onboarding-nudges', { preHandler: auth }, async (_req, reply) => {
+    const resendKey = process.env.RESEND_API_KEY;
+    const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+
+    const now = Date.now();
+    const WINDOWS = [
+      { label: 'depot',   minMs: 4 * 3600000,   maxMs: 6 * 3600000 },   // 4–6h after approval
+      { label: 'driver',  minMs: 68 * 3600000,   maxMs: 72 * 3600000 },  // Day 3
+      { label: 'call',    minMs: 164 * 3600000,  maxMs: 168 * 3600000 }, // Day 7
+    ];
+
+    const sent: string[] = [];
+
+    for (const window of WINDOWS) {
+      const minApprovedAt = new Date(now - window.maxMs);
+      const maxApprovedAt = new Date(now - window.minMs);
+
+      // Orgs approved within this nudge window
+      const targetOrgs = await db
+        .select({ id: organizations.id, name: organizations.name, approvedAt: organizations.approvedAt })
+        .from(organizations)
+        .where(and(
+          isNull(organizations.deletedAt),
+          eq(organizations.pendingApproval, false),
+          isNotNull(organizations.approvedAt),
+          gte(organizations.approvedAt, minApprovedAt),
+          lt(organizations.approvedAt, maxApprovedAt),
+        ));
+
+      for (const org of targetOrgs) {
+        const [admin] = await db.select({ email: users.email, name: users.name })
+          .from(users)
+          .where(and(eq(users.orgId, org.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)))
+          .limit(1);
+        if (!admin || !resendKey) continue;
+
+        const [depotRow] = await db.select({ id: depots.id }).from(depots)
+          .where(and(eq(depots.orgId, org.id), isNull(depots.deletedAt))).limit(1);
+
+        const [driverRow] = await db.select({ id: drivers.id }).from(drivers)
+          .where(and(eq(drivers.orgId, org.id), isNull(drivers.deletedAt))).limit(1);
+
+        let subject = '', html = '';
+
+        if (window.label === 'depot' && !depotRow) {
+          subject = `Quick step to finish your MyDashRx setup — add your first depot`;
+          html = `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+            <h2 style="color:#0F4C81;margin:0 0 8px">One step to go, ${admin.name.split(' ')[0]}!</h2>
+            <p style="color:#374151;font-size:15px;margin:0 0 16px">Your account is approved. Add a depot so your drivers know where to start routes.</p>
+            <a href="${dashUrl}/dashboard/settings" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;">Add Your First Depot →</a>
+          </div>`;
+        } else if (window.label === 'driver' && !driverRow) {
+          subject = `Your depot is set — now add a driver to start delivering`;
+          html = `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+            <h2 style="color:#0F4C81;margin:0 0 8px">Add your first driver</h2>
+            <p style="color:#374151;font-size:15px;margin:0 0 16px">Drivers receive login credentials by email and can start accepting routes immediately.</p>
+            <a href="${dashUrl}/dashboard/settings" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;">Add a Driver →</a>
+          </div>`;
+        } else if (window.label === 'call' && (!depotRow || !driverRow)) {
+          subject = `Let us help you get set up — book a free 15-min call`;
+          html = `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+            <h2 style="color:#0F4C81;margin:0 0 8px">Need a hand?</h2>
+            <p style="color:#374151;font-size:15px;margin:0 0 16px">Our team can walk you through setup in 15 minutes. No obligation.</p>
+            <a href="mailto:support@mydashrx.com?subject=Setup help for ${encodeURIComponent(org.name)}" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;">Book a Setup Call →</a>
+          </div>`;
+        } else {
+          continue; // already completed this step, skip
+        }
+
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+          body: JSON.stringify({ from: `MyDashRx <noreply@${senderDomain}>`, to: admin.email, subject, html }),
+        }).catch((e: unknown) => { console.error('[ONB9] email failed:', e); });
+
+        sent.push(`${org.id}:${window.label}`);
+      }
+    }
+
+    return { sent };
   });
 };

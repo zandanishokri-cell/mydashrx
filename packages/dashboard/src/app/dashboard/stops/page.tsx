@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
@@ -82,13 +82,17 @@ const defaultRange = (): DateRange => ({
   to: localDateStr(),
 });
 
-export default function StopsPage() {
+function StopsContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const isOnboarding = searchParams.get('onboarding') === '1';
   const [user] = useState(getUser);
   const [stops, setStops] = useState<Stop[]>([]);
   const [todayOnly, setTodayOnly] = useState(true);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [showFirstRouteBanner, setShowFirstRouteBanner] = useState(false);
+  const prevStopsCountRef = useRef(-1);
   const [statusTab, setStatusTab] = useState('all');
   const [depotId, setDepotId] = useState('');
   const [depotName, setDepotName] = useState('');
@@ -158,6 +162,12 @@ export default function StopsPage() {
   useEffect(() => { load(true); }, [statusTab, depotId, dateRange, search]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  useEffect(() => {
+    if (!isOnboarding || loading) return;
+    if (prevStopsCountRef.current === 0 && stops.length > 0) setShowFirstRouteBanner(true);
+    prevStopsCountRef.current = stops.length;
+  }, [stops, loading, isOnboarding]);
 
   const handleSearchInput = (v: string) => {
     setSearchInput(v);
@@ -276,6 +286,21 @@ export default function StopsPage() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* P-ONB15: First-route celebration banner */}
+      {showFirstRouteBanner && (
+        <div className="mx-6 mt-4 flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-emerald-600 text-lg">🎉</span>
+            <div>
+              <p className="text-sm font-semibold text-emerald-800">First stop added!</p>
+              <p className="text-xs text-emerald-600">Your delivery operation is live. Assign a route to your driver to get started.</p>
+            </div>
+          </div>
+          <button onClick={() => setShowFirstRouteBanner(false)} className="text-emerald-500 hover:text-emerald-700 ml-4">
+            <X size={14} />
+          </button>
+        </div>
+      )}
       {/* Header */}
       <div className="px-6 py-4 border-b border-gray-100 bg-white shrink-0">
         <div className="flex items-center justify-between mb-3">
@@ -414,13 +439,26 @@ export default function StopsPage() {
             <button onClick={() => load(true)} className="text-xs text-[#0F4C81] mt-2 hover:underline">Retry</button>
           </div>
         ) : stops.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 text-gray-400">
-            <Search size={32} className="mb-3 opacity-30" />
-            <p className="text-sm">No stops found</p>
-            {(search || depotId || statusTab !== 'all') && (
-              <button onClick={() => { setSearch(''); setSearchInput(''); setDepotId(''); setStatusTab('all'); }} className="text-xs text-[#0F4C81] mt-2 hover:underline">
-                Clear filters
-              </button>
+          <div className={`flex flex-col items-center justify-center h-64 ${isOnboarding && !search && !depotId && statusTab === 'all' ? 'border-2 border-blue-300 rounded-xl mx-4 bg-blue-50/30' : 'text-gray-400'}`}>
+            {isOnboarding && !search && !depotId && statusTab === 'all' ? (
+              <>
+                <p className="text-xs font-semibold text-blue-500 mb-2 uppercase tracking-wide">Step 4 of 4</p>
+                <Plus size={32} className="mb-3 text-blue-400" />
+                <p className="text-sm font-semibold text-blue-700">Add your first stop to create a route</p>
+                <button onClick={() => setNewStopOpen(true)} className="mt-3 px-4 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-[#0d3d69] transition-colors">
+                  Add Stop
+                </button>
+              </>
+            ) : (
+              <>
+                <Search size={32} className="mb-3 opacity-30" />
+                <p className="text-sm">No stops found</p>
+                {(search || depotId || statusTab !== 'all') && (
+                  <button onClick={() => { setSearch(''); setSearchInput(''); setDepotId(''); setStatusTab('all'); }} className="text-xs text-[#0F4C81] mt-2 hover:underline">
+                    Clear filters
+                  </button>
+                )}
+              </>
             )}
           </div>
         ) : (
@@ -682,5 +720,13 @@ export default function StopsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function StopsPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="w-8 h-8 border-2 border-[#0F4C81] border-t-transparent rounded-full animate-spin" /></div>}>
+      <StopsContent />
+    </Suspense>
   );
 }

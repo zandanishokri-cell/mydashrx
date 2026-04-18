@@ -9,6 +9,7 @@ import NotificationPanel from '@/components/NotificationPanel';
 import { CommandPalette } from '@/components/CommandPalette';
 import { useIdleTimeout } from '@/hooks/useIdleTimeout';
 import { IdleWarningModal } from '@/components/IdleWarningModal';
+import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 
 // Which roles can see each nav item. '*' = all authenticated roles.
 const NAV_ROLE_MAP: Record<string, string[]> = {
@@ -291,7 +292,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto mt-14 md:mt-0">{children}</main>
+      <main className="flex-1 overflow-auto mt-14 md:mt-0">
+        {user?.role === 'pharmacy_admin' && <OnboardingChecklist />}
+        {children}
+      </main>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {showWarning && <IdleWarningModal countdown={countdown} onExtend={extendSession} />}
     </div>

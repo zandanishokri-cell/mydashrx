@@ -167,24 +167,6 @@ export default function ApprovalsPage() {
           <h1 className="text-xl font-bold text-gray-900">Pending Approvals</h1>
           <p className="text-sm text-gray-500 mt-0.5">New pharmacy accounts awaiting review</p>
         </div>
-        {selected.size > 0 && (
-          <div className="flex gap-2">
-            <button
-              onClick={batchApprove}
-              disabled={batchLoading}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
-            >
-              {batchLoading ? 'Processing…' : `Approve (${selected.size})`}
-            </button>
-            <button
-              onClick={() => setBatchRejectOpen(true)}
-              disabled={batchLoading}
-              className="border border-red-200 text-red-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50 transition-colors"
-            >
-              Reject ({selected.size})
-            </button>
-          </div>
-        )}
       </div>
 
       {error && (
@@ -376,6 +358,37 @@ export default function ApprovalsPage() {
                 <span className="text-xs text-gray-400 shrink-0">{timeAgo(entry.createdAt)}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* P-ADM2: Sticky bulk action bar */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between bg-white border-t border-gray-200 shadow-lg px-6 py-3 md:left-56">
+          <p className="text-sm font-medium text-gray-700">
+            <span className="font-semibold text-[#0F4C81]">{selected.size}</span> application{selected.size !== 1 ? 's' : ''} selected
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="px-3 py-1.5 border border-gray-200 text-gray-500 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Deselect all
+            </button>
+            <button
+              onClick={batchApprove}
+              disabled={batchLoading}
+              className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+            >
+              {batchLoading ? 'Processing…' : `Approve (${selected.size})`}
+            </button>
+            <button
+              onClick={() => setBatchRejectOpen(true)}
+              disabled={batchLoading}
+              className="px-4 py-1.5 border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+            >
+              Reject ({selected.size})
+            </button>
           </div>
         </div>
       )}
