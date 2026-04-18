@@ -4,8 +4,9 @@ services:
     runtime: node
     plan: starter
     region: ohio
-    buildCommand: npm install --include=dev && npm run build --workspace=packages/shared && cd packages/backend && (npx drizzle-kit push:pg --config=drizzle.config.ts --accept-data-loss 2>/dev/null || true) && npm run build
-    startCommand: node packages/backend/dist/index.js
+    rootDir: packages/backend
+    buildCommand: npm install --include=dev && (npx drizzle-kit push:pg --config=drizzle.config.ts --accept-data-loss 2>/dev/null || npx drizzle-kit push:pg --config=drizzle.config.ts --yes 2>/dev/null || true) && npm run build
+    startCommand: node dist/index.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV

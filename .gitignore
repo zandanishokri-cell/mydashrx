@@ -1,6 +1,7 @@
 node_modules/
 .next/
 dist/
+!packages/shared/dist/
 .env
 *.env.local
 .turbo/
