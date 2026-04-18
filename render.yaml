@@ -5,7 +5,7 @@ services:
     plan: starter
     region: ohio
     rootDir: packages/backend
-    buildCommand: npm install --include=dev && (npx drizzle-kit push:pg --config=drizzle.config.ts --accept-data-loss 2>/dev/null || npx drizzle-kit push:pg --config=drizzle.config.ts --yes 2>/dev/null || echo "drizzle push skipped") && npm run build
+    buildCommand: cd /opt/render/project/src && npm install --include=dev && npm run build -w packages/shared && cd packages/backend && npx drizzle-kit push:pg --config=drizzle.config.ts --accept-data-loss 2>/dev/null || true && npm run build
     startCommand: node dist/index.js
     healthCheckPath: /health
     envVars:
