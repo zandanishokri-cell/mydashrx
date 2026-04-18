@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { db } from '../db/connection.js';
 import { organizations, users, drivers, staffInvitations } from '../db/schema.js';
 import { eq, and, isNull, gt, sql } from 'drizzle-orm';
-import disposableDomains from 'disposable-email-domains';
+import { createRequire } from 'module';
+const _require = createRequire(import.meta.url);
+const disposableDomains: string[] = _require('disposable-email-domains');
 import { hashPassword, signTokens, findUserByEmail } from '../services/auth.js';
 
 const pharmacySignupSchema = z.object({
