@@ -229,8 +229,8 @@ async function michiganChecks(orgId: string): Promise<ComplianceFinding[]> {
       AND s.deleted_at IS NULL
       AND d.drug_capable = false
       AND r.driver_id IS NOT NULL
-      AND r.status NOT IN ('completed', 'cancelled')
-      AND p.status NOT IN ('completed', 'cancelled')
+      AND r.status != 'completed'
+      AND p.status != 'completed'
   `);
   if (drugIncapable.length > 0) findings.push({
     orgId, severity: 'P1', category: 'michigan',
