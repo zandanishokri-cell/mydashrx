@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { createHmac, randomBytes, randomUUID } from 'crypto';
 
-const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? randomBytes(32).toString('hex');
+const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? randomBytes(32).toString('hex');
 const signToken = (t: string) => createHmac('sha256', MAGIC_LINK_SECRET).update(t).digest('hex');
 import { db } from '../db/connection.js';
 import { users, organizations, drivers, magicLinkTokens, refreshTokens, adminAuditLogs } from '../db/schema.js';
