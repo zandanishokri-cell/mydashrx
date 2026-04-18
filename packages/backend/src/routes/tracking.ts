@@ -16,8 +16,12 @@ export const ETA_PER_STOP_MS = 8 * 60 * 1000;
 
 // ─── Public patient-facing tracking ──────────────────────────────────────────
 export const trackingRoutes: FastifyPluginAsync = async (app) => {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   app.get('/:token', async (req, reply) => {
     const { token } = req.params as { token: string };
+
+    if (!UUID_RE.test(token)) return reply.code(404).send({ error: 'Not found' });
 
     const [stop] = await db
       .select({

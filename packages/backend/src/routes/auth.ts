@@ -379,7 +379,26 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ─── Magic Link ───────────────────────────────────────────────────────────────
-  app.post('/magic-link/request', { config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: ipEmailKey } } }, async (req, reply) => {
+  app.post('/magic-link/request', {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute',
+        keyGenerator: ipEmailKey,
+        errorResponseBuilder: (_req: import('fastify').FastifyRequest, context: import('@fastify/rate-limit').errorResponseBuilderContext) => {
+          const msLeft = context.ttl ?? 60000;
+          const minutesLeft = Math.max(1, Math.ceil(msLeft / 60000));
+          return {
+            statusCode: 429,
+            error: 'rate_limited',
+            message: `A login link was already sent to that email. Check your inbox — including spam. If you need a new link, try again in ${minutesLeft} minute${minutesLeft > 1 ? 's' : ''}.`,
+            hint: "Check your spam or promotions folder if you don't see it.",
+            retryAfterSeconds: Math.ceil(msLeft / 1000),
+          };
+        },
+      },
+    },
+  }, async (req, reply) => {
     const start = Date.now();
     const minResponse = async () => {
       const elapsed = Date.now() - start;

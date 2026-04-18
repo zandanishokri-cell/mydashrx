@@ -49,8 +49,8 @@ import { notificationRoutes } from './routes/notifications.js';
 import { userSettingsRoutes } from './routes/userSettings.js';
 import { sendDailyReport } from './services/dailyReport.js';
 import { db, client } from './db/connection.js';
-import { organizations } from './db/schema.js';
-import { isNull } from 'drizzle-orm';
+import { organizations, magicLinkTokens } from './db/schema.js';
+import { isNull, isNotNull, and, or, lt, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 
 // Run schema migrations synchronously — fast DDL, must complete before routes work
@@ -200,6 +200,30 @@ setImmediate(async () => {
     console.error('Seed error (non-fatal):', err instanceof Error ? err.message : err);
   }
 });
+
+// P-SES13: RT + magic link token cleanup — run on startup and every 6hr
+const runTokenCleanup = async () => {
+  try {
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const mlResult = await db.delete(magicLinkTokens).where(
+      or(
+        lt(magicLinkTokens.expiresAt, cutoff),
+        and(isNotNull(magicLinkTokens.usedAt), lt(magicLinkTokens.createdAt, cutoff)),
+      )
+    ).returning({ id: magicLinkTokens.id });
+    const rtResult = await db.execute(
+      sql`DELETE FROM refresh_tokens WHERE (status = 'used' OR status = 'revoked') AND expires_at < NOW() - INTERVAL '7 days' RETURNING id`
+    );
+    const rtDeleted = (rtResult as unknown as Array<unknown>).length;
+    if (mlResult.length > 0 || rtDeleted > 0) {
+      console.log(JSON.stringify({ event: 'token_cleanup', magicLinks: mlResult.length, refreshTokens: rtDeleted }));
+    }
+  } catch (err) {
+    console.error('Token cleanup error (non-fatal):', err instanceof Error ? err.message : err);
+  }
+};
+setImmediate(runTokenCleanup);
+setInterval(runTokenCleanup, 6 * 60 * 60 * 1000);
 
 // Daily report scheduler — fires every hour, sends between 7-8 AM UTC
 setInterval(async () => {
