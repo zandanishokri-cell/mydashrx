@@ -3,7 +3,7 @@ import { db } from '../db/connection.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import type { JWTPayload } from '@mydash-rx/shared';
+import { type JWTPayload, ROLE_PERMISSIONS } from '@mydash-rx/shared';
 
 export async function hashPassword(plain: string): Promise<string> {
   return bcrypt.hash(plain, 12);
@@ -25,8 +25,10 @@ export function signTokens(
     ? '5m'
     : (process.env.JWT_EXPIRES_IN ?? '15m');
   // P-RBAC21: always embed tenantId = orgId so routes never read orgId from client-supplied params
+  // P-RBAC24: embed permissions[] derived from canonical ROLE_PERMISSIONS map
+  const permissions = ROLE_PERMISSIONS[payload.role as keyof typeof ROLE_PERMISSIONS] ?? [];
   const accessToken = app.jwt.sign(
-    { ...payload as object, tenantId: payload.orgId, ...(rtMeta ? { jti: rtMeta.jti } : {}) },
+    { ...payload as object, tenantId: payload.orgId, permissions, ...(rtMeta ? { jti: rtMeta.jti } : {}) },
     { expiresIn: atExpiry },
   );
   const refreshToken = app.jwt.sign(

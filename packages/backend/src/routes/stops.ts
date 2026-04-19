@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { stops, routes, drivers, plans } from '../db/schema.js';
 import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { requirePermission } from '../lib/rbacPolicy.js';
 import { sendStopNotification, sendDriverArrivalEmail, sendRouteCompleteSummaryEmail } from '../services/notifications.js';
 import { fireTrigger } from '../services/automation.js';
 import { TERMINAL_STATUSES, type StopStatus } from '@mydash-rx/shared';
@@ -124,7 +125,8 @@ async function fireApproachNotifications(orgId: string, routeId: string): Promis
 
 export const stopRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
-    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'driver', 'super_admin'),
+    // P-RBAC25: use canonical policy — includes pharmacist (stops:read)
+    preHandler: requirePermission('stops:read'),
   }, async (req) => {
     const { routeId } = req.params as { routeId: string };
     const { orgId: userOrgId, role, depotIds } = req.user as { orgId: string; role: string; depotIds: string[] };

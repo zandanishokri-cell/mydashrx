@@ -4,6 +4,7 @@ import { db } from '../db/connection.js';
 import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens, depots, approvalNotes } from '../db/schema.js';
 import { eq, isNull, sql, gte, lte, count, and, desc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
 import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
 
 const PLAN_PRICES: Record<string, number> = {
@@ -967,5 +968,38 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         driver:         'test-driver@mydashrx-test.com',
       },
     });
+  });
+
+  // GET /admin/rbac-audit — P-RBAC27: HIPAA periodic access review snapshot
+  // Returns all active users + roles + derived permissions + lastLoginAt for super_admin review.
+  // Writes rbac_audit_export event to adminAuditLogs (HIPAA §164.308(a)(4)(ii)(C)).
+  app.get('/rbac-audit', { preHandler: auth }, async (req, reply) => {
+    const actor = req.user as { sub: string; email: string };
+    const allUsers = await db
+      .select({
+        id: users.id, email: users.email, name: users.name,
+        role: users.role, orgId: users.orgId,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .where(isNull(users.deletedAt))
+      .orderBy(users.orgId, users.role);
+
+    const result = allUsers.map(u => ({
+      ...u,
+      permissions: ROLE_PERMISSIONS[u.role as keyof typeof ROLE_PERMISSIONS] ?? [],
+    }));
+
+    // Fire-and-forget audit log
+    db.insert(adminAuditLogs).values({
+      actorId: actor.sub,
+      actorEmail: actor.email,
+      action: 'rbac_audit_export',
+      targetId: 'system',
+      targetName: 'all_users',
+      metadata: { userCount: result.length },
+    }).catch(console.error);
+
+    return reply.send({ generatedAt: new Date().toISOString(), userCount: result.length, users: result });
   });
 };
