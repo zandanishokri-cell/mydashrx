@@ -670,14 +670,32 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     // P-ML4: Granular errors — check existence, then usedAt, then expiry separately
     const [record] = await db.select().from(magicLinkTokens)
       .where(eq(magicLinkTokens.tokenHash, tokenHash)).limit(1);
-    if (!record) return reply.code(400).send({ error: 'This link is invalid. Please request a new one.' });
-    if (record.usedAt) return reply.code(400).send({ error: 'This link has already been used. Please request a new one.' });
-    if (record.expiresAt <= new Date()) return reply.code(400).send({ error: 'This link has expired. Please request a new one.' });
+    if (!record) {
+      // P-ML17: log invalid token attempt
+      logAuthEvent('magic_link_failed', { email: 'unknown', ip: req.ip, metadata: { reason: 'invalid_token' } }).catch(() => {});
+      return reply.code(400).send({ error: 'This link is invalid. Please request a new one.' });
+    }
+    if (record.usedAt) {
+      logAuthEvent('magic_link_failed', { email: record.email, ip: req.ip, metadata: { reason: 'already_used' } }).catch(() => {});
+      return reply.code(400).send({ error: 'This link has already been used. Please request a new one.' });
+    }
+    if (record.expiresAt <= new Date()) {
+      logAuthEvent('magic_link_failed', { email: record.email, ip: req.ip, metadata: { reason: 'expired' } }).catch(() => {});
+      return reply.code(400).send({ error: 'This link has expired. Please request a new one.' });
+    }
+
+    // P-ML17: Detect email scanner pre-fetch (link already clicked = likely bot/scanner consuming token)
+    if (record.firstClickedAt) {
+      logAuthEvent('magic_link_scanner_blocked', { email: record.email, ip: req.ip, metadata: { firstClickedAt: record.firstClickedAt } }).catch(() => {});
+    }
 
     // P-ML2: Record first click for analytics — but do NOT mark usedAt
     if (!record.firstClickedAt) {
       await db.update(magicLinkTokens).set({ firstClickedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
     }
+
+    // P-ML17: log successful verify (token valid, user about to confirm)
+    logAuthEvent('magic_link_verified', { email: record.email, ip: req.ip }).catch(() => {});
 
     return reply.send({ valid: true, email: record.email, token });
   });
@@ -692,9 +710,19 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     // P-ML4: Granular errors on confirm too
     const [record] = await db.select().from(magicLinkTokens)
       .where(eq(magicLinkTokens.tokenHash, tokenHash)).limit(1);
-    if (!record) return reply.code(400).send({ error: 'This link is invalid. Please request a new one.' });
-    if (record.usedAt) return reply.code(400).send({ error: 'This link has already been used. Please request a new one.' });
-    if (record.expiresAt <= new Date()) return reply.code(400).send({ error: 'This link has expired. Please request a new one.' });
+    if (!record) {
+      // P-ML17: log confirm failure
+      logAuthEvent('magic_link_failed', { email: 'unknown', ip: req.ip, metadata: { reason: 'invalid_token', step: 'confirm' } }).catch(() => {});
+      return reply.code(400).send({ error: 'This link is invalid. Please request a new one.' });
+    }
+    if (record.usedAt) {
+      logAuthEvent('magic_link_failed', { email: record.email, ip: req.ip, metadata: { reason: 'already_used', step: 'confirm' } }).catch(() => {});
+      return reply.code(400).send({ error: 'This link has already been used. Please request a new one.' });
+    }
+    if (record.expiresAt <= new Date()) {
+      logAuthEvent('magic_link_failed', { email: record.email, ip: req.ip, metadata: { reason: 'expired', step: 'confirm' } }).catch(() => {});
+      return reply.code(400).send({ error: 'This link has expired. Please request a new one.' });
+    }
 
     await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
 
@@ -747,6 +775,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       if (!user || user.deletedAt) {
         // Constant-time delay to prevent email enumeration
         await new Promise(r => setTimeout(r, 200));
+        // P-ML17: log otp failure (non-enumerable — user not found)
+        logAuthEvent('magic_link_otp_failed', { email, ip: req.ip, metadata: { reason: 'user_not_found' } }).catch(() => {});
         return reply.code(400).send({ error: 'Invalid or expired code' });
       }
 
@@ -760,7 +790,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         .orderBy(desc(magicLinkTokens.createdAt))
         .limit(1);
 
-      if (!record) return reply.code(400).send({ error: 'Invalid or expired code' });
+      if (!record) {
+        // P-ML17: log otp failure — bad/expired code
+        logAuthEvent('magic_link_otp_failed', { userId: user.id, email, ip: req.ip, orgId: user.orgId ?? undefined, metadata: { reason: 'invalid_or_expired_code' } }).catch(() => {});
+        return reply.code(400).send({ error: 'Invalid or expired code' });
+      }
 
       await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
 
@@ -782,6 +816,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         ...(driverId ? { driverId } : {}),
       }, user.tokenVersion, { jti: mlJti, familyId: mlFamilyId });
       await seedRefreshToken(user.id, mlFamilyId, mlJti, req);
+      // P-ML17: log otp success
+      logAuthEvent('magic_link_otp_verified', { userId: user.id, email, ip: req.ip, orgId: user.orgId ?? undefined }).catch(() => {});
       // P-SEC28: set RT as httpOnly cookie
       setRtCookie(reply, tokens.refreshToken);
       return reply.send({

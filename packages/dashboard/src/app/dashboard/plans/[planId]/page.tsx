@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { AddStopModal } from '@/components/AddStopModal';
 import { StopDetailModal } from '@/components/StopDetailModal';
-import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle, CheckCircle2, CheckSquare, Square, Map } from 'lucide-react';
+import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle, CheckCircle2, CheckSquare, Square, Map, ChevronUp, ChevronDown } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
@@ -74,6 +74,8 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [removingRoute, setRemovingRoute] = useState(false);
   // P-DEL10: per-route map toggle
   const [mapOpenRoutes, setMapOpenRoutes] = useState<Set<string>>(new Set());
+  // P-DEL7: aria-live announcement for screen readers on stop reorder
+  const [reorderAnnouncement, setReorderAnnouncement] = useState('');
 
   const loadPlan = useCallback(async () => {
     if (!user) return;
@@ -202,6 +204,20 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     }
   }, [loadPlan]);
 
+  // P-DEL7: move stop up or down in sequence; uses existing bulk /reorder endpoint
+  const moveStop = useCallback((routeId: string, stopId: string, direction: 'up' | 'down') => {
+    const routeStops = stopsByRoute[routeId] ?? [];
+    const idx = routeStops.findIndex(s => s.id === stopId);
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= routeStops.length) return;
+    const reordered = arrayMove(routeStops, idx, targetIdx);
+    setStopsByRoute(prev => ({ ...prev, [routeId]: reordered }));
+    const stop = routeStops[idx];
+    const swapped = routeStops[targetIdx];
+    setReorderAnnouncement(`Moved ${stop.recipientName} ${direction === 'up' ? 'up' : 'down'}, now after ${direction === 'up' ? (reordered[targetIdx - 1]?.recipientName ?? 'start') : swapped.recipientName}`);
+    reorderStops(routeId, reordered.map(s => s.id));
+  }, [stopsByRoute, reorderStops]);
+
   const removeRoute = async () => {
     if (!confirmRemoveRouteId || removingRoute) return;
     setRemovingRoute(true);
@@ -282,6 +298,8 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
 
   return (
     <div className="p-6">
+      {/* P-DEL7: aria-live region for screen reader announcements on stop reorder */}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">{reorderAnnouncement}</div>
       <button onClick={() => router.back()} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-4 transition-colors">
         <ArrowLeft size={14} /> Back to Routes
       </button>
@@ -456,9 +474,12 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                             key={stop.id}
                             stop={stop}
                             idx={idx}
+                            stopCount={stops.length}
                             routeCount={routes.length}
                             onSelect={() => setSelectedStop(stop)}
                             onMove={() => setMovingStop(stop)}
+                            onMoveUp={route.status !== 'completed' && idx > 0 ? () => moveStop(route.id, stop.id, 'up') : undefined}
+                            onMoveDown={route.status !== 'completed' && idx < stops.length - 1 ? () => moveStop(route.id, stop.id, 'down') : undefined}
                             isSelected={selectedStopIds.has(stop.id)}
                             onToggleSelect={(stopId) => toggleStopSelection(stopId, route.id)}
                             selectionEnabled={route.status !== 'completed'}
@@ -689,12 +710,15 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   );
 }
 
-function SortableStopItem({ stop, idx, routeCount, onSelect, onMove, isSelected, onToggleSelect, selectionEnabled }: {
+function SortableStopItem({ stop, idx, stopCount, routeCount, onSelect, onMove, onMoveUp, onMoveDown, isSelected, onToggleSelect, selectionEnabled }: {
   stop: Stop;
   idx: number;
+  stopCount: number;
   routeCount: number;
   onSelect: () => void;
   onMove: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
   isSelected: boolean;
   onToggleSelect: (stopId: string) => void;
   selectionEnabled: boolean;
@@ -720,9 +744,31 @@ function SortableStopItem({ stop, idx, routeCount, onSelect, onMove, isSelected,
         {...listeners}
         className="touch-none text-gray-300 hover:text-gray-400 cursor-grab active:cursor-grabbing shrink-0"
         tabIndex={-1}
+        aria-label={`Drag to reorder ${stop.recipientName}`}
       >
         <GripVertical size={14} />
       </button>
+      {/* P-DEL7: Accessible up/down reorder buttons — 44px touch targets for mobile dispatchers */}
+      {selectionEnabled && stopCount > 1 && (
+        <div className="flex flex-col shrink-0">
+          <button
+            onClick={onMoveUp}
+            disabled={!onMoveUp}
+            aria-label={`Move ${stop.recipientName} up in delivery order`}
+            className="w-[22px] h-[22px] flex items-center justify-center text-gray-300 hover:text-[#0F4C81] disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronUp size={13} />
+          </button>
+          <button
+            onClick={onMoveDown}
+            disabled={!onMoveDown}
+            aria-label={`Move ${stop.recipientName} down in delivery order`}
+            className="w-[22px] h-[22px] flex items-center justify-center text-gray-300 hover:text-[#0F4C81] disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronDown size={13} />
+          </button>
+        </div>
+      )}
       <span className="w-6 h-6 rounded-full bg-gray-100 text-gray-500 text-xs flex items-center justify-center font-medium shrink-0">
         {stop.sequenceNumber != null ? stop.sequenceNumber + 1 : idx + 1}
       </span>
