@@ -602,13 +602,24 @@ export default function ApprovalsPage() {
           <p className="text-sm">No pending approvals</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {pending.map(({ org, admin }) => {
+        // P-A11Y5: WCAG 1.3.1 — role="grid" with aria-rowcount for screen reader navigation
+        <div
+          role="grid"
+          aria-label="Pending pharmacy approvals"
+          aria-rowcount={pending.length}
+          className="space-y-3"
+        >
+          {pending.map(({ org, admin }, rowIdx) => {
             const aging = getAgingClass(org.createdAt);
             const isSelected = selectedOrg?.org.id === org.id;
             return (
               <div
                 key={org.id}
+                role="row"
+                aria-rowindex={rowIdx + 1}
+                aria-selected={isSelected}
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedOrg({ org, admin }); } }}
                 className={`bg-white rounded-xl border p-4 flex items-start gap-4 transition-colors cursor-pointer ${
                   selected.has(org.id) ? 'border-blue-200 bg-blue-50/30'
                   : isSelected ? 'border-[#0F4C81] ring-1 ring-[#0F4C81]/20'
@@ -628,7 +639,7 @@ export default function ApprovalsPage() {
                   onClick={e => e.stopPropagation()}
                   aria-label={`Select ${org.name} for batch action`}
                 />
-                <div className="flex-1 min-w-0">
+                <div role="gridcell" className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                     <p className="font-semibold text-gray-900 truncate">{org.name}</p>
                     <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${aging.badge}`}>

@@ -145,4 +145,148 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       weekOverWeekChange,
     };
   });
+
+  // P-COMP10: GET /delivery-performance — FADR + SLA + failure reason breakdown
+  // FADR (First-Attempt Delivery Rate) = completed / (completed + failed) for terminal stops
+  app.get('/delivery-performance', {
+    preHandler: [requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'), requireDepotAccess()],
+  }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    const { depotId, from, to } = req.query as { depotId?: string; from?: string; to?: string };
+
+    const fromDate = from ? new Date(from + 'T00:00:00') : new Date(Date.now() - 30 * 86400000); // default 30d
+    const toDate = to ? new Date(to + 'T23:59:59') : new Date();
+
+    const depotCondition = depotId
+      ? inArray(stops.routeId,
+          db.select({ id: routes.id }).from(routes)
+            .innerJoin(plans, and(eq(plans.id, routes.planId), eq(plans.depotId, depotId), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+        )
+      : undefined;
+
+    const base = and(
+      eq(stops.orgId, orgId),
+      isNull(stops.deletedAt),
+      gte(stops.createdAt, fromDate),
+      lte(stops.createdAt, toDate),
+      depotCondition,
+    );
+
+    // Valid failure reason enum — enforce structured values in analytics output
+    const VALID_FAILURE_REASONS = ['not_home', 'wrong_address', 'refused', 'damaged', 'id_required', 'weather', 'access_denied', 'other'] as const;
+
+    const [
+      terminalCounts,
+      failureReasonRows,
+      milestoneTimesRow,
+      slaRows,
+      driverFadrRows,
+    ] = await Promise.all([
+      // FADR numerator/denominator: completed vs failed terminal stops
+      db.select({
+          status: stops.status,
+          cnt: sql<number>`count(*)::int`,
+        })
+        .from(stops).where(and(base, sql`${stops.status} in ('completed','failed','rescheduled')`))
+        .groupBy(stops.status),
+
+      // Failure reason breakdown — normalize unknown reasons to 'other'
+      db.select({
+          reason: sql<string>`coalesce(nullif(trim(${stops.failureReason}),''), 'other')`,
+          cnt: sql<number>`count(*)::int`,
+        })
+        .from(stops).where(and(base, eq(stops.status, 'failed')))
+        .groupBy(sql`coalesce(nullif(trim(${stops.failureReason}),''), 'other')`)
+        .orderBy(sql`count(*) DESC`),
+
+      // Milestone avg times: dispatch→arrive, arrive→complete (seconds)
+      db.select({
+          avgDispatchToArrive: sql<number>`avg(extract(epoch from (${stops.arrivedAt} - ${stops.createdAt})))`,
+          avgArriveToComplete: sql<number>`avg(extract(epoch from (${stops.completedAt} - ${stops.arrivedAt})))`,
+          avgTotalCycleTime: sql<number>`avg(extract(epoch from (${stops.completedAt} - ${stops.createdAt})))`,
+        })
+        .from(stops).where(and(
+          base,
+          eq(stops.status, 'completed'),
+          sql`${stops.arrivedAt} is not null`,
+          sql`${stops.completedAt} is not null`,
+        )).then(r => r[0]),
+
+      // SLA compliance: stops with delivery windows
+      db.select({
+          onTime: sql<number>`sum(case when ${stops.completedAt} <= ${stops.windowEnd} then 1 else 0 end)::int`,
+          late: sql<number>`sum(case when ${stops.completedAt} > ${stops.windowEnd} then 1 else 0 end)::int`,
+          total: sql<number>`count(*)::int`,
+        })
+        .from(stops).where(and(
+          base,
+          eq(stops.status, 'completed'),
+          sql`${stops.windowEnd} is not null`,
+          sql`${stops.completedAt} is not null`,
+        )).then(r => r[0]),
+
+      // Per-driver FADR
+      db.select({
+          driverId: routes.driverId,
+          driverName: drivers.name,
+          completed: sql<number>`sum(case when ${stops.status} = 'completed' then 1 else 0 end)::int`,
+          failed: sql<number>`sum(case when ${stops.status} = 'failed' then 1 else 0 end)::int`,
+          total: sql<number>`count(*)::int`,
+        })
+        .from(stops)
+        .innerJoin(routes, eq(stops.routeId, routes.id))
+        .leftJoin(drivers, eq(routes.driverId, drivers.id))
+        .where(and(base, sql`${stops.status} in ('completed','failed','rescheduled')`))
+        .groupBy(routes.driverId, drivers.name)
+        .orderBy(sql`count(*) DESC`),
+    ]);
+
+    const byStatus: Record<string, number> = {};
+    for (const r of terminalCounts) byStatus[r.status] = r.cnt;
+    const completed = byStatus['completed'] ?? 0;
+    const failed = byStatus['failed'] ?? 0;
+    const rescheduled = byStatus['rescheduled'] ?? 0;
+    const terminalTotal = completed + failed + rescheduled;
+    const fadr = terminalTotal > 0 ? Math.round((completed / terminalTotal) * 1000) / 10 : null;
+    const failureRate = terminalTotal > 0 ? Math.round(((failed + rescheduled) / terminalTotal) * 1000) / 10 : null;
+
+    // Normalize failure reasons: collapse non-enum values to 'other'
+    const reasonMap: Record<string, number> = {};
+    for (const r of failureReasonRows) {
+      const key = (VALID_FAILURE_REASONS as readonly string[]).includes(r.reason) ? r.reason : 'other';
+      reasonMap[key] = (reasonMap[key] ?? 0) + r.cnt;
+    }
+    const failureBreakdown = Object.entries(reasonMap)
+      .map(([reason, count]) => ({ reason, count, pct: failed > 0 ? Math.round((count / failed) * 1000) / 10 : 0 }))
+      .sort((a, b) => b.count - a.count);
+
+    const slaTotal = slaRows?.total ?? 0;
+    const slaRate = slaTotal > 0 ? Math.round(((slaRows!.onTime ?? 0) / slaTotal) * 1000) / 10 : null;
+
+    const driverFadr = (driverFadrRows ?? []).map(d => ({
+      driverId: d.driverId,
+      driverName: d.driverName ?? 'Unknown',
+      completed: d.completed,
+      failed: d.failed,
+      total: d.total,
+      fadr: (d.completed + d.failed) > 0
+        ? Math.round((d.completed / (d.completed + d.failed)) * 1000) / 10
+        : null,
+    }));
+
+    return {
+      period: { from: fromDate.toISOString(), to: toDate.toISOString() },
+      fadr,
+      failureRate,
+      terminalCounts: { completed, failed, rescheduled, total: terminalTotal },
+      failureBreakdown,
+      milestones: {
+        avgDispatchToArriveSec: milestoneTimesRow?.avgDispatchToArrive != null ? Math.round(milestoneTimesRow.avgDispatchToArrive) : null,
+        avgArriveToCompleteSec: milestoneTimesRow?.avgArriveToComplete != null ? Math.round(milestoneTimesRow.avgArriveToComplete) : null,
+        avgTotalCycleTimeSec: milestoneTimesRow?.avgTotalCycleTime != null ? Math.round(milestoneTimesRow.avgTotalCycleTime) : null,
+      },
+      sla: { onTime: slaRows?.onTime ?? 0, late: slaRows?.late ?? 0, total: slaTotal, slaRate },
+      driverFadr,
+    };
+  });
 };
