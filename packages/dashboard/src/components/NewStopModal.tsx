@@ -181,8 +181,9 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
 
             {/* Priority */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Priority</label>
+              <label htmlFor="stop-priority" className="block text-xs font-medium text-gray-600 mb-1">Priority</label>
               <select
+                id="stop-priority"
                 value={form.priority}
                 onChange={e => setForm(p => ({ ...p, priority: e.target.value }))}
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"

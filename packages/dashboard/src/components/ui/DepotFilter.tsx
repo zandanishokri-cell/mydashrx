@@ -23,6 +23,7 @@ export function DepotFilter({ value, onChange, className = '' }: Props) {
   return (
     <select
       value={value}
+      aria-label="Filter by depot"
       onChange={e => {
         const depot = depots.find(d => d.id === e.target.value);
         onChange(e.target.value, depot?.name);

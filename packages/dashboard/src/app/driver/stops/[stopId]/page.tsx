@@ -434,6 +434,7 @@ export default function StopDetailPage() {
             {showFailure && (
               <div className="mt-3 space-y-2">
                 <select
+                  aria-label="Failure reason"
                   value={failureReason}
                   onChange={e => setFailureReason(e.target.value)}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm"

@@ -532,8 +532,9 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
             <strong>{drivers.find(d => d.id === routes.find(r => r.id === selectionSourceRouteId)?.driverId)?.name ?? 'route'}</strong>
           </span>
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <label className="text-sm text-gray-500 shrink-0">Move to:</label>
+            <label htmlFor="bulk-move-route" className="text-sm text-gray-500 shrink-0">Move to:</label>
             <select
+              id="bulk-move-route"
               className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm min-w-0 flex-1 max-w-xs"
               value={bulkMoveTargetRouteId}
               onChange={e => setBulkMoveTargetRouteId(e.target.value)}
@@ -575,8 +576,9 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
           ) : (
             <div className="space-y-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Select Driver</label>
+                <label htmlFor="add-route-driver" className="block text-sm font-medium text-gray-700 mb-1">Select Driver</label>
                 <select
+                  id="add-route-driver"
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   value={addingDriverId}
                   onChange={e => setAddingDriverId(e.target.value)}

@@ -169,9 +169,10 @@ function OrgTab({ orgId }: { orgId: string }) {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Timezone</label>
+              <label htmlFor="settings-timezone" className="block text-xs font-medium text-gray-600 mb-1">Timezone</label>
               <div className="relative">
                 <select
+                  id="settings-timezone"
                   value={timezone}
                   onChange={e => setTimezone(e.target.value)}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
@@ -365,6 +366,7 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
                   {editingRoleFor === m.id ? (
                     <div className="flex items-center gap-1.5">
                       <select
+                        aria-label="Edit member role"
                         value={editRoleValue}
                         onChange={e => setEditRoleValue(e.target.value as Role)}
                         className="rounded border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0F4C81]/30"
@@ -442,9 +444,9 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
                   placeholder="jane@pharmacy.com" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
+                <label htmlFor="invite-role" className="block text-xs font-medium text-gray-600 mb-1">Role</label>
                 <div className="relative">
-                  <select value={invite.role} onChange={e => setInvite(p => ({ ...p, role: e.target.value as Role }))}
+                  <select id="invite-role" value={invite.role} onChange={e => setInvite(p => ({ ...p, role: e.target.value as Role }))}
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]">
                     {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                   </select>

@@ -29,6 +29,7 @@ interface Props {
   depotLatLng?: [number, number] | null;
   onMarkerClick?: (driverId: string) => void;
   fitToDriver?: string | null;
+  accessibleLabel?: string;
 }
 
 let pulseStyleInjected = false;
@@ -75,6 +76,7 @@ export function LiveMap({
   depotLatLng = null,
   onMarkerClick,
   fitToDriver = null,
+  accessibleLabel = 'Live delivery map',
 }: Props) {
   const mapRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -224,5 +226,12 @@ export function LiveMap({
     });
   }, [fitToDriver]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={containerRef} style={{ height: '100%', width: '100%' }} />;
+  return (
+    <div
+      ref={containerRef}
+      role="img"
+      aria-label={accessibleLabel}
+      style={{ height: '100%', width: '100%' }}
+    />
+  );
 }

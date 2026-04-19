@@ -154,8 +154,9 @@ export default function LeadSearchPage() {
             />
           </div>
           <div className="w-36">
-            <label className="block text-xs font-medium text-gray-700 mb-1.5">Radius</label>
+            <label htmlFor="lead-search-radius" className="block text-xs font-medium text-gray-700 mb-1.5">Radius</label>
             <select
+              id="lead-search-radius"
               value={radius} onChange={e => setRadius(e.target.value)}
               className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/20 bg-white"
             >

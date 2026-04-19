@@ -809,19 +809,19 @@ export default function ApprovalsPage() {
             className="flex-1 min-w-[180px] border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30"
             aria-label="Search pending approvals"
           />
-          <select value={filterHold} onChange={e => setFilterHold(e.target.value as typeof filterHold)}
+          <select aria-label="Filter by hold status" value={filterHold} onChange={e => setFilterHold(e.target.value as typeof filterHold)}
             className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30">
             <option value="all">All status</option>
             <option value="on_hold">On hold</option>
             <option value="not_hold">Active</option>
           </select>
-          <select value={filterBaa} onChange={e => setFilterBaa(e.target.value as typeof filterBaa)}
+          <select aria-label="Filter by BAA status" value={filterBaa} onChange={e => setFilterBaa(e.target.value as typeof filterBaa)}
             className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30">
             <option value="all">All BAA</option>
             <option value="missing">No BAA</option>
             <option value="signed">BAA signed</option>
           </select>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)}
+          <select aria-label="Sort approvals" value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)}
             className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30">
             <option value="oldest">Oldest first</option>
             <option value="newest">Newest first</option>
@@ -829,7 +829,7 @@ export default function ApprovalsPage() {
             <option value="score_asc">Risk: low first</option>
           </select>
           {/* P-ADM37: assigned reviewer filter */}
-          <select value={filterAssigned} onChange={e => setFilterAssigned(e.target.value as typeof filterAssigned)}
+          <select aria-label="Filter by assigned reviewer" value={filterAssigned} onChange={e => setFilterAssigned(e.target.value as typeof filterAssigned)}
             className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30">
             <option value="all">All reviewers</option>
             <option value="mine">Assigned to me</option>
@@ -1012,6 +1012,7 @@ export default function ApprovalsPage() {
             <h3 className="font-semibold text-gray-900 mb-1">Reject application</h3>
             <p className="text-sm text-gray-500 mb-4">Select a reason. This will be included in the notification email.</p>
             <select
+              aria-label="Rejection reason"
               value={rejectReasonCode}
               onChange={e => setRejectReasonCode(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 mb-3 bg-white"
@@ -1074,6 +1075,7 @@ export default function ApprovalsPage() {
               </ul>
             )}
             <select
+              aria-label="Batch rejection reason"
               value={batchRejectCode}
               onChange={e => setBatchRejectCode(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 mb-3 bg-white"

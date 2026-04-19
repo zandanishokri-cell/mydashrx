@@ -492,8 +492,9 @@ function StopDetailContent({ stopId }: { stopId: string }) {
 
           {/* Priority */}
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-500">Priority</span>
+                <label htmlFor="stop-priority-edit" className="text-sm text-gray-500">Priority</label>
                 <select
+                  id="stop-priority-edit"
                   value={stop.priority}
                   onChange={async e => {
                     const newPriority = e.target.value;

@@ -176,6 +176,7 @@ function ComplianceItemsContent() {
           <p className="text-sm font-semibold text-[#0F4C81]">New Compliance Item</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <select
+              aria-label="Compliance item category"
               value={newItem.category}
               onChange={e => setNewItem(p => ({ ...p, category: e.target.value }))}
               className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white"

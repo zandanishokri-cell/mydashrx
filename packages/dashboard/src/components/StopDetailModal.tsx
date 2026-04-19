@@ -244,8 +244,9 @@ export function StopDetailModal({ stop, onClose, onUpdated }: Props) {
           {status === 'failed' && (
             <div className="space-y-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Failure Reason</label>
+                <label htmlFor="failure-reason" className="block text-sm font-medium text-gray-700 mb-1">Failure Reason</label>
                 <select
+                  id="failure-reason"
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   value={failureReason}
                   onChange={(e) => setFailureReason(e.target.value)}

@@ -140,8 +140,9 @@ function AddRuleModal({ onClose, onSaved, orgId }: ModalProps) {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Trigger</label>
+            <label htmlFor="automation-trigger" className="block text-xs font-medium text-gray-600 mb-1">Trigger</label>
             <select
+              id="automation-trigger"
               value={form.trigger}
               onChange={e => set('trigger', e.target.value as Trigger)}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 bg-white"

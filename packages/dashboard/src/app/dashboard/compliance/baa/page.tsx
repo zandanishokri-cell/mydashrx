@@ -226,8 +226,9 @@ export default function BaaPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">BAA Status</label>
+              <label htmlFor="baa-status" className="block text-xs font-medium text-gray-700 mb-1">BAA Status</label>
               <select
+                id="baa-status"
                 value={form.baaStatus}
                 onChange={e => setForm(f => ({ ...f, baaStatus: e.target.value as BaaStatus }))}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
@@ -239,8 +240,9 @@ export default function BaaPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Touches PHI</label>
+              <label htmlFor="baa-touches-phi" className="block text-xs font-medium text-gray-700 mb-1">Touches PHI</label>
               <select
+                id="baa-touches-phi"
                 value={form.touchesPhi ? 'yes' : 'no'}
                 onChange={e => setForm(f => ({ ...f, touchesPhi: e.target.value === 'yes' }))}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"

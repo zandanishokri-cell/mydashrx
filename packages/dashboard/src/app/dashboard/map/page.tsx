@@ -205,51 +205,90 @@ export default function MapPage() {
         </div>
       </div>
 
-      {/* Error banners — two states: no data yet (red) vs stale data (amber) */}
-      {error && !liveData && (
-        <div className="flex items-center gap-2 px-5 py-2.5 bg-red-50 border-b border-red-100 shrink-0">
-          <WifiOff size={14} className="text-red-500 shrink-0" />
-          <span className="text-sm text-red-700">Could not load live tracking data.</span>
-          <button onClick={load} className="ml-auto text-xs font-medium text-red-600 hover:underline">Retry</button>
-        </div>
-      )}
-      {error && liveData && (
-        <div className="flex items-center gap-2 px-5 py-2.5 bg-amber-50 border-b border-amber-100 shrink-0">
-          <AlertTriangle size={14} className="text-amber-500 shrink-0" />
-          <span className="text-sm text-amber-700">Refresh failed — showing last known positions.</span>
-          <button onClick={load} className="ml-auto text-xs font-medium text-amber-600 hover:underline">Retry</button>
-        </div>
-      )}
+      {/* Error banners — always-mounted live regions (WCAG 4.1.3 Level AA) */}
+      {/* Critical: no data at all — role=alert fires immediately */}
+      <div
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+        className={`flex items-center gap-2 px-5 py-2.5 bg-red-50 border-b border-red-100 shrink-0 transition-opacity duration-150 ${error && !liveData ? 'opacity-100' : 'opacity-0 pointer-events-none h-0 py-0 overflow-hidden'}`}
+      >
+        <WifiOff size={14} className="text-red-500 shrink-0" />
+        <span className="text-sm text-red-700">Could not load live tracking data.</span>
+        <button onClick={load} className="ml-auto text-xs font-medium text-red-600 hover:underline">Retry</button>
+      </div>
+      {/* Stale: has data but refresh failed — role=status is polite */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={`flex items-center gap-2 px-5 py-2.5 bg-amber-50 border-b border-amber-100 shrink-0 transition-opacity duration-150 ${error && liveData ? 'opacity-100' : 'opacity-0 pointer-events-none h-0 py-0 overflow-hidden'}`}
+      >
+        <AlertTriangle size={14} className="text-amber-500 shrink-0" />
+        <span className="text-sm text-amber-700">Refresh failed — showing last known positions.</span>
+        <button onClick={load} className="ml-auto text-xs font-medium text-amber-600 hover:underline">Retry</button>
+      </div>
 
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+        {/* Skip link — lets keyboard/SR users jump past map to route list (WCAG 2.4.1) */}
+        <a
+          href="#route-list"
+          className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-3 focus:py-1.5 focus:text-xs focus:font-medium focus:bg-white focus:border focus:border-gray-300 focus:rounded-lg focus:shadow"
+        >
+          Skip to route list
+        </a>
+
         {/* Map */}
         <div className="flex-1 relative min-h-[280px]">
-          {loading ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-50">
-              <div className="text-gray-400 text-sm">Loading map…</div>
-            </div>
-          ) : (
-            <LiveMap
-              drivers={driverMarkers}
-              stops={routeStops}
-              highlightedDriverId={highlightedDriverId}
-              depotLatLng={null}
-              onMarkerClick={handleMarkerClick}
-              fitToDriver={fitToDriver}
-            />
-          )}
+          {/* Always-mounted live region — announces loading → loaded → error (WCAG 4.1.3 Level AA) */}
+          <div
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            aria-label={loading ? 'Loading map' : error ? 'Map data unavailable' : 'Map loaded'}
+            className="sr-only"
+          >
+            {loading ? 'Loading map…' : error && !liveData ? 'Map data unavailable.' : ''}
+          </div>
+          {/* Visual loading overlay — aria-hidden so screen readers use the live region above */}
+          <div
+            aria-hidden="true"
+            className={`absolute inset-0 flex items-center justify-center bg-gray-50 transition-opacity duration-200 z-10 ${loading ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+          >
+            <div className="text-gray-400 text-sm">Loading map…</div>
+          </div>
+          <LiveMap
+            drivers={driverMarkers}
+            stops={routeStops}
+            highlightedDriverId={highlightedDriverId}
+            depotLatLng={null}
+            onMarkerClick={handleMarkerClick}
+            fitToDriver={fitToDriver}
+            accessibleLabel={`Live map — ${summary.activeDrivers} driver${summary.activeDrivers !== 1 ? 's' : ''}, ${summary.totalStopsRemaining} stop${summary.totalStopsRemaining !== 1 ? 's' : ''} remaining`}
+          />
         </div>
 
         {/* Sidebar */}
-        <div className="w-full md:w-72 bg-white border-t md:border-t-0 md:border-l border-gray-100 overflow-y-auto shrink-0 max-h-60 md:max-h-none">
+        <div id="route-list" aria-label="Active delivery routes" className="w-full md:w-72 bg-white border-t md:border-t-0 md:border-l border-gray-100 overflow-y-auto shrink-0 max-h-60 md:max-h-none">
           <div className="px-4 py-3 border-b border-gray-50 flex items-center justify-between">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Active Routes</p>
-            {stopsLoading && <span className="text-xs text-gray-400 animate-pulse">Loading stops…</span>}
-            {stopsError && !stopsLoading && (
-              <span className="text-xs text-amber-600 flex items-center gap-1">
-                <AlertTriangle size={10} /> Stops unavailable
-              </span>
-            )}
+            {/* Always-mounted status spans — opacity-toggle avoids DOM-mount announcement gap (WCAG 4.1.3) */}
+            <span
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className={`text-xs text-gray-400 animate-pulse transition-opacity duration-150 ${stopsLoading ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            >
+              Loading stops…
+            </span>
+            <span
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className={`text-xs text-amber-600 flex items-center gap-1 transition-opacity duration-150 ${stopsError && !stopsLoading ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            >
+              <AlertTriangle size={10} aria-hidden="true" /> Stops unavailable
+            </span>
           </div>
 
           {(liveData?.activeRoutes ?? []).length === 0 ? (

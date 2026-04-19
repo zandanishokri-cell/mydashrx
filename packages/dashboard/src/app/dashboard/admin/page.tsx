@@ -171,6 +171,7 @@ export default function AdminPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <select
+                          aria-label={`Billing plan for ${org.name}`}
                           value={org.billingPlan}
                           onChange={e => changePlan(org.id, e.target.value)}
                           className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-200 bg-white"
@@ -180,6 +181,7 @@ export default function AdminPage() {
                           ))}
                         </select>
                         <select
+                          aria-label={`BAA status for ${org.name}`}
                           value={org.hipaaBaaStatus}
                           onChange={e => changeBaa(org.id, e.target.value)}
                           className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-200 bg-white"
@@ -226,8 +228,8 @@ export default function AdminPage() {
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-200" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Timezone</label>
-                <select value={createForm.timezone} onChange={e => setCreateForm(f => ({ ...f, timezone: e.target.value }))}
+                <label htmlFor="create-org-timezone" className="block text-xs font-medium text-gray-500 mb-1">Timezone</label>
+                <select id="create-org-timezone" value={createForm.timezone} onChange={e => setCreateForm(f => ({ ...f, timezone: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-200 bg-white">
                   <option value="America/New_York">Eastern (America/New_York)</option>
                   <option value="America/Chicago">Central (America/Chicago)</option>
