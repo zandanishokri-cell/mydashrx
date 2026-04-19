@@ -29,7 +29,7 @@ const acceptInviteSchema = z.object({
   name: z.string().min(2).max(100),
 });
 
-async function assessSignupRisk(orgName: string, adminEmail: string): Promise<string[]> {
+async function assessSignupRisk(orgName: string, adminEmail: string): Promise<{ flags: string[]; score: number; tier: string }> {
   const flags: string[] = [];
   const domain = adminEmail.split('@')[1]?.toLowerCase() ?? '';
   if ((disposableDomains as string[]).includes(domain)) flags.push('disposable_email');
@@ -39,7 +39,17 @@ async function assessSignupRisk(orgName: string, adminEmail: string): Promise<st
     .where(sql`lower(${organizations.name}) ILIKE ${`%${orgName.toLowerCase().slice(0, 10)}%`}`)
     .limit(3);
   if (similar.length > 0) flags.push('similar_org_name');
-  return flags;
+
+  // P-ADM22: weighted risk score + trust tier routing
+  const WEIGHTS: Record<string, number> = { disposable_email: 30, similar_org_name: 25 };
+  const score = Math.min(100, flags.reduce((sum, f) => sum + (WEIGHTS[f] ?? 5), 0));
+  const hasDisposable = flags.includes('disposable_email');
+  const hasSimilar = flags.includes('similar_org_name');
+  const tier = (score > 70 || (hasDisposable && hasSimilar)) ? 'block'
+    : (score <= 15 && !hasDisposable) ? 'auto_approve'
+    : 'manual';
+
+  return { flags, score, tier };
 }
 
 async function sendApplicantConfirmation(orgName: string, adminEmail: string, adminName: string) {
@@ -141,12 +151,14 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     const existing = await findUserByEmail(adminEmail);
     if (existing) return reply.code(409).send({ error: 'An account with this email already exists.' });
 
-    const riskFlags = await assessSignupRisk(orgName, adminEmail);
+    const { flags: riskFlags, score: riskScore, tier: trustTier } = await assessSignupRisk(orgName, adminEmail);
 
     const [org] = await db.insert(organizations).values({
       name: orgName,
       pendingApproval: true,
       ...(riskFlags.length > 0 ? { riskFlags } : {}),
+      riskScore,
+      trustTier,
     }).returning();
 
     const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
