@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { stops, routes, drivers, plans, adminAuditLogs, organizations } from '../db/schema.js';
-import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
+import { eq, and, isNull, inArray, notInArray, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { requirePermission } from '../lib/rbacPolicy.js';
 import { sendStopNotification, sendDriverArrivalEmail, sendRouteCompleteSummaryEmail } from '../services/notifications.js';
@@ -11,6 +11,7 @@ import { ETA_PER_STOP_MS } from './tracking.js';
 import { filterStopsForRole } from '../lib/fieldPermissions.js';
 import { invalidateAnalytics, invalidateDashboard } from '../lib/responseCache.js';
 import { encryptPhi, decryptPhi, encryptPhiArray, decryptPhiArray } from '../lib/phiCrypto.js';
+import { sendDriverPush } from '../lib/driverPush.js'; // P-DEL16
 
 export async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
   const [route] = await db.select({ completedAt: routes.completedAt, driverId: routes.driverId })
@@ -212,6 +213,28 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       unit: body.unit,
       deliveryNotes: body.deliveryNotes,
     }).returning();
+
+    // P-DEL16: Push notification to driver when a new stop is added to their active route
+    // Look up userId for the driver (drivers table has no user_id FK — match by email+orgId)
+    db.select({ driverId: routes.driverId, status: routes.status })
+      .from(routes).where(eq(routes.id, routeId)).limit(1)
+      .then(async ([routeForPush]) => {
+        if (!routeForPush?.driverId || routeForPush.status !== 'active') return;
+        // Find user record for this driver (same email, same org, role=driver)
+        const [userRow] = [...await db.execute(sql`
+          SELECT u.id FROM users u
+          JOIN drivers d ON d.email = u.email AND d.org_id = u.org_id
+          WHERE d.id = ${routeForPush.driverId}::uuid AND u.deleted_at IS NULL
+          LIMIT 1
+        `)] as Array<{ id: string }>;
+        if (!userRow) return;
+        sendDriverPush(userRow.id, {
+          title: 'New stop added to your route',
+          body: `A new delivery at ${stop.address} has been added to your current route.`,
+          tag: 'new-stop',
+          data: { stopId: stop.id, routeId },
+        }).catch(() => {});
+      }).catch(() => {});
 
     // P-ONB37: activatedAt now set on first route dispatch (routes.ts) — not on stop creation
     // P-SEC40: decrypt PHI fields before returning to client

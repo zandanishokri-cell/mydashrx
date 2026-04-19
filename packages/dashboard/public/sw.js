@@ -105,3 +105,41 @@ async function deleteItem(db, id) {
     tx.oncomplete = () => {};
   });
 }
+
+// P-DEL16: Web Push event handler — shows notification when driver receives mid-route update
+self.addEventListener('push', event => {
+  if (!event.data) return;
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch {
+    payload = { title: 'MyDashRx', body: event.data.text() };
+  }
+  const options = {
+    body: payload.body ?? '',
+    tag: payload.tag ?? 'mdrx-driver',
+    data: payload.data ?? {},
+    badge: '/icon-192.png',
+    icon: '/icon-192.png',
+    requireInteraction: false,
+    silent: false,
+  };
+  event.waitUntil(self.registration.showNotification(payload.title ?? 'MyDashRx', options));
+});
+
+// P-DEL16: Click on push notification — open relevant route page
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const data = event.notification.data ?? {};
+  const url = data.routeId
+    ? `/driver/routes/${data.routeId}`
+    : '/driver';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+      for (const client of windowClients) {
+        if (client.url.includes(url) && 'focus' in client) return client.focus();
+      }
+      return clients.openWindow(url);
+    })
+  );
+});

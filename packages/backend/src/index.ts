@@ -682,6 +682,37 @@ try {
   console.error('P-DEL26 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-DISP8: ETA-delta SMS columns on stops — last notified ETA for change detection
+try {
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS last_eta_notified_at timestamptz`);
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS last_eta_minutes int`);
+  console.log('P-DISP8 last_eta_notified_at + last_eta_minutes columns ensured');
+} catch (err) {
+  console.error('P-DISP8 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-DEL16: push_subscriptions table — web push for driver mid-route notifications (90-day TTL)
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint text NOT NULL UNIQUE,
+      p256dh text NOT NULL,
+      auth text NOT NULL,
+      device_type text NOT NULL DEFAULT 'unknown',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      last_used_at timestamptz,
+      expires_at timestamptz NOT NULL DEFAULT (now() + INTERVAL '90 days')
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS ps_user_idx ON push_subscriptions(user_id)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS ps_expires_idx ON push_subscriptions(expires_at)`);
+  console.log('P-DEL16 push_subscriptions table ensured');
+} catch (err) {
+  console.error('P-DEL16 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-DEL29: Engagement-signal list hygiene columns on lead_prospects
 try {
   await db.execute(sql`ALTER TABLE lead_prospects ADD COLUMN IF NOT EXISTS email_sent_count integer NOT NULL DEFAULT 0`);
@@ -1100,6 +1131,8 @@ const optionalEnvs: [string, string][] = [
   ['TWILIO_ACCOUNT_SID', 'SMS/IVR'],
   ['TWILIO_AUTH_TOKEN', 'SMS/IVR'],
   ['TWILIO_FROM_NUMBER', 'SMS sending'],
+  ['VAPID_PUBLIC_KEY', 'P-DEL16: Web push for driver mid-route alerts — generate with: npx web-push generate-vapid-keys'],
+  ['VAPID_PRIVATE_KEY', 'P-DEL16: Web push for driver mid-route alerts — generate with: npx web-push generate-vapid-keys'],
 ];
 for (const [key, feature] of optionalEnvs) {
   if (!process.env[key]) console.warn(`[CONFIG] ${key} not set — ${feature} will be unavailable`);
@@ -1135,6 +1168,18 @@ setInterval(async () => {
     runDkimHealthCheck().catch(console.error);
   }
 }, 60 * 60 * 1000);
+
+// P-DEL16: Push subscription TTL cleanup — daily sweep, delete expired subscriptions
+// 90-day TTL prevents stale subs from accumulating; 410 Gone responses auto-delete during send
+setInterval(async () => {
+  try {
+    const result = await db.execute(sql`DELETE FROM push_subscriptions WHERE expires_at < NOW() RETURNING id`);
+    const count = (result as unknown as { rows?: unknown[] }).rows?.length ?? 0;
+    if (count > 0) console.log(JSON.stringify({ event: 'push_subscription_cleanup', deleted: count }));
+  } catch (err) {
+    console.error('P-DEL16 push subscription cleanup error (non-fatal):', err instanceof Error ? err.message : err);
+  }
+}, 24 * 60 * 60 * 1000);
 
 // P-SES13: RT + magic link token cleanup — run on startup and every 6hr
 const runTokenCleanup = async () => {

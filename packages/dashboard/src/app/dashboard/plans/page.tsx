@@ -1,11 +1,12 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
-import { Plus, Calendar, ChevronLeft, ChevronRight, Zap, Route, AlertCircle, X } from 'lucide-react';
+import { Plus, Calendar, ChevronLeft, ChevronRight, Zap, Route, AlertCircle, X, Copy } from 'lucide-react';
 import { localDateStr } from '@/lib/dateUtils';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { EmptyStateActivation } from '@/components/ui/EmptyStateActivation';
@@ -35,6 +36,7 @@ function getWeekRange(offset: number) {
 }
 
 export default function PlansPage() {
+  const router = useRouter();
   const [plans, setPlans] = useState<PlanWithMeta[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +47,11 @@ export default function PlansPage() {
   const [selectedDate, setSelectedDate] = useState(() => localDateStr());
   const [user] = useState(getUser);
   const [loadError, setLoadError] = useState(false);
+  // P-DISP7: Clone plan modal state
+  const [cloneModal, setCloneModal] = useState<{ planId: string; open: boolean } | null>(null);
+  const [cloneDate, setCloneDate] = useState(() => localDateStr());
+  const [cloning, setCloning] = useState(false);
+  const [cloneError, setCloneError] = useState('');
 
   const weekDays = getWeekRange(weekOffset);
   const today = localDateStr();
@@ -76,6 +83,31 @@ export default function PlansPage() {
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [load]);
+
+  const openCloneModal = (planId: string, e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    setCloneDate(localDateStr());
+    setCloneError('');
+    setCloneModal({ planId, open: true });
+  };
+
+  const clonePlan = async () => {
+    if (!cloneModal || !user) return;
+    setCloning(true); setCloneError('');
+    try {
+      const res = await api.post<{ planId: string; routeCount: number; stopCount: number }>(
+        `/orgs/${user.orgId}/plans/${cloneModal.planId}/clone`,
+        { planDate: cloneDate },
+      );
+      setCloneModal(null);
+      setOptimizeToast(`Plan cloned — ${res.routeCount} routes, ${res.stopCount} stops`);
+      setTimeout(() => setOptimizeToast(''), 4000);
+      await load();
+      router.push(`/dashboard/plans/${res.planId}`);
+    } catch (err: unknown) {
+      setCloneError((err as { message?: string })?.message ?? 'Clone failed. Please try again.');
+    } finally { setCloning(false); }
+  };
 
   const optimizePlan = async (planId: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -240,6 +272,13 @@ export default function PlansPage() {
                               <Zap size={11} /> {optimizingId === plan.id ? 'Optimizing…' : 'Optimize'}
                             </button>
                           )}
+                          <button
+                            onClick={e => openCloneModal(plan.id, e)}
+                            title="Clone plan to another date"
+                            className="flex items-center gap-1 text-xs font-medium text-gray-500 bg-gray-50 hover:bg-gray-100 px-2 py-0.5 rounded-full transition-colors"
+                          >
+                            <Copy size={11} /> Clone
+                          </button>
                           <span className="text-xs text-gray-400">{plan.stopCount} stops · {plan.routes.length} driver{plan.routes.length !== 1 ? 's' : ''}</span>
                         </div>
                       </div>
@@ -297,6 +336,46 @@ export default function PlansPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* P-DISP7: Clone Plan Modal */}
+      {cloneModal?.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900">Clone Delivery Plan</h3>
+              <button onClick={() => setCloneModal(null)} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              Clone this plan and all its routes and stops to a new delivery date. Each stop gets a fresh tracking link.
+            </p>
+            <label className="block text-xs font-medium text-gray-700 mb-1">New delivery date</label>
+            <input
+              type="date"
+              value={cloneDate}
+              onChange={e => setCloneDate(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81] mb-4"
+            />
+            {cloneError && <p className="text-xs text-red-600 mb-3">{cloneError}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCloneModal(null)}
+                className="flex-1 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={clonePlan}
+                disabled={cloning || !cloneDate}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-[#0F4C81] rounded-lg hover:bg-[#0d3d69] disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Copy size={13} /> {cloning ? 'Cloning…' : 'Clone Plan'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

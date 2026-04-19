@@ -156,6 +156,39 @@ Value: v=BIMI1; l=https://mydashrx.com/bimi-logo.svg; a=<CMC_CERT_URL>
 
 ---
 
+## P-DEL16: Web Push VAPID Keys (Driver Mid-Route Alerts)
+
+Generate VAPID keys (one-time setup — do NOT rotate without re-subscribing all clients):
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Output:
+```
+Public Key: Bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=
+Private Key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+**Set in Render dashboard (Backend environment variables):**
+| Variable | Value | Notes |
+|---|---|---|
+| `VAPID_PUBLIC_KEY` | The public key from above | Also set in Vercel for frontend |
+| `VAPID_PRIVATE_KEY` | The private key from above | Backend only — never expose to frontend |
+| `VAPID_SUBJECT` | `mailto:support@mydashrx.com` | Contact email for push service operators |
+
+**Set in Vercel (Frontend environment variables):**
+| Variable | Value |
+|---|---|
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | Same public key as above |
+
+**Notes:**
+- VAPID keys never expire (do not rotate unless security incident)
+- If keys are rotated, all push subscriptions must be re-created (users must re-authorize notifications)
+- 90-day subscription TTL auto-cleans stale entries; 410 responses during send also auto-delete
+
+---
+
 ## Activation Order
 
 1. Set `PHI_ENCRYPTION_KEY` in Render → redeploy
@@ -164,4 +197,5 @@ Value: v=BIMI1; l=https://mydashrx.com/bimi-logo.svg; a=<CMC_CERT_URL>
 4. Add DMARC record to Cloudflare
 5. Add MTA-STS records + configure `mta-sts.mydashrx.com` subdomain
 6. Add Snyk token to GitHub secrets
-7. After DMARC reaches `p=reject` + pct=100 → pursue BIMI VMC
+7. Generate VAPID keys + set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` in Render
+8. After DMARC reaches `p=reject` + pct=100 → pursue BIMI VMC

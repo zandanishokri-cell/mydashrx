@@ -123,10 +123,44 @@ export default function DriverRoutePage() {
       const r = await api.patch<{ status: string }>(`/driver/me/routes/${routeId}/start`, {});
       setRouteStatus(r.status);
       // useEffect on routeStatus handles startLocationPing() when status becomes 'active'
+      // P-DEL16: Register push subscription after starting route (request permission once per session)
+      registerPush().catch(() => {});
     } catch {
       setStartError('Failed to start route. Please try again.');
     } finally { setStarting(false); }
   };
+
+  // P-DEL16: Request push permission + register subscription with backend
+  const registerPush = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    try {
+      const { vapidPublicKey } = await api.get<{ vapidPublicKey: string }>('/driver/me/push-vapid-key');
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') return;
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+      });
+      const { endpoint, keys } = sub.toJSON() as { endpoint: string; keys?: { p256dh?: string; auth?: string } };
+      await api.post('/driver/me/push-subscribe', {
+        endpoint,
+        p256dh: keys?.p256dh ?? '',
+        auth: keys?.auth ?? '',
+        deviceType: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop',
+      });
+    } catch { /* permission denied or browser unsupported — silent fail */ }
+  };
+
+  function urlBase64ToUint8Array(base64String: string): ArrayBuffer {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const buf = new ArrayBuffer(raw.length);
+    const view = new Uint8Array(buf);
+    for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i);
+    return buf;
+  }
 
   const completed = stops.filter((s) => s.status === 'completed').length;
   const failed = stops.filter((s) => s.status === 'failed').length;

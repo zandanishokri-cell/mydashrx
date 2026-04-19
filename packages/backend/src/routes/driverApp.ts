@@ -4,7 +4,7 @@ import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocatio
 import { eq, and, isNull, sql, inArray, desc } from 'drizzle-orm';
 import { getDriverRoutes } from '../db/preparedStatements.js'; // P-PERF10
 import { requireRole } from '../middleware/requireRole.js';
-import { sendStopNotification, sendTwilioSms } from '../services/notifications.js';
+import { sendStopNotification, sendTwilioSms, sendEtaDeltaSms } from '../services/notifications.js';
 import { sendCopayPaymentLink } from '../services/paymentLink.js';
 import { fireTrigger } from '../services/automation.js';
 import { uploadBuffer } from '../services/storage.js';
@@ -13,6 +13,7 @@ import { todayInTz } from '../utils/date.js';
 import sharp from 'sharp';
 import { requireTrustedDeviceForCOD } from '../lib/abacPolicies.js'; // P-RBAC35
 import { decryptPhi, decryptPhiArray } from '../lib/phiCrypto.js'; // P-SEC40
+import { sendDriverPush } from '../lib/driverPush.js'; // P-DEL16
 
 async function resolveDriverId(
   user: { driverId?: string; email: string; orgId: string },
@@ -105,7 +106,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const [driver] = await db.select({ currentLat: drivers.currentLat, currentLng: drivers.currentLng })
       .from(drivers).where(eq(drivers.id, driverId)).limit(1);
 
-    // Get all non-deleted stops for this route
+    // Get all non-deleted stops for this route (P-DISP8: include ETA tracking cols)
     const allStops = await db.select({
       id: stops.id,
       status: stops.status,
@@ -113,6 +114,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       lng: stops.lng,
       arrivedAt: stops.arrivedAt,
       completedAt: stops.completedAt,
+      orgId: stops.orgId,
+      recipientPhone: stops.recipientPhone,
+      trackingToken: stops.trackingToken,
     }).from(stops).where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
 
@@ -148,6 +152,29 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const travelMinToNext = distanceToNextKm != null ? (distanceToNextKm / 30) * 60 : 0;
     const totalMinRemaining = travelMinToNext + (remaining.length * avgMinPerStop);
     const etaTs = new Date(Date.now() + totalMinRemaining * 60 * 1000);
+
+    // P-DISP8: Fire ETA-delta SMS for each pending stop with large ETA shift (fire-and-forget)
+    // Each stop gets its own ETA estimate based on its sequence position
+    if (remaining.length > 0) {
+      let accMs = travelMinToNext * 60_000; // time to first remaining stop
+      for (let i = 0; i < remaining.length; i++) {
+        const s = remaining[i];
+        if (i > 0) accMs += avgMinPerStop * 60_000; // approximate: each stop adds avg service time
+        const stopEtaMin = Math.round(accMs / 60_000);
+        // Fetch ETA tracking cols via raw sql (not in Drizzle schema yet — DDL-added cols)
+        const [etaRow] = [...await db.execute(sql`SELECT last_eta_minutes, last_eta_notified_at FROM stops WHERE id = ${s.id}`)] as Array<{ last_eta_minutes: number | null; last_eta_notified_at: string | null }>;
+        const stopForSms = {
+          id: s.id,
+          orgId: s.orgId,
+          recipientPhone: decryptPhi(s.recipientPhone ?? ''),
+          trackingToken: s.trackingToken,
+          status: s.status,
+          lastEtaMinutes: etaRow?.last_eta_minutes ?? null,
+          lastEtaNotifiedAt: etaRow?.last_eta_notified_at ? new Date(etaRow.last_eta_notified_at) : null,
+        };
+        sendEtaDeltaSms(stopForSms, stopEtaMin).catch(() => {});
+      }
+    }
 
     return {
       remainingStops: remaining.length,
@@ -790,6 +817,46 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       .returning({ id: stops.id, codCollected: stops.codCollected, codMethod: stops.codMethod, codCollectedAt: stops.codCollectedAt });
 
     return { ok: true, codMethod: updated.codMethod, codCollectedAt: updated.codCollectedAt };
+  });
+
+  // P-DEL16: Web push subscription management — drivers register for mid-route push alerts
+  // GET /driver/me/push-vapid-key — returns VAPID public key for client-side subscription setup
+  app.get('/me/push-vapid-key', { preHandler: requireRole('driver') }, async (_req, reply) => {
+    const key = process.env.VAPID_PUBLIC_KEY;
+    if (!key) return reply.code(503).send({ error: 'Push notifications not configured' });
+    return { vapidPublicKey: key };
+  });
+
+  // POST /driver/me/push-subscribe — upsert a push subscription for this driver
+  app.post('/me/push-subscribe', { preHandler: requireRole('driver') }, async (req, reply) => {
+    const user = req.user as { sub: string };
+    const { endpoint, p256dh, auth, deviceType } = req.body as {
+      endpoint: string; p256dh: string; auth: string; deviceType?: string;
+    };
+    if (!endpoint || !p256dh || !auth) return reply.code(400).send({ error: 'endpoint, p256dh, and auth are required' });
+
+    // Upsert on endpoint — same device registering again just refreshes the subscription
+    await db.execute(sql`
+      INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, device_type, expires_at)
+      VALUES (${user.sub}::uuid, ${endpoint}, ${p256dh}, ${auth}, ${deviceType ?? 'unknown'}, now() + INTERVAL '90 days')
+      ON CONFLICT (endpoint) DO UPDATE SET
+        user_id = ${user.sub}::uuid,
+        p256dh = ${p256dh},
+        auth = ${auth},
+        device_type = ${deviceType ?? 'unknown'},
+        last_used_at = now(),
+        expires_at = now() + INTERVAL '90 days'
+    `);
+    return reply.code(201).send({ ok: true });
+  });
+
+  // DELETE /driver/me/push-subscribe — remove a push subscription
+  app.delete('/me/push-subscribe', { preHandler: requireRole('driver') }, async (req, reply) => {
+    const user = req.user as { sub: string };
+    const { endpoint } = req.body as { endpoint?: string };
+    if (!endpoint) return reply.code(400).send({ error: 'endpoint required' });
+    await db.execute(sql`DELETE FROM push_subscriptions WHERE endpoint = ${endpoint} AND user_id = ${user.sub}::uuid`);
+    return reply.code(204).send();
   });
 };
 

@@ -5,6 +5,7 @@ import { eq, and, isNull, inArray, notInArray, or, sql } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { optimizeRoute } from '../services/routeOptimizer.js';
 import { sendRouteReadyNotifications } from '../services/notifications.js';
+import { randomUUID } from 'crypto';
 
 // Angular clustering: sort stops by polar angle from depot, distribute round-robin
 // Creates geographically contiguous zones (pie slices) rather than arbitrary round-robin
@@ -287,6 +288,111 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
         ? 'Departure assumed at current time'
         : `Departure assumed at 08:00 AM on ${plan.date}`,
     };
+  });
+
+  // P-DISP7: Plan clone — duplicate a plan+routes+stops for a new delivery date
+  // HIPAA §164.312(b): audit log plan_cloned with sourceId+newId+stopCount
+  // Critical: new trackingToken per stop — old tokens must not resolve to next-day deliveries
+  app.post('/:planId/clone', {
+    preHandler: requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, planId } = req.params as { orgId: string; planId: string };
+    const actor = req.user as { sub: string; email: string };
+    const { planDate } = req.body as { planDate?: string };
+
+    // Validate optional date override
+    const targetDate = planDate ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Detroit' }).format(new Date());
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+      return reply.code(400).send({ error: 'planDate must be YYYY-MM-DD' });
+    }
+
+    // Verify source plan belongs to org
+    const [sourcePlan] = await db.select().from(plans)
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt))).limit(1);
+    if (!sourcePlan) return reply.code(404).send({ error: 'Plan not found' });
+
+    // Create new plan (draft status, new date)
+    const [newPlan] = await db.insert(plans).values({
+      orgId,
+      depotId: sourcePlan.depotId,
+      date: targetDate,
+      status: 'draft',
+    }).returning();
+
+    // Fetch source routes
+    const sourceRoutes = await db.select().from(routes)
+      .where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
+
+    let totalStopCount = 0;
+    const routeCount = sourceRoutes.length;
+
+    for (const sourceRoute of sourceRoutes) {
+      // Create cloned route (reset status to pending, keep driver assignment)
+      const [newRoute] = await db.insert(routes).values({
+        planId: newPlan.id,
+        driverId: sourceRoute.driverId,
+        assignedDispatcherId: sourceRoute.assignedDispatcherId,
+        status: 'pending',
+        stopOrder: [],
+      }).returning();
+
+      // Fetch source stops for this route
+      const sourceStops = await db.select().from(stops)
+        .where(and(eq(stops.routeId, sourceRoute.id), isNull(stops.deletedAt)))
+        .orderBy(stops.sequenceNumber);
+
+      const newStopIds: string[] = [];
+      for (const src of sourceStops) {
+        // Generate fresh trackingToken per stop — critical HIPAA/security requirement
+        // Old tokens must not resolve to next-day deliveries
+        const [newStop] = await db.insert(stops).values({
+          routeId: newRoute.id,
+          orgId,
+          recipientName: src.recipientName,   // already encrypted — copy as-is (P-SEC40)
+          recipientPhone: src.recipientPhone,  // already encrypted — copy as-is
+          recipientEmail: src.recipientEmail,
+          address: src.address,
+          unit: src.unit,
+          deliveryNotes: src.deliveryNotes,
+          lat: src.lat,
+          lng: src.lng,
+          rxNumbers: src.rxNumbers,
+          packageCount: src.packageCount,
+          requiresRefrigeration: src.requiresRefrigeration,
+          controlledSubstance: src.controlledSubstance,
+          codAmount: src.codAmount,
+          requiresSignature: src.requiresSignature,
+          requiresPhoto: src.requiresPhoto,
+          requiresAgeVerification: src.requiresAgeVerification,
+          windowStart: src.windowStart,
+          windowEnd: src.windowEnd,
+          status: 'pending',
+          sequenceNumber: src.sequenceNumber,
+          priority: src.priority,
+          trackingToken: randomUUID(), // fresh token — old link must not work for new delivery
+          retriedFromStopId: null,     // fresh start — no retry chain from previous day
+        }).returning();
+        newStopIds.push(newStop.id);
+        totalStopCount++;
+      }
+
+      // Update route stop order with new stop IDs
+      if (newStopIds.length > 0) {
+        await db.update(routes).set({ stopOrder: newStopIds }).where(eq(routes.id, newRoute.id));
+      }
+    }
+
+    // HIPAA §164.312(b): audit plan_cloned with full chain-of-custody
+    db.insert(adminAuditLogs).values({
+      actorId: actor.sub,
+      actorEmail: actor.email,
+      action: 'plan_cloned',
+      targetId: newPlan.id,
+      targetName: `cloned from plan:${planId}`,
+      metadata: { orgId, sourcePlanId: planId, newPlanId: newPlan.id, routeCount, stopCount: totalStopCount, planDate: targetDate },
+    }).catch(() => {});
+
+    return reply.code(201).send({ planId: newPlan.id, routeCount, stopCount: totalStopCount });
   });
 
   app.delete('/:planId', {

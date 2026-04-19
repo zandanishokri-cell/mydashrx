@@ -109,6 +109,58 @@ export async function sendStopNotification(
   }
 }
 
+/**
+ * P-DISP8: ETA-delta patient SMS — fires when ETA shifts >15min with 30-min cooldown
+ * Only fires for pending stops within 5-120min window. HIPAA §164.506(c)(1) treatment comms.
+ */
+export async function sendEtaDeltaSms(
+  stop: {
+    id: string;
+    orgId: string;
+    recipientPhone: string;
+    trackingToken: unknown;
+    status: string;
+    lastEtaMinutes?: number | null;
+    lastEtaNotifiedAt?: Date | null;
+  },
+  newEtaMinutes: number,
+): Promise<void> {
+  // Only fire for pending/en_route stops
+  if (stop.status !== 'pending' && stop.status !== 'en_route') return;
+  // Only notify for meaningful ETAs (5-120min window)
+  if (newEtaMinutes < 5 || newEtaMinutes > 120) return;
+  // Check suppression: same phone must not be sending too often
+  const { isSuppressed } = await import('../lib/emailHelpers.js');
+  const suppressed = await isSuppressed(stop.recipientPhone);
+  if (suppressed) return;
+  // Only fire if ETA shifted >15min
+  const previousEta = stop.lastEtaMinutes ?? null;
+  if (previousEta !== null && Math.abs(newEtaMinutes - previousEta) <= 15) return;
+  // 30-min cooldown since last ETA notification
+  if (stop.lastEtaNotifiedAt) {
+    const diffMs = Date.now() - new Date(stop.lastEtaNotifiedAt).getTime();
+    if (diffMs < 30 * 60 * 1000) return;
+  }
+  // Build SMS message
+  const trackingUrl = `${process.env.DASHBOARD_URL ?? 'https://app.mydashrx.com'}/track/${String(stop.trackingToken)}`;
+  const body = `Your delivery ETA has changed. New estimated arrival: ${newEtaMinutes} minutes. Track: ${trackingUrl}`;
+  try {
+    const msg = await getClient().messages.create({ body, from: process.env.TWILIO_FROM_NUMBER!, to: stop.recipientPhone });
+    // Update last_eta_notified_at + last_eta_minutes on the stop
+    const { sql: drizzleSql } = await import('drizzle-orm');
+    db.execute(drizzleSql`
+      UPDATE stops SET last_eta_notified_at = now(), last_eta_minutes = ${newEtaMinutes}
+      WHERE id = ${stop.id}
+    `).catch(() => {});
+    await db.insert(notificationLogs).values({
+      stopId: stop.id, event: 'eta_updated', channel: 'sms',
+      recipient: stop.recipientPhone, status: 'sent', externalId: msg.sid,
+    });
+  } catch (err) {
+    console.error('ETA SMS failed:', err);
+  }
+}
+
 /** Generic SMS sender — used by services that don't need templating (e.g. copay links) */
 export async function sendTwilioSms(to: string, body: string): Promise<void> {
   const msg = await getClient().messages.create({ body, from: process.env.TWILIO_FROM_NUMBER!, to });
