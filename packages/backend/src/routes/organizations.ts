@@ -58,6 +58,22 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(org);
   });
 
+  // PATCH /orgs/:orgId/onboarding-progress — P-ONB10: track wizard step completion timestamps
+  app.patch('/:orgId/onboarding-progress', { preHandler: requireRole('super_admin', 'pharmacy_admin') }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const user = req.user as { orgId: string; role: string };
+    if (user.role !== 'super_admin' && user.orgId !== orgId) return reply.code(403).send({ error: 'Forbidden' });
+    const { step } = req.body as { step: 'depot' | 'driver' | 'completed' };
+    const VALID = ['depot', 'driver', 'completed'];
+    if (!VALID.includes(step)) return reply.code(400).send({ error: `step must be one of: ${VALID.join(', ')}` });
+    const now = new Date();
+    const updates = step === 'depot' ? { onboardingDepotAt: now }
+      : step === 'driver' ? { onboardingDriverAt: now }
+      : { onboardingCompletedAt: now };
+    await db.update(organizations).set(updates).where(eq(organizations.id, orgId));
+    return reply.send({ ok: true, step, ts: now.toISOString() });
+  });
+
   // PATCH /orgs/:orgId
   app.patch('/:orgId', { preHandler: requireRole('super_admin', 'pharmacy_admin') }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };

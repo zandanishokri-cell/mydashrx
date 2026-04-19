@@ -37,6 +37,10 @@ function LoginForm() {
 
   useEffect(() => {
     if (params.get('expired') === '1') setExpiredNotice(true);
+    // P-CNV9: ?welcome=1 from approval email → store onboarding redirect
+    if (params.get('welcome') === '1') {
+      sessionStorage.setItem('postAuthRedirect', '/dashboard/onboarding');
+    }
   }, []);
 
   useEffect(() => {

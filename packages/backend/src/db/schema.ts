@@ -81,6 +81,9 @@ export const organizations = pgTable('organizations', {
   npiVerified: boolean('npi_verified').default(false), // NPPES API verified
   npiVerifiedAt: timestamp('npi_verified_at'), // when NPPES confirmed NPI
   reappliedAt: timestamp('reapplied_at'), // P-ADM28: timestamp of most recent reapplication
+  onboardingDepotAt: timestamp('onboarding_depot_at'), // P-ONB10: when depot step completed in wizard
+  onboardingDriverAt: timestamp('onboarding_driver_at'), // P-ONB10: when driver step completed
+  onboardingCompletedAt: timestamp('onboarding_completed_at'), // P-ONB10: when full onboarding completed
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });
