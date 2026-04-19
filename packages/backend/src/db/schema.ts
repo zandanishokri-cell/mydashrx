@@ -115,6 +115,11 @@ export const organizations = pgTable('organizations', {
   // P-ADM40: SLA breach tracking — HIPAA §164.308(a)(1)(ii)(A) machine-readable timeliness evidence
   slaBreachedAt: timestamp('sla_breached_at'), // set when approval pending >24hr (level 4 escalation)
   escalationLevel: integer('escalation_level').notNull().default(0), // 0=none, 1=slack_ping, 2=slack_urgent, 3=email_admins, 4=sla_breach
+  // P-CNV28: PLG aha-moment — set once on first route dispatch, used to trigger aha-moment email exactly once
+  firstDispatchedAt: timestamp('first_dispatched_at'),
+  // P-CNV29: re-activation banner — tracks last dispatch + cross-device dismiss
+  lastDispatchedAt: timestamp('last_dispatched_at'),
+  reactivationBannerDismissedAt: timestamp('reactivation_banner_dismissed_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

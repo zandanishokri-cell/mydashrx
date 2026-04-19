@@ -198,6 +198,16 @@ try {
   console.error('P-CNV17/18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-CNV28/29: aha-moment + re-activation banner columns
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS first_dispatched_at timestamptz`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS last_dispatched_at timestamptz`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS reactivation_banner_dismissed_at timestamptz`);
+  console.log('P-CNV28/29 dispatch tracking columns ensured');
+} catch (err) {
+  console.error('P-CNV28/29 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-CNV22: server-side onboarding step persistence + stuck-nudge column
 try {
   await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS onboarding_step integer DEFAULT 1`);

@@ -1,8 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
-
-const STORAGE_KEY = 'mydashrx_pending_checklist';
+import { getUser } from '@/lib/auth';
 
 const TASKS = [
   { id: 'submitted', text: 'Application submitted', locked: true },
@@ -12,18 +11,55 @@ const TASKS = [
   { id: 'walkthrough', text: 'Watch the 3-minute setup walkthrough' },
 ];
 
+// P-CNV27: "Get ready while you wait" prep tasks
+const PREP_TASKS = [
+  { id: 'watch_overview', text: 'Watch the 2-min overview', href: '/help', cta: 'Watch →', ctaType: 'link' as const },
+  { id: 'bookmark', text: 'Bookmark your dashboard', href: null, cta: 'Show me how', ctaType: 'bookmark' as const },
+  { id: 'invite_team', text: 'Invite your team', href: '/dashboard/settings', cta: 'Invite →', ctaType: 'link' as const },
+];
+
+// P-CNV27: SVG animated progress ring
+function ProgressRing({ done, total }: { done: number; total: number }) {
+  const r = 22, cx = 28, cy = 28, stroke = 4;
+  const circ = 2 * Math.PI * r;
+  const pct = total > 0 ? done / total : 0;
+  const offset = circ * (1 - pct);
+  return (
+    <svg width={56} height={56} className="shrink-0">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
+      <circle
+        cx={cx} cy={cy} r={r} fill="none"
+        stroke={pct === 1 ? '#16a34a' : '#0F4C81'}
+        strokeWidth={stroke}
+        strokeDasharray={circ}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        transform={`rotate(-90 ${cx} ${cy})`}
+        style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+      />
+      <text x={cx} y={cy + 5} textAnchor="middle" fontSize={11} fontWeight={600} fill={pct === 1 ? '#16a34a' : '#374151'}>
+        {done}/{total}
+      </text>
+    </svg>
+  );
+}
+
 export default function PendingApprovalPage() {
   const [checked, setChecked] = useState<Set<string>>(new Set(['submitted']));
+  const [prepChecked, setPrepChecked] = useState<Set<string>>(new Set());
   const [mounted, setMounted] = useState(false);
+  const [showBookmarkHelp, setShowBookmarkHelp] = useState(false);
   const [orgStatus, setOrgStatus] = useState<{ status: string; reason?: string; orgSize?: string } | null>(null);
 
   useEffect(() => {
+    const user = getUser();
+    const orgId = user?.orgId ?? 'default';
+    const prepKey = `mdrx_waiting_tasks_${orgId}`;
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed: string[] = JSON.parse(stored);
-        setChecked(new Set(['submitted', ...parsed]));
-      }
+      const stored = localStorage.getItem('mydashrx_pending_checklist');
+      if (stored) setChecked(new Set(['submitted', ...(JSON.parse(stored) as string[])]));
+      const prepStored = localStorage.getItem(prepKey);
+      if (prepStored) setPrepChecked(new Set(JSON.parse(prepStored) as string[]));
     } catch { /* ignore */ }
     setMounted(true);
     api.get<{ status: string; reason?: string }>('/auth/org-status')
@@ -37,15 +73,27 @@ export default function PendingApprovalPage() {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       try {
-        const toStore = [...next].filter(k => k !== 'submitted');
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+        localStorage.setItem('mydashrx_pending_checklist', JSON.stringify([...next].filter(k => k !== 'submitted')));
       } catch { /* ignore */ }
+      return next;
+    });
+  };
+
+  const togglePrep = (id: string) => {
+    const user = getUser();
+    const orgId = user?.orgId ?? 'default';
+    setPrepChecked(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      try { localStorage.setItem(`mdrx_waiting_tasks_${orgId}`, JSON.stringify([...next])); } catch { /* ignore */ }
       return next;
     });
   };
 
   const completedCount = checked.size;
   const totalCount = TASKS.length;
+  const prepDone = prepChecked.size;
+  const prepTotal = PREP_TASKS.length;
 
   if (orgStatus?.status === 'rejected') {
     return (
@@ -151,6 +199,52 @@ export default function PendingApprovalPage() {
               );
             })}
           </ul>
+        </div>
+
+        {/* P-CNV27: Get ready while you wait — 3 prep tasks + animated progress ring */}
+        <div className="border-t border-gray-100 pt-5 mb-5">
+          <div className="flex items-center gap-3 mb-3">
+            {mounted && <ProgressRing done={prepDone} total={prepTotal} />}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700">Get ready while you wait</h3>
+              <p className="text-xs text-gray-400 mt-0.5">Complete these before you go live</p>
+            </div>
+          </div>
+          <ul className="space-y-2">
+            {PREP_TASKS.map(task => {
+              const done = prepChecked.has(task.id);
+              return (
+                <li key={task.id} className="flex items-center gap-3 text-sm">
+                  <button
+                    onClick={() => togglePrep(task.id)}
+                    className={`w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center transition-colors ${done ? 'bg-green-100 text-green-600' : 'border-2 border-gray-200 hover:border-blue-300'}`}
+                    aria-label={done ? `Uncheck ${task.text}` : `Check ${task.text}`}
+                  >
+                    {done && (
+                      <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </button>
+                  <span className={`flex-1 ${done ? 'text-gray-400 line-through' : 'text-gray-600'}`}>{task.text}</span>
+                  {task.ctaType === 'link' && task.href && (
+                    <a href={task.href} className="text-xs text-[#0F4C81] hover:underline font-medium">{task.cta}</a>
+                  )}
+                  {task.ctaType === 'bookmark' && (
+                    <button
+                      onClick={() => { setShowBookmarkHelp(v => !v); togglePrep(task.id); }}
+                      className="text-xs text-[#0F4C81] hover:underline font-medium"
+                    >{task.cta}</button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {showBookmarkHelp && (
+            <div className="mt-3 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-800">
+              <strong>How to bookmark:</strong> Press <kbd className="bg-white border border-blue-200 rounded px-1">Ctrl+D</kbd> (Windows) or <kbd className="bg-white border border-blue-200 rounded px-1">⌘+D</kbd> (Mac) to bookmark this page.
+            </div>
+          )}
         </div>
 
         {/* CTAs */}

@@ -191,6 +191,43 @@ export async function sendRoleChangeEmail(
   }).catch((e: unknown) => { console.error('[Resend] role change email failed:', e); });
 }
 
+/** P-CNV28: PLG aha-moment email — fires once on first route dispatch */
+export async function sendAhaMomentEmail(orgId: string, adminEmail: string, orgName: string): Promise<void> {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  if (await isSuppressed(adminEmail)) { console.log(`[emailHelpers] suppressed aha-moment email to ${adminEmail}`); return; }
+  const dash = dashUrl();
+  fetch(RESEND, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+    body: JSON.stringify({
+      from: mailSender(),
+      to: adminEmail,
+      reply_to: 'onboarding@mydashrx.com',
+      subject: 'Your first delivery is live 🚚',
+      track_clicks: false,
+      track_opens: false,
+      headers: { 'Feedback-ID': 'stream:mydashrx:resend:aha_moment' },
+      html: `
+        <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your first delivery is now live — the driver has SMS directions and the patient gets a tracking link.</span>
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+          <h2 style="color:#0F4C81;margin:0 0 8px">Your first delivery is live! 🚚</h2>
+          <p style="color:#374151;margin:0 0 16px;font-size:15px">Congratulations — <strong>${orgName}</strong> just dispatched its first route on MyDashRx.</p>
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;margin-bottom:24px">
+            <div style="margin-bottom:8px"><span style="font-size:13px;font-weight:600;color:#166534">What's happening now:</span></div>
+            <ul style="margin:0;padding-left:16px;font-size:13px;color:#14532d;line-height:1.9">
+              <li>Your driver has received SMS turn-by-turn directions</li>
+              <li>The patient will receive a tracking link when the driver is en route</li>
+              <li>You'll see live location updates on the map</li>
+            </ul>
+          </div>
+          <a href="${dash}/dashboard/map" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;margin-bottom:16px">Track this delivery live →</a>
+          <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Questions? Reply to this email or contact <a href="mailto:onboarding@mydashrx.com" style="color:#0F4C81">onboarding@mydashrx.com</a></p>
+        </div>`,
+    }),
+  }).catch((e: unknown) => { console.error('[Resend] aha-moment email failed:', e); });
+}
+
 /** P-CNV14: Abandonment recovery email — sent to pharmacy admins who started signup but didn't complete */
 export async function sendAbandonmentEmail(adminEmail: string, orgName: string | undefined, unsubscribeUrl: string): Promise<void> {
   const resendKey = process.env.RESEND_API_KEY;

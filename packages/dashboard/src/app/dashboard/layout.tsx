@@ -11,6 +11,7 @@ import { useIdleTimeout } from '@/hooks/useIdleTimeout';
 import { IdleWarningModal } from '@/components/IdleWarningModal';
 import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 import { OnboardingNudgeBar } from '@/components/OnboardingNudgeBar';
+import { ReactivationBanner } from '@/components/ReactivationBanner';
 
 // Which roles can see each nav item. '*' = all authenticated roles.
 const NAV_ROLE_MAP: Record<string, string[]> = {
@@ -372,6 +373,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         )}
         {/* P-ONB40: amber nudge bar for stuck pharmacy admins >48hr post-approval with no routes */}
         {user?.role === 'pharmacy_admin' && user?.orgId && <OnboardingNudgeBar orgId={user.orgId} />}
+        {/* P-CNV29: re-activation banner — shows when last dispatch was >7 days ago */}
+        {user?.role === 'pharmacy_admin' && user?.orgId && <ReactivationBanner orgId={user.orgId} />}
         {user?.role === 'pharmacy_admin' && <OnboardingChecklist />}
         {children}
       </main>

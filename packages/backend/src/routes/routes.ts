@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { routes, stops, plans, drivers, organizations, users, adminAuditLogs } from '../db/schema.js';
 import { eq, and, isNull, inArray, notInArray, or } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { sendAhaMomentEmail } from '../lib/emailHelpers.js';
 
 export const routeRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
@@ -74,11 +75,42 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     if (!updated) return reply.code(404).send({ error: 'Not found' });
 
     // P-ONB38/P-ONB37: set firstDispatchAt + activatedAt on first route dispatch (idempotent)
+    // P-CNV28: aha-moment email on first dispatch — fire-and-forget
+    // P-CNV29: lastDispatchedAt updated on every dispatch
     if (status === 'active') {
       const now = new Date();
+      // P-CNV29: always update lastDispatchedAt
       db.update(organizations)
-        .set({ firstDispatchAt: now, activatedAt: now })
+        .set({ lastDispatchedAt: now })
+        .where(eq(organizations.id, userOrgId))
+        .catch(console.error);
+      // P-ONB38: set firstDispatchAt + activatedAt once (idempotent)
+      // P-CNV28: also set firstDispatchedAt (dedicated column for aha-moment tracking)
+      db.update(organizations)
+        .set({ firstDispatchAt: now, activatedAt: now, firstDispatchedAt: now })
         .where(and(eq(organizations.id, userOrgId), isNull(organizations.firstDispatchAt)))
+        .then(async () => {
+          // P-CNV28: fire aha-moment email on first dispatch — lookup pharmacy_admin email
+          try {
+            const [admin] = await db.select({ userId: users.id, email: users.email, name: users.name, orgName: organizations.name })
+              .from(users)
+              .innerJoin(organizations, eq(organizations.id, users.orgId))
+              .where(and(eq(users.orgId, userOrgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)))
+              .limit(1);
+            if (admin && admin.userId) {
+              sendAhaMomentEmail(userOrgId, admin.email, admin.orgName).catch(console.error);
+              // Audit log aha_moment_email_sent — HIPAA §164.312(b)
+              db.insert(adminAuditLogs).values({
+                actorId: admin.userId,
+                actorEmail: admin.email,
+                action: 'aha_moment_email_sent',
+                targetId: userOrgId,
+                targetName: admin.orgName,
+                metadata: { orgId: userOrgId, adminEmail: admin.email },
+              }).catch(console.error);
+            }
+          } catch { /* fire-and-forget — never block dispatch */ }
+        })
         .catch(console.error);
     }
 

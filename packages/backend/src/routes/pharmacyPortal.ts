@@ -234,19 +234,28 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
       db.select({ n: count() }).from(drivers).where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt))),
       db.select({ n: count() }).from(plans).where(and(eq(plans.orgId, orgId), isNull(plans.deletedAt))),
       db.select({ n: count() }).from(stops).where(and(eq(stops.orgId, orgId), eq(stops.status, 'completed'), isNull(stops.deletedAt))),
-      db.select({ approvedAt: organizations.approvedAt, onboardingBannerDismissedAt: organizations.onboardingBannerDismissedAt, firstDispatchAt: organizations.firstDispatchAt })
-        .from(organizations).where(eq(organizations.id, orgId)).limit(1),
+      db.select({
+        approvedAt: organizations.approvedAt,
+        onboardingBannerDismissedAt: organizations.onboardingBannerDismissedAt,
+        firstDispatchAt: organizations.firstDispatchAt,
+        lastDispatchedAt: organizations.lastDispatchedAt,
+        reactivationBannerDismissedAt: organizations.reactivationBannerDismissedAt,
+      }).from(organizations).where(eq(organizations.id, orgId)).limit(1),
     ]);
 
+    const org = orgRow[0];
     return reply.send({
       hasDepot: (depotCount[0]?.n ?? 0) > 0,
       hasDriver: (driverCount[0]?.n ?? 0) > 0,
       hasPlan: (planCount[0]?.n ?? 0) > 0,
       hasCompletedStop: (completedStopCount[0]?.n ?? 0) > 0,
       // P-ONB40: routesCreated = whether firstDispatchAt is set (first route ever dispatched)
-      routesCreated: orgRow[0]?.firstDispatchAt ? 1 : 0,
-      approvedAt: orgRow[0]?.approvedAt ?? null,
-      dismissedAt: orgRow[0]?.onboardingBannerDismissedAt ?? null,
+      routesCreated: org?.firstDispatchAt ? 1 : 0,
+      approvedAt: org?.approvedAt ?? null,
+      dismissedAt: org?.onboardingBannerDismissedAt ?? null,
+      // P-CNV29: re-activation banner fields
+      lastDispatchedAt: org?.lastDispatchedAt ?? null,
+      reactivationBannerDismissedAt: org?.reactivationBannerDismissedAt ?? null,
     });
   });
 
@@ -299,5 +308,16 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
     }).catch(() => {});
 
     return reply.send({ ok: true, role, permissions });
+  });
+
+  // P-CNV29: Dismiss re-activation banner — sets reactivationBannerDismissedAt = NOW()
+  app.patch('/reactivation-banner/dismiss', {
+    preHandler: requireRole('pharmacy_admin'),
+  }, async (req, reply) => {
+    const user = req.user as { orgId: string };
+    await db.update(organizations)
+      .set({ reactivationBannerDismissedAt: new Date() })
+      .where(eq(organizations.id, user.orgId));
+    return reply.send({ ok: true });
   });
 };
