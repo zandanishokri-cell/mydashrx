@@ -9,10 +9,15 @@ interface OrgRow {
   id: string; name: string; timezone: string; billingPlan: string;
   hipaaBaaStatus: string; userCount: number; stopCount30d: number; createdAt: string;
 }
+interface ActivationFunnel {
+  signedUp: number; approved: number; hasDepot: number;
+  hasDriver: number; hasPlan: number; hasDispatched: number;
+}
 interface Stats {
   totalOrgs: number; activeOrgs: number; totalDrivers: number;
   totalStops30d: number; totalStopsAllTime: number; revenueEstimate: number;
   topOrgs: { orgId: string; orgName: string; stops30d: number }[];
+  activationFunnel?: ActivationFunnel;
 }
 // P-ML21: magic link funnel metrics
 interface MagicLinkFunnel {
@@ -184,6 +189,43 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* P-ONB44: Activation funnel step drop-off */}
+      {stats?.activationFunnel && (() => {
+        const f = stats.activationFunnel!;
+        const base = f.signedUp || 1;
+        const steps = [
+          { label: 'Signed Up', count: f.signedUp },
+          { label: 'Approved', count: f.approved },
+          { label: 'Depot Added', count: f.hasDepot },
+          { label: 'Driver Added', count: f.hasDriver },
+          { label: 'Plan Created', count: f.hasPlan },
+          { label: 'First Dispatch', count: f.hasDispatched },
+        ];
+        return (
+          <div className="px-6 py-3 border-b border-purple-100 bg-white/60 shrink-0">
+            <div className="flex items-center gap-2 mb-3">
+              <Activity size={14} className="text-purple-500" />
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Activation Funnel</span>
+            </div>
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+              {steps.map(({ label, count }) => {
+                const pct = Math.round((count / base) * 100);
+                return (
+                  <div key={label} className="bg-purple-50 rounded-lg px-3 py-3">
+                    <p className="text-xs text-gray-400 mb-1 truncate">{label}</p>
+                    <p className="text-lg font-bold text-gray-900">{count}</p>
+                    <div className="w-full bg-purple-100 rounded-full h-1.5 mt-2">
+                      <div className="bg-purple-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                    </div>
+                    <p className="text-xs text-purple-600 mt-1 font-medium">{pct}%</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Orgs table */}
       <div className="flex-1 overflow-auto px-6 py-4">

@@ -52,7 +52,8 @@ const STEP_DEFS: StepDef[] = [
 
 interface StatusMap { hasDepot: boolean; hasDriver: boolean; hasPlan: boolean; hasCompletedStop: boolean; dismissedAt?: string | null; }
 
-export function OnboardingChecklist() {
+// P-ONB45: forceExpanded — bypasses dismiss guard when opened via Setup Guide nav link
+export function OnboardingChecklist({ forceExpanded }: { forceExpanded?: boolean } = {}) {
   const [status, setStatus] = useState<StatusMap | null>(null);
   const [dismissed, setDismissed] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
@@ -63,14 +64,16 @@ export function OnboardingChecklist() {
 
     api.get<StatusMap>('/pharmacy/onboarding-status')
       .then(s => {
-        // P-ONB42: server state wins over localStorage — cross-device dismiss sync
-        if (s.dismissedAt) { setDismissed(true); return; }
-        if (localStorage.getItem(DISMISS_KEY)) { setDismissed(true); return; }
         setStatus(s);
+        // P-ONB42: server state wins over localStorage — cross-device dismiss sync
+        if (!forceExpanded) {
+          if (s.dismissedAt) { setDismissed(true); return; }
+          if (localStorage.getItem(DISMISS_KEY)) { setDismissed(true); return; }
+        }
         setDismissed(false);
       })
       .catch(() => {});
-  }, []);
+  }, [forceExpanded]);
 
   if (dismissed || !status) return null;
 

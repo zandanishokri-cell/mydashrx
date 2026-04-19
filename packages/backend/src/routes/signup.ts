@@ -415,7 +415,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
         sub: existing.id, email: existing.email, role: existing.role,
         orgId: existing.orgId, depotIds: existing.depotIds as string[],
       });
-      return reply.send({ ...tokens, user: { id: existing.id, name: existing.name, email: existing.email, role: existing.role, orgId: existing.orgId, depotIds: existing.depotIds } });
+      return reply.send({ ...tokens, role: existing.role, user: { id: existing.id, name: existing.name, email: existing.email, role: existing.role, orgId: existing.orgId, depotIds: existing.depotIds } });
     }
 
     const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
@@ -430,6 +430,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     });
     return reply.code(201).send({
       ...tokens,
+      role: user.role,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: [] },
     });
   });

@@ -99,6 +99,7 @@ const ROLE_REDIRECTS: Record<string, string> = {
   pharmacy_admin: '/dashboard',
   dispatcher: '/dashboard',
   driver: '/driver/routes',
+  pharmacist: '/dashboard/welcome/pharmacist',
 };
 
 const ALLOWED_PREFIXES = ['/dashboard', '/admin', '/pharmacy', '/driver'];

@@ -2,7 +2,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
-import { setSession } from '@/lib/auth';
+import { setSession, getRoleRedirect } from '@/lib/auth';
 import type { AuthTokens } from '@mydash-rx/shared';
 
 function AcceptContent() {
@@ -29,9 +29,10 @@ function AcceptContent() {
     setSubmitting(true);
     setError('');
     try {
-      const tokens = await api.post<AuthTokens>('/signup/invite/accept', { token, name });
+      const tokens = await api.post<AuthTokens & { role?: string }>('/signup/invite/accept', { token, name });
       setSession(tokens);
-      router.replace('/dashboard');
+      const role = (tokens as any).role ?? tokens.user?.role;
+      router.replace(getRoleRedirect(role));
     } catch (err: any) {
       const raw = (err as Error).message ?? '';
       const match = raw.match(/\{.*\}/);

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { createHmac, timingSafeEqual, createHash } from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, stops, drivers, adminAuditLogs, auditLogs, magicLinkTokens, refreshTokens, depots, approvalNotes, roleTemplates } from '../db/schema.js';
+import { organizations, users, stops, drivers, adminAuditLogs, auditLogs, magicLinkTokens, refreshTokens, depots, approvalNotes, roleTemplates, plans } from '../db/schema.js';
 import { eq, isNull, sql, gte, lte, count, and, desc, asc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
@@ -96,6 +96,33 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       ? Math.round(activationTimes.reduce((s, h) => s + h, 0) / activationTimes.length * 10) / 10
       : null;
 
+    // P-ONB44: activation funnel step drop-off — orgs that reached each setup milestone
+    const approvedOrgIds = allOrgs.filter(o => o.approvedAt).map(o => o.id);
+    const signedUp = allOrgs.length;
+    const approved = approvedOrgIds.length;
+
+    const [depotOrgs, driverOrgs, planOrgs] = approvedOrgIds.length > 0
+      ? await Promise.all([
+          db.selectDistinct({ orgId: depots.orgId }).from(depots)
+            .where(and(isNull(depots.deletedAt), inArray(depots.orgId, approvedOrgIds))),
+          db.selectDistinct({ orgId: drivers.orgId }).from(drivers)
+            .where(and(isNull(drivers.deletedAt), inArray(drivers.orgId, approvedOrgIds))),
+          db.selectDistinct({ orgId: plans.orgId }).from(plans)
+            .where(and(isNull(plans.deletedAt), inArray(plans.orgId, approvedOrgIds))),
+        ])
+      : [[], [], []];
+
+    const firstDispatchedCount = allOrgs.filter(o => o.firstDispatchAt).length;
+
+    const activationFunnel = {
+      signedUp,
+      approved,
+      hasDepot: depotOrgs.length,
+      hasDriver: driverOrgs.length,
+      hasPlan: planOrgs.length,
+      hasDispatched: firstDispatchedCount,
+    };
+
     return {
       totalOrgs: allOrgs.length,
       activeOrgs: activeOrgRows.length,
@@ -120,6 +147,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         activatedOrgs: activationTimes.length,
         unactivatedOrgs: allOrgs.filter(o => o.approvedAt && !o.firstDispatchAt).length,
       },
+      activationFunnel,
     };
   });
 

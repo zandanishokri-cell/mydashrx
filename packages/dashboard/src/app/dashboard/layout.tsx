@@ -4,7 +4,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { isAuthenticated, clearSession, getUser, attemptSilentBootstrap } from '@/lib/auth';
 import { api, setImpersonateOrgId } from '@/lib/api';
-import { LayoutDashboard, Route, Map, Users, LogOut, Search, BarChart2, Target, Shield, Scale, Menu, X, Zap, CreditCard, Settings2, ChevronDown, Crown, RefreshCw, TrendingUp, AlertTriangle } from 'lucide-react';
+import { LayoutDashboard, Route, Map, Users, LogOut, Search, BarChart2, Target, Shield, Scale, Menu, X, Zap, CreditCard, Settings2, ChevronDown, Crown, RefreshCw, TrendingUp, AlertTriangle, HelpCircle } from 'lucide-react';
 import NotificationPanel from '@/components/NotificationPanel';
 import { CommandPalette } from '@/components/CommandPalette';
 import { useIdleTimeout } from '@/hooks/useIdleTimeout';
@@ -59,6 +59,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // P-ONB45: Setup Guide re-entry drawer (pharmacy_admin only)
+  const [setupGuideOpen, setSetupGuideOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   // P-RBAC31: super admin impersonation state
   const [impersonatedOrg, setImpersonatedOrg] = useState<{ orgId: string; orgName: string } | null>(null);
@@ -109,7 +111,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (!user) return;
     if (user.role === 'driver' && !pathname.startsWith('/dashboard/driver') && !pathname.startsWith('/dashboard/welcome')) {
       router.replace('/dashboard/driver/me/routes');
-    } else if (user.role === 'pharmacist' && !pathname.startsWith('/pharmacist') && !pathname.startsWith('/dashboard/compliance') && !pathname.startsWith('/dashboard/mi-compliance') && !pathname.startsWith('/dashboard/settings')) {
+    } else if (user.role === 'pharmacist' && !pathname.startsWith('/pharmacist') && !pathname.startsWith('/dashboard/compliance') && !pathname.startsWith('/dashboard/mi-compliance') && !pathname.startsWith('/dashboard/settings') && !pathname.startsWith('/dashboard/welcome')) {
       router.replace('/pharmacist/queue');
     } else if ((user.role === 'dispatcher' || user.role === 'driver') && pathname === '/dashboard' && typeof window !== 'undefined') {
       // Show welcome page on first login if not yet seen
@@ -279,7 +281,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
           {navLinks}
         </nav>
-        <div className="px-3 pb-4">
+        <div className="px-3 pb-4 space-y-0.5">
+          {/* P-ONB45: Setup Guide re-entry — pharmacy_admin only */}
+          {user?.role === 'pharmacy_admin' && (
+            <button
+              onClick={() => setSetupGuideOpen(true)}
+              className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-sm text-gray-400 hover:bg-gray-50 hover:text-gray-600 transition-colors"
+            >
+              <HelpCircle size={15} />
+              Setup Guide
+            </button>
+          )}
           <button
             onClick={handleSignOut}
             className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-sm text-gray-400 hover:bg-gray-50 hover:text-gray-600 transition-colors"
@@ -363,6 +375,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {user?.role === 'pharmacy_admin' && <OnboardingChecklist />}
         {children}
       </main>
+      {/* P-ONB45: Setup Guide right-side drawer — pharmacy_admin re-entry */}
+      {setupGuideOpen && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
+            onClick={() => setSetupGuideOpen(false)}
+          />
+          <div className="fixed right-0 top-0 h-full w-80 bg-white shadow-xl z-50 flex flex-col border-l border-gray-100">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-blue-50/60">
+              <div className="flex items-center gap-2">
+                <HelpCircle size={16} className="text-blue-600" />
+                <span className="text-sm font-semibold text-gray-800">Setup Guide</span>
+              </div>
+              <button
+                onClick={() => setSetupGuideOpen(false)}
+                className="p-1 rounded hover:bg-blue-100 text-gray-400 transition-colors"
+                aria-label="Close Setup Guide"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto py-2">
+              <OnboardingChecklist forceExpanded />
+            </div>
+          </div>
+        </>
+      )}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {showWarning && <IdleWarningModal countdown={countdown} onExtend={extendSession} />}
     </div>
