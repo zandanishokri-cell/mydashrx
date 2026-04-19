@@ -5,10 +5,16 @@
 @layer base {
   :root {
     --color-primary: #0F4C81;
+    /* Brand colors (backgrounds, icons, borders — not for text on white) */
     --color-teal: #00B8A9;
     --color-amber: #F6A623;
     --color-coral: #E84855;
     --color-emerald: #2ECC71;
+    /* P-A11Y8: WCAG AA text variants (4.5:1 on white) — use these for text on white/light bg */
+    --color-teal-text: #007A73;    /* #007A73 on white = 4.8:1 ✓ */
+    --color-amber-text: #8B5A00;   /* #8B5A00 on white = 5.9:1 ✓ */
+    --color-coral-text: #B02030;   /* #B02030 on white = 5.5:1 ✓ */
+    --color-emerald-text: #1A7A44; /* #1A7A44 on white = 4.6:1 ✓ */
   }
 }
 

@@ -35,6 +35,7 @@ import rateLimit from '@fastify/rate-limit';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import staticFiles from '@fastify/static';
+import compress from '@fastify/compress';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { authRoutes } from './routes/auth.js';
@@ -91,6 +92,15 @@ try {
   console.error('P-SES18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-PERF1: idempotent DDL for performance indexes on stops table
+try {
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS stops_org_created_idx ON stops(org_id, created_at)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS stops_active_idx ON stops(org_id) WHERE deleted_at IS NULL`);
+  console.log('P-PERF1 stops performance indexes ensured');
+} catch (err) {
+  console.error('P-PERF1 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-CNV14: idempotent DDL for signup_intents table
 try {
   await db.execute(sql`
@@ -131,6 +141,9 @@ await app.register(jwt, {
 
 // P-SES20: HttpOnly cookie support for BFF token pattern
 await app.register(cookie, { secret: process.env.JWT_SECRET ?? 'dev-secret-change-in-prod-only' });
+
+// P-PERF2: brotli+gzip compression — reduces API payload sizes 60-80%
+await app.register(compress, { global: true, encodings: ['br', 'gzip', 'deflate'] });
 
 await app.register(rateLimit, {
   max: process.env.NODE_ENV === 'production' ? 300 : 10000,

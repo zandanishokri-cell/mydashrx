@@ -34,12 +34,62 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       depotCondition,
     );
 
-    // Status breakdown
-    const statusCounts = await db
-      .select({ status: stops.status, cnt: sql<number>`count(*)::int` })
-      .from(stops)
-      .where(base)
-      .groupBy(stops.status);
+    // P-PERF3: run all independent analytics queries in parallel (7-serial → 2-parallel groups)
+    const periodMs = toDate.getTime() - fromDate.getTime();
+    const prevFrom = new Date(fromDate.getTime() - periodMs);
+    const prevTo = new Date(fromDate.getTime() - 1);
+    const prevBase = and(eq(stops.orgId, orgId), isNull(stops.deletedAt), gte(stops.createdAt, prevFrom), lte(stops.createdAt, prevTo), depotCondition);
+
+    const [
+      statusCounts,
+      failureReasons,
+      dailyRaw,
+      driverStats,
+      [prevCountRow],
+      [deliveryTimeResult],
+      [onTimeResult],
+      depotStats,
+    ] = await Promise.all([
+      // Status breakdown
+      db.select({ status: stops.status, cnt: sql<number>`count(*)::int` })
+        .from(stops).where(base).groupBy(stops.status),
+      // Failure reasons
+      db.select({ reason: stops.failureReason, cnt: sql<number>`count(*)::int` })
+        .from(stops).where(and(base, eq(stops.status, 'failed'))).groupBy(stops.failureReason),
+      // Daily breakdown for charts
+      db.select({ day: sql<string>`DATE(${stops.createdAt})::text`, status: stops.status, cnt: sql<number>`count(*)::int` })
+        .from(stops).where(base).groupBy(sql`DATE(${stops.createdAt})`, stops.status),
+      // Per-driver stats — exclude unassigned stops (routeId=null)
+      db.select({
+          driverId: routes.driverId,
+          driverName: drivers.name,
+          total: sql<number>`count(*)::int`,
+          completed: sql<number>`sum(case when ${stops.status} = 'completed' then 1 else 0 end)::int`,
+          failed: sql<number>`sum(case when ${stops.status} = 'failed' then 1 else 0 end)::int`,
+        })
+        .from(stops).innerJoin(routes, eq(stops.routeId, routes.id)).leftJoin(drivers, eq(routes.driverId, drivers.id))
+        .where(base).groupBy(routes.driverId, drivers.name).orderBy(sql`count(*) DESC`),
+      // Week-over-week previous period count
+      db.select({ cnt: sql<number>`count(*)::int` }).from(stops).where(prevBase),
+      // avgDeliveryTime: arrivedAt → completedAt in minutes
+      db.select({ avgMin: sql<number>`avg(extract(epoch from (${stops.completedAt} - ${stops.arrivedAt})) / 60)` })
+        .from(stops).where(and(base, eq(stops.status, 'completed'), sql`${stops.arrivedAt} is not null`, sql`${stops.completedAt} is not null`)),
+      // onTimeRate: completed within delivery window
+      db.select({
+          onTime: sql<number>`sum(case when ${stops.completedAt} >= ${stops.windowStart} and ${stops.completedAt} <= ${stops.windowEnd} then 1 else 0 end)::int`,
+          withWindow: sql<number>`sum(case when ${stops.windowStart} is not null and ${stops.windowEnd} is not null and ${stops.completedAt} is not null then 1 else 0 end)::int`,
+        })
+        .from(stops).where(and(base, eq(stops.status, 'completed'))),
+      // Depot breakdown — INNER JOIN excludes unassigned stops to prevent "Unknown" phantom row
+      db.select({
+          depotId: plans.depotId,
+          depotName: depots.name,
+          total: sql<number>`count(*)::int`,
+          completed: sql<number>`sum(case when ${stops.status} = 'completed' then 1 else 0 end)::int`,
+        })
+        .from(stops).innerJoin(routes, eq(stops.routeId, routes.id)).innerJoin(plans, eq(routes.planId, plans.id))
+        .leftJoin(depots, eq(plans.depotId, depots.id)).where(base).groupBy(plans.depotId, depots.name).orderBy(sql`count(*) DESC`),
+    ]);
 
     const byStatus: Record<string, number> = {};
     for (const r of statusCounts) byStatus[r.status] = r.cnt;
@@ -48,28 +98,9 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     const completed = byStatus['completed'] ?? 0;
     const failed = byStatus['failed'] ?? 0;
     const rescheduled = byStatus['rescheduled'] ?? 0;
-    // successRate/failureRate denominators only count terminal statuses (completed + failed + rescheduled)
     const terminalTotal = completed + failed + rescheduled;
     const successRate = terminalTotal > 0 ? Math.round((completed / terminalTotal) * 1000) / 10 : 0;
     const failureRate = terminalTotal > 0 ? Math.round((failed / terminalTotal) * 1000) / 10 : 0;
-
-    // Failure reasons
-    const failureReasons = await db
-      .select({ reason: stops.failureReason, cnt: sql<number>`count(*)::int` })
-      .from(stops)
-      .where(and(base, eq(stops.status, 'failed')))
-      .groupBy(stops.failureReason);
-
-    // Daily breakdown for charts
-    const dailyRaw = await db
-      .select({
-        day: sql<string>`DATE(${stops.createdAt})::text`,
-        status: stops.status,
-        cnt: sql<number>`count(*)::int`,
-      })
-      .from(stops)
-      .where(base)
-      .groupBy(sql`DATE(${stops.createdAt})`, stops.status);
 
     // Pivot daily data
     const dayMap: Record<string, { date: string; total: number; completed: number; failed: number; rescheduled: number }> = {};
@@ -82,84 +113,26 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     }
     const daily = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
 
-    // Per-driver stats — exclude unassigned stops (routeId=null) from driver breakdown
-    const driverStats = await db
-      .select({
-        driverId: routes.driverId,
-        driverName: drivers.name,
-        total: sql<number>`count(*)::int`,
-        completed: sql<number>`sum(case when ${stops.status} = 'completed' then 1 else 0 end)::int`,
-        failed: sql<number>`sum(case when ${stops.status} = 'failed' then 1 else 0 end)::int`,
-      })
-      .from(stops)
-      .innerJoin(routes, eq(stops.routeId, routes.id))
-      .leftJoin(drivers, eq(routes.driverId, drivers.id))
-      .where(base)
-      .groupBy(routes.driverId, drivers.name)
-      .orderBy(sql`count(*) DESC`);
-
     const driverStatsNamed = driverStats.map(d => ({ ...d, driverName: d.driverName ?? 'Unknown Driver' }));
     const activeDriverCount = driverStatsNamed.filter(d => d.total > 0).length;
-    // Use routed-stop total (from driverStats) so unassigned stops don't inflate avg
     const routedTotal = driverStatsNamed.reduce((s, d) => s + d.total, 0);
     const avgPerDriver = activeDriverCount > 0 ? Math.round(routedTotal / activeDriverCount) : 0;
 
-    // Top performers: top 3 by completion rate (min 1 delivery)
     const topPerformers = driverStatsNamed
       .filter(d => d.total > 0)
       .map(d => ({ ...d, completionRate: Math.round((d.completed / d.total) * 100) }))
       .sort((a, b) => b.completionRate - a.completionRate)
       .slice(0, 3);
 
-    // Week-over-week change
-    const periodMs = toDate.getTime() - fromDate.getTime();
-    const prevFrom = new Date(fromDate.getTime() - periodMs);
-    const prevTo = new Date(fromDate.getTime() - 1);
-    const prevBase = and(eq(stops.orgId, orgId), isNull(stops.deletedAt), gte(stops.createdAt, prevFrom), lte(stops.createdAt, prevTo), depotCondition);
-    const [prevCount] = await db.select({ cnt: sql<number>`count(*)::int` }).from(stops).where(prevBase);
-    const prevTotal = prevCount?.cnt ?? 0;
-    const weekOverWeekChange = prevTotal > 0
-      ? Math.round(((total - prevTotal) / prevTotal) * 1000) / 10
-      : null;
+    const prevTotal = prevCountRow?.cnt ?? 0;
+    const weekOverWeekChange = prevTotal > 0 ? Math.round(((total - prevTotal) / prevTotal) * 1000) / 10 : null;
 
-    // avgDeliveryTime: arrivedAt → completedAt in minutes (arrivedAt exists in schema)
-    const [deliveryTimeResult] = await db
-      .select({
-        avgMin: sql<number>`avg(extract(epoch from (${stops.completedAt} - ${stops.arrivedAt})) / 60)`,
-      })
-      .from(stops)
-      .where(and(base, eq(stops.status, 'completed'), sql`${stops.arrivedAt} is not null`, sql`${stops.completedAt} is not null`));
-    const avgDeliveryTime = deliveryTimeResult?.avgMin != null
-      ? Math.round(deliveryTimeResult.avgMin * 10) / 10
-      : null;
-
-    // onTimeRate: completed within the delivery window (not just before windowEnd)
-    const [onTimeResult] = await db
-      .select({
-        onTime: sql<number>`sum(case when ${stops.completedAt} >= ${stops.windowStart} and ${stops.completedAt} <= ${stops.windowEnd} then 1 else 0 end)::int`,
-        withWindow: sql<number>`sum(case when ${stops.windowStart} is not null and ${stops.windowEnd} is not null and ${stops.completedAt} is not null then 1 else 0 end)::int`,
-      })
-      .from(stops)
-      .where(and(base, eq(stops.status, 'completed')));
+    const avgDeliveryTime = deliveryTimeResult?.avgMin != null ? Math.round(deliveryTimeResult.avgMin * 10) / 10 : null;
     const onTimeRate = (onTimeResult?.withWindow ?? 0) > 0
       ? Math.round(((onTimeResult!.onTime ?? 0) / onTimeResult!.withWindow) * 1000) / 10
       : null;
 
-    // Depot breakdown — INNER JOIN excludes unassigned stops (routeId=null) to prevent "Unknown" phantom row
-    const depotStats = await db
-      .select({
-        depotId: plans.depotId,
-        depotName: depots.name,
-        total: sql<number>`count(*)::int`,
-        completed: sql<number>`sum(case when ${stops.status} = 'completed' then 1 else 0 end)::int`,
-      })
-      .from(stops)
-      .innerJoin(routes, eq(stops.routeId, routes.id))
-      .innerJoin(plans, eq(routes.planId, plans.id))
-      .leftJoin(depots, eq(plans.depotId, depots.id))
-      .where(base)
-      .groupBy(plans.depotId, depots.name)
-      .orderBy(sql`count(*) DESC`);
+    const depotStatsResult = depotStats;
 
     return {
       summary: { total, completed, failed, successRate, failureRate, avgPerDriver, activeDriverCount, avgDeliveryTime, onTimeRate },
@@ -167,7 +140,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       daily,
       failureReasons: failureReasons.map(r => ({ reason: r.reason ?? 'Unknown', count: r.cnt })),
       drivers: driverStatsNamed,
-      depots: depotStats,
+      depots: depotStatsResult,
       topPerformers,
       weekOverWeekChange,
     };
