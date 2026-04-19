@@ -74,6 +74,8 @@ export const organizations = pgTable('organizations', {
   rejectionReason: text('rejection_reason'),
   rejectionNote: text('rejection_note'),
   riskFlags: jsonb('risk_flags').$type<string[]>(),
+  trustTier: text('trust_tier').default('manual'), // 'auto_approve' | 'block' | 'manual'
+  autoApprovedAt: timestamp('auto_approved_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

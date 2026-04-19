@@ -49,6 +49,7 @@ import { notificationRoutes } from './routes/notifications.js';
 import { userSettingsRoutes } from './routes/userSettings.js';
 import { phiFilterPlugin } from './middleware/phiFilter.js';
 import { sendDailyReport } from './services/dailyReport.js';
+import { runAutoApproval } from './lib/autoApproval.js';
 import { db, client } from './db/connection.js';
 import { organizations, magicLinkTokens } from './db/schema.js';
 import { isNull, isNotNull, and, or, lt, sql } from 'drizzle-orm';
@@ -171,6 +172,10 @@ try {
   app.log.error(err);
   process.exit(1);
 }
+
+// P-ADM25: Auto-approval sweep — every 5 min, handles trustTier='auto_approve'/'block'
+setInterval(() => { runAutoApproval().catch(console.error); }, 5 * 60 * 1000);
+runAutoApproval().catch(console.error);
 
 // Startup config warnings — log which optional features are unconfigured
 const optionalEnvs: [string, string][] = [
