@@ -16,6 +16,7 @@ const pharmacySignupSchema = z.object({
   adminName: z.string().min(2).max(100),
   adminEmail: z.string().email(),
   npiNumber: z.string().regex(/^\d{10}$/).optional(), // P-ADM27
+  orgSize: z.enum(['solo', 'small_group', 'enterprise']).optional(), // P-CNV24
 });
 
 const driverSignupSchema = z.object({
@@ -185,7 +186,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
   app.post('/pharmacy', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req, reply) => {
     const parsed = pharmacySignupSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request' });
-    const { orgName, orgPhone, orgAddress, adminName, adminEmail, npiNumber } = parsed.data;
+    const { orgName, orgPhone, orgAddress, adminName, adminEmail, npiNumber, orgSize } = parsed.data;
 
     const existing = await findUserByEmail(adminEmail);
     if (existing) return reply.code(409).send({ error: 'An account with this email already exists.' });
@@ -199,6 +200,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
       riskScore,
       trustTier,
       ...(npiNumber ? { npiNumber, npiVerified, ...(npiVerified ? { npiVerifiedAt: new Date() } : {}) } : {}),
+      ...(orgSize ? { orgSize } : {}), // P-CNV24: role segmentation
     }).returning();
 
     const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
@@ -220,25 +222,45 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send({ message: 'Application submitted. You will hear from us within 2–4 business hours.', tier: displayTier });
   });
 
-  // ─── P-CNV14: Abandonment Intent Capture ─────────────────────────────────
-  // Fire-and-forget from frontend on email blur in Step 2
+  // ─── P-CNV14 + P-CNV25: Abandonment Intent Capture ──────────────────────
+  // Fire-and-forget from frontend on email blur or tab-close beforeunload
   // No auth required — unauthenticated endpoint, email is the only PII
   app.post('/pharmacy-intent', { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (req, reply) => {
-    const { adminEmail, orgName } = req.body as { adminEmail?: string; orgName?: string };
+    const { adminEmail, orgName, step, orgSize, source } = req.body as {
+      adminEmail?: string; orgName?: string;
+      step?: number; orgSize?: string; source?: string;
+    };
     if (!adminEmail || !z.string().email().safeParse(adminEmail).success) {
       return reply.code(400).send({ error: 'Valid email required' });
     }
-    // Idempotent — skip if email already has a live signup or a recent intent
+    // Idempotent — skip if email already has a live signup
     const existing = await findUserByEmail(adminEmail);
     if (existing) return reply.code(200).send({ recorded: false, reason: 'user_exists' });
 
-    const [recentIntent] = await db.select({ id: signupIntents.id })
+    const validOrgSize = ['solo', 'small_group', 'enterprise'].includes(orgSize ?? '')
+      ? (orgSize as string) : null;
+    const validSource = ['blur', 'beforeunload', 'rescue_banner'].includes(source ?? '')
+      ? (source as string) : 'blur';
+
+    // Upsert — update step/orgSize/source on re-capture (more intent data is better)
+    const [existing_intent] = await db.select({ id: signupIntents.id })
       .from(signupIntents)
       .where(eq(signupIntents.adminEmail, adminEmail))
       .limit(1);
-    if (recentIntent) return reply.code(200).send({ recorded: false, reason: 'already_captured' });
+    if (existing_intent) {
+      await db.update(signupIntents)
+        .set({ step: step ?? null, orgSize: validOrgSize, source: validSource, capturedAt: new Date() })
+        .where(eq(signupIntents.id, existing_intent.id));
+      return reply.code(200).send({ recorded: true, updated: true });
+    }
 
-    await db.insert(signupIntents).values({ adminEmail, orgName: orgName ?? null });
+    await db.insert(signupIntents).values({
+      adminEmail,
+      orgName: orgName ?? null,
+      step: step ?? null,
+      orgSize: validOrgSize,
+      source: validSource,
+    });
     return reply.code(201).send({ recorded: true });
   });
 

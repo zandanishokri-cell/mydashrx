@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { RefreshCw, Package, CheckCircle2, XCircle, Clock, Truck, ChevronRight } from 'lucide-react';
+import { EmptyStateActivation } from '@/components/ui/EmptyStateActivation';
 
 interface Order {
   id: string;
@@ -180,10 +181,21 @@ export default function PharmacyOrdersPage() {
           {[1, 2, 3].map(i => <div key={i} className="h-24 bg-white rounded-2xl animate-pulse" />)}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl p-10 text-center shadow-sm">
-          <Package size={32} className="text-gray-200 mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">No orders {tab !== 'all' ? `with status "${STATUS_TABS.find(t => t.key === tab)?.label}"` : 'yet'}</p>
-        </div>
+        tab !== 'all' ? (
+          <div className="bg-white rounded-2xl p-10 text-center shadow-sm">
+            <Package size={32} className="text-gray-200 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm">No orders with status &quot;{STATUS_TABS.find(t => t.key === tab)?.label}&quot;</p>
+          </div>
+        ) : (
+          <EmptyStateActivation
+            title="No orders yet"
+            description="Your delivery orders will appear here once your pharmacy dispatcher starts creating routes."
+            ctaLabel="Go to dashboard"
+            ctaHref="/pharmacy/dashboard"
+            timeEstimate="~2 min to explore"
+            placeholderRows={3}
+          />
+        )
       ) : (
         <div className="space-y-2">
           {filtered.map(order => (

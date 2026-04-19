@@ -4,7 +4,15 @@ import { api } from '@/lib/api';
 import { SignupTrustBlock } from '@/components/SignupTrustBlock';
 import { useFieldError } from '@/lib/useFieldError';
 
-type Step = 1 | 2;
+// P-CNV24: Step 0 = role segmentation; Steps 1 & 2 = existing pharmacy info / account
+type Step = 0 | 1 | 2;
+type OrgSize = 'solo' | 'small_group' | 'enterprise';
+
+const ORG_SIZE_OPTIONS: { value: OrgSize; label: string; subtitle: string; icon: string }[] = [
+  { value: 'solo', label: 'Solo pharmacist', subtitle: 'Just me — independent or owner-operated', icon: '🧑‍⚕️' },
+  { value: 'small_group', label: 'Small group', subtitle: '2–10 locations or pharmacists', icon: '🏪' },
+  { value: 'enterprise', label: 'Enterprise', subtitle: '10+ locations or large operation', icon: '🏢' },
+];
 
 const STEPS = [
   { label: 'Pharmacy info', time: '~1 min' },
@@ -13,11 +21,13 @@ const STEPS = [
 
 const DRAFT_KEY = 'pharmacy_wizard_draft';
 
+// StepIndicator shows steps 1 and 2 (step 0 is pre-form card-select, not numbered)
 function StepIndicator({ current }: { current: Step }) {
+  if (current === 0) return null;
   return (
     <div className="flex items-center gap-2 mb-8">
       {STEPS.map(({ label, time }, i) => {
-        const step = (i + 1) as Step;
+        const step = (i + 1) as 1 | 2;
         const active = step === current;
         const done = step < current;
         return (
@@ -48,8 +58,12 @@ const validateEmail = (v: string) => {
 const isDuplicateError = (msg: string) =>
   msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('already registered');
 
+const INTENT_URL = `${process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com'}/api/v1/signup/pharmacy-intent`;
+const RESCUE_KEY = 'mdrx_rescue_shown';
+
 export default function PharmacySignupPage() {
-  const [step, setStep] = useState<Step>(1);
+  const [step, setStep] = useState<Step>(0);
+  const [orgSize, setOrgSize] = useState<OrgSize | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [emailError, setEmailError] = useState('');
   // P-A11Y20: accessible field error
@@ -64,6 +78,8 @@ export default function PharmacySignupPage() {
   const [npiStatus, setNpiStatus] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle');
   // P-CNV15: approval tier from backend
   const [approvalTier, setApprovalTier] = useState<'auto_approve' | 'manual'>('manual');
+  // P-CNV25: rescue banner — shown once per session after 75s if email entered but not submitted
+  const [showRescueBanner, setShowRescueBanner] = useState(false);
 
   useEffect(() => {
     try {
@@ -90,6 +106,40 @@ export default function PharmacySignupPage() {
     } catch { /* ignore */ }
   }, [form]);
 
+  // P-CNV25: 75s rescue banner — fires once per session if email entered but form not submitted
+  useEffect(() => {
+    if (submitted) return;
+    const t = setTimeout(() => {
+      if (!form.adminEmail || sessionStorage.getItem(RESCUE_KEY)) return;
+      setShowRescueBanner(true);
+      sessionStorage.setItem(RESCUE_KEY, '1');
+      // Also fire intent capture with source=rescue_banner + orgSize for segmentation
+      fetch(INTENT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminEmail: form.adminEmail, orgName: form.orgName, step, orgSize, source: 'rescue_banner' }),
+      }).catch(() => {});
+    }, 75_000);
+    return () => clearTimeout(t);
+  }, [form.adminEmail, form.orgName, orgSize, step, submitted]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // P-CNV25: beforeunload intent capture via sendBeacon (silent, non-blocking)
+  useEffect(() => {
+    const handle = () => {
+      if (!form.adminEmail || submitted) return;
+      navigator.sendBeacon(INTENT_URL, JSON.stringify({
+        adminEmail: form.adminEmail,
+        orgName: form.orgName,
+        step,
+        orgSize,
+        source: 'beforeunload',
+        timestamp: new Date().toISOString(),
+      }));
+    };
+    window.addEventListener('beforeunload', handle);
+    return () => window.removeEventListener('beforeunload', handle);
+  }, [form.adminEmail, form.orgName, orgSize, step, submitted]);
+
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [key]: e.target.value }));
 
@@ -110,6 +160,7 @@ export default function PharmacySignupPage() {
     try {
       const body: Record<string, string> = { ...form };
       if (npiNumber) body.npiNumber = npiNumber;
+      if (orgSize) body.orgSize = orgSize;
       const resp = await api.post('/signup/pharmacy', body) as { tier?: string };
       localStorage.removeItem(DRAFT_KEY);
       if (resp?.tier === 'auto_approve') setApprovalTier('auto_approve');
@@ -197,12 +248,50 @@ export default function PharmacySignupPage() {
             </button>
           </div>
         )}
+        {/* P-CNV25: rescue banner — amber nudge after 75s idle with email entered */}
+        {showRescueBanner && (
+          <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4" role="status" aria-live="polite">
+            <p className="text-xs text-amber-800">Still deciding? Most pharmacies finish in under 3 minutes.</p>
+            <button
+              onClick={() => setShowRescueBanner(false)}
+              className="ml-3 text-amber-500 hover:text-amber-700 shrink-0 text-sm leading-none"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         <h1 className="text-2xl font-bold text-[#0F4C81] mb-1" style={{ fontFamily: 'var(--font-sora)' }}>
           Join MyDashRx
         </h1>
         <p className="text-gray-500 text-sm mb-6">Set up your pharmacy account</p>
 
         <StepIndicator current={step} />
+
+        {/* P-CNV24: Step 0 — role segmentation card-select */}
+        {step === 0 && (
+          <div>
+            <p className="text-sm font-medium text-gray-700 mb-3">What best describes your pharmacy?</p>
+            <div className="space-y-2 mb-6">
+              {ORG_SIZE_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => { setOrgSize(opt.value); setStep(1); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left transition-all hover:border-[#0F4C81] hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F4C81] ${orgSize === opt.value ? 'border-[#0F4C81] bg-blue-50' : 'border-gray-200 bg-white'}`}
+                  aria-pressed={orgSize === opt.value}
+                >
+                  <span className="text-2xl leading-none">{opt.icon}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{opt.label}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{opt.subtitle}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {step === 1 && (
           <div className="space-y-4">

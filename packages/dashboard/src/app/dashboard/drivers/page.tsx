@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { FormField, SelectField } from '@/components/ui/FormField';
 import { Truck, Plus, Search, Pencil, Trash2, Download, Users, AlertTriangle } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { EmptyStateActivation } from '@/components/ui/EmptyStateActivation';
 import { StepCompleteModal } from '@/components/StepCompleteModal';
 
 interface Driver {
@@ -276,14 +277,14 @@ export default function DriversPage() {
             description="Try clearing the search or status filter."
           />
         ) : (
-          <EmptyState
-            icon={Users}
+          <EmptyStateActivation
             title="No drivers yet"
-            description="Add your first driver to start assigning deliveries."
-            primaryLabel={canManage ? 'Add driver' : undefined}
-            onPrimary={canManage ? () => setShowAdd(true) : undefined}
-            secondaryLabel="Learn about driver management"
-            secondaryHref="/dashboard/settings"
+            description="Add your first driver to start assigning deliveries and tracking routes."
+            ctaLabel="Add your first driver"
+            ctaOnClick={canManage ? () => setShowAdd(true) : undefined}
+            ctaHref={canManage ? undefined : '/dashboard/settings'}
+            timeEstimate="~2 min to add"
+            placeholderRows={3}
           />
         )
       ) : (

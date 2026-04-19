@@ -8,6 +8,7 @@ import { DepotFilter } from '@/components/ui/DepotFilter';
 import { Plus, Calendar, ChevronLeft, ChevronRight, Zap, Route, AlertCircle, X } from 'lucide-react';
 import { localDateStr } from '@/lib/dateUtils';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { EmptyStateActivation } from '@/components/ui/EmptyStateActivation';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; }
@@ -140,15 +141,13 @@ export default function PlansPage() {
 
       {/* Top-level onboarding empty state — zero plans ever created */}
       {!loading && plans.length === 0 && (
-        <EmptyState
-          icon={Route}
+        <EmptyStateActivation
           title="No delivery plans yet"
           description="Create your first delivery plan to start organizing routes and dispatching drivers."
-          primaryLabel="Create plan"
-          onPrimary={() => { window.location.href = '/dashboard/plans/new'; }}
-          secondaryLabel="View stops"
-          secondaryHref="/dashboard/stops"
-          highlight
+          ctaLabel="Create your first route"
+          ctaHref="/dashboard/plans/new"
+          timeEstimate="~3 min to set up"
+          placeholderRows={4}
         />
       )}
 

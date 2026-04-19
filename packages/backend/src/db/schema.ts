@@ -109,6 +109,8 @@ export const organizations = pgTable('organizations', {
   // P-ADM37: assigned reviewer — HIPAA §164.308(a)(3)(ii)(A) documented reviewer accountability
   assignedReviewerId: uuid('assigned_reviewer_id').references((): AnyPgColumn => users.id),
   assignedAt: timestamp('assigned_at'),
+  // P-CNV24: role segmentation — captured at Step 0 of signup wizard for copy branching + email segmentation
+  orgSize: text('org_size'), // 'solo' | 'small_group' | 'enterprise'
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });
@@ -647,11 +649,15 @@ export const approvalNotes = pgTable('approval_notes', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (t) => ({ orgIdx: index('approval_notes_org_idx').on(t.orgId) }));
 
-// P-CNV14: Signup intent capture for abandonment email recovery
+// P-CNV14 + P-CNV25: Signup intent capture for abandonment email recovery + rescue tracking
 export const signupIntents = pgTable('signup_intents', {
   id: uuid('id').primaryKey().defaultRandom(),
   orgName: text('org_name'),
   adminEmail: text('admin_email').notNull(),
+  step: integer('step'), // P-CNV25: wizard step at abandonment (1=pharmacy, 0=role-select)
+  orgSize: text('org_size'), // P-CNV24/P-CNV25: 'solo' | 'small_group' | 'enterprise'
+  source: text('source'), // P-CNV25: 'blur' | 'beforeunload' | 'rescue_banner'
+  capturedAt: timestamp('captured_at').notNull().defaultNow(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   recoveredAt: timestamp('recovered_at'), // set when abandonment email sent
   unsubscribedAt: timestamp('unsubscribed_at'), // CAN-SPAM compliance

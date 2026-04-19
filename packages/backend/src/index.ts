@@ -124,6 +124,25 @@ try {
   console.error('P-CNV14 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-CNV25: idempotent DDL — add step/org_size/source/captured_at to signup_intents
+try {
+  await db.execute(sql`ALTER TABLE signup_intents ADD COLUMN IF NOT EXISTS step integer`);
+  await db.execute(sql`ALTER TABLE signup_intents ADD COLUMN IF NOT EXISTS org_size text CHECK (org_size IN ('solo', 'small_group', 'enterprise'))`);
+  await db.execute(sql`ALTER TABLE signup_intents ADD COLUMN IF NOT EXISTS source text`);
+  await db.execute(sql`ALTER TABLE signup_intents ADD COLUMN IF NOT EXISTS captured_at timestamptz NOT NULL DEFAULT now()`);
+  console.log('P-CNV25 signup_intents columns ensured');
+} catch (err) {
+  console.error('P-CNV25 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-CNV24: idempotent DDL — add org_size to organizations for role segmentation
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS org_size text CHECK (org_size IN ('solo', 'small_group', 'enterprise'))`);
+  console.log('P-CNV24 organizations.org_size column ensured');
+} catch (err) {
+  console.error('P-CNV24 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-DEL9: HIPAA 164.310(d)(2)(i) PHI retention columns — idempotent DDL
 try {
   await db.execute(sql`ALTER TABLE proof_of_deliveries ADD COLUMN IF NOT EXISTS retention_expires_at timestamptz`);

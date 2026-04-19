@@ -15,7 +15,7 @@ const TASKS = [
 export default function PendingApprovalPage() {
   const [checked, setChecked] = useState<Set<string>>(new Set(['submitted']));
   const [mounted, setMounted] = useState(false);
-  const [orgStatus, setOrgStatus] = useState<{ status: string; reason?: string } | null>(null);
+  const [orgStatus, setOrgStatus] = useState<{ status: string; reason?: string; orgSize?: string } | null>(null);
 
   useEffect(() => {
     try {
@@ -84,11 +84,32 @@ export default function PendingApprovalPage() {
             </svg>
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Account pending approval</h2>
-          <p className="text-gray-500 text-sm mb-3">Your pharmacy account is under review.</p>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-700 text-xs font-medium rounded-full border border-green-100">
-            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-            Typical approval: 2–4 business hours
-          </div>
+          {/* P-CNV24: orgSize-branched copy — solo = warm/personal, enterprise = SLA/call */}
+          {orgStatus?.orgSize === 'enterprise' ? (
+            <>
+              <p className="text-gray-500 text-sm mb-3">Your enterprise account is in priority review.</p>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-100">
+                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                Priority review — expect a call within 2 business hours
+              </div>
+            </>
+          ) : orgStatus?.orgSize === 'solo' ? (
+            <>
+              <p className="text-gray-500 text-sm mb-3">We review every pharmacy personally. You&apos;ll hear from us within 24 hours.</p>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-700 text-xs font-medium rounded-full border border-green-100">
+                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                Personal review — typically within 24 hours
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-gray-500 text-sm mb-3">Your pharmacy account is under review.</p>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-700 text-xs font-medium rounded-full border border-green-100">
+                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                Typical approval: 2–4 business hours
+              </div>
+            </>
+          )}
         </div>
 
         <div className="border-t border-gray-100 pt-5 mb-5">
@@ -134,8 +155,12 @@ export default function PendingApprovalPage() {
 
         {/* CTAs */}
         <div className="space-y-3 mb-5">
+          {/* P-CNV24: enterprise gets phone call CTA, others get email onboarding call */}
           <a
-            href="mailto:onboarding@mydashrx.com?subject=MyDashRx%20Onboarding%20Call&body=Hi%2C%20I%27d%20like%20to%20schedule%20a%20call%20to%20get%20set%20up%20before%20my%20account%20goes%20live."
+            href={orgStatus?.orgSize === 'enterprise'
+              ? "tel:+18005551234"
+              : "mailto:onboarding@mydashrx.com?subject=MyDashRx%20Onboarding%20Call&body=Hi%2C%20I%27d%20like%20to%20schedule%20a%20call%20to%20get%20set%20up%20before%20my%20account%20goes%20live."
+            }
             className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
           >
             <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center shrink-0">
@@ -144,8 +169,17 @@ export default function PendingApprovalPage() {
               </svg>
             </div>
             <div>
-              <p className="text-xs font-semibold text-blue-800">Book a 15-min onboarding call</p>
-              <p className="text-xs text-blue-600">We'll have routes, drivers & depot ready before you go live</p>
+              {orgStatus?.orgSize === 'enterprise' ? (
+                <>
+                  <p className="text-xs font-semibold text-blue-800">Call our enterprise team now</p>
+                  <p className="text-xs text-blue-600">A dedicated rep is ready to get your team onboarded</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs font-semibold text-blue-800">Book a 15-min onboarding call</p>
+                  <p className="text-xs text-blue-600">We&apos;ll have routes, drivers &amp; depot ready before you go live</p>
+                </>
+              )}
             </div>
           </a>
 

@@ -1162,7 +1162,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
     const { orgId } = req.user as { orgId: string };
     const [org] = await db
-      .select({ pendingApproval: organizations.pendingApproval, approvedAt: organizations.approvedAt, rejectedAt: organizations.rejectedAt, rejectionReason: organizations.rejectionReason })
+      .select({ pendingApproval: organizations.pendingApproval, approvedAt: organizations.approvedAt, rejectedAt: organizations.rejectedAt, rejectionReason: organizations.rejectionReason, orgSize: organizations.orgSize })
       .from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Organization not found' });
     const status = org.rejectedAt ? 'rejected' : (org.approvedAt || !org.pendingApproval) ? 'approved' : 'pending';
@@ -1170,6 +1170,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       status,
       ...(org.rejectedAt ? { reason: org.rejectionReason, rejectedAt: org.rejectedAt } : {}),
       ...(org.approvedAt ? { approvedAt: org.approvedAt } : {}),
+      ...(org.orgSize ? { orgSize: org.orgSize } : {}), // P-CNV24: for copy branching on pending-approval page
     };
   });
 };
