@@ -81,6 +81,14 @@ try {
   console.error('Migration warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-SES18: idempotent DDL for device_name column (not in drizzle journal — applied directly)
+try {
+  await db.execute(sql`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS device_name text`);
+  console.log('P-SES18 device_name column ensured');
+} catch (err) {
+  console.error('P-SES18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {
