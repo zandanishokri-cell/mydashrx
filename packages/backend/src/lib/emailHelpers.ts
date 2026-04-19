@@ -285,3 +285,40 @@ export async function sendAbandonmentEmail(adminEmail: string, orgName: string |
     }),
   }).catch((e: unknown) => { console.error('[Resend] abandonment email failed:', e); });
 }
+
+/** P-CNV32: Referral success notification — fires to referrer when referred org is approved */
+export async function sendReferralSuccessEmail({
+  referrerEmail, referrerName, referrerOrgName, newOrgName,
+}: { referrerEmail: string; referrerName: string; referrerOrgName: string; newOrgName: string }): Promise<void> {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  if (await isSuppressed(referrerEmail)) { console.log(`[emailHelpers] suppressed referral success email to ${referrerEmail}`); return; }
+  const dash = dashUrl();
+  await fetch(RESEND, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+    body: JSON.stringify({
+      from: mailSender(),
+      to: referrerEmail,
+      reply_to: 'onboarding@mydashrx.com',
+      subject: `Your referral is live — ${newOrgName} just joined MyDashRx`,
+      headers: { 'Feedback-ID': 'stream:mydashrx:resend:referral_success' },
+      html: `
+        <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Great news — ${newOrgName}, the pharmacy you referred, was just approved and is live on MyDashRx.</span>
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+          <h2 style="color:#0F4C81;margin:0 0 8px">Your referral is live!</h2>
+          <p style="color:#374151;margin:0 0 16px">Hi ${referrerName},</p>
+          <p style="color:#374151;margin:0 0 16px">
+            Great news — <strong>${newOrgName}</strong>, the pharmacy you referred, was just approved and is live on MyDashRx.
+          </p>
+          <p style="color:#374151;margin:0 0 24px">
+            Thanks for spreading the word. Every pharmacy you refer helps grow the Michigan pharmacy delivery network.
+          </p>
+          <a href="${dash}/settings?tab=referral" style="display:inline-block;background:#6366F1;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600">
+            Refer another pharmacy →
+          </a>
+          <p style="color:#9ca3af;font-size:12px;margin:24px 0 0">Questions? Reply to this email or contact <a href="mailto:onboarding@mydashrx.com" style="color:#0F4C81">onboarding@mydashrx.com</a></p>
+        </div>`,
+    }),
+  }).catch((e: unknown) => { console.error('[Resend] referral success email failed:', e); });
+}

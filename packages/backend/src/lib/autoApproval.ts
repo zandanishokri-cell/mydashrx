@@ -1,14 +1,14 @@
 import { db } from '../db/connection.js';
 import { organizations, users } from '../db/schema.js';
 import { eq, isNull, and } from 'drizzle-orm';
-import { sendOrgApprovalEmail } from './emailHelpers.js';
+import { sendOrgApprovalEmail, sendReferralSuccessEmail } from './emailHelpers.js';
 
 export async function runAutoApproval(): Promise<{ approved: number; blocked: number }> {
   const now = new Date();
   let approved = 0;
   let blocked = 0;
 
-  const toApprove = await db.select({ id: organizations.id, name: organizations.name })
+  const toApprove = await db.select({ id: organizations.id, name: organizations.name, referredByOrgId: organizations.referredByOrgId })
     .from(organizations)
     .where(and(
       eq(organizations.trustTier, 'auto_approve'),
@@ -29,6 +29,21 @@ export async function runAutoApproval(): Promise<{ approved: number; blocked: nu
       .where(and(eq(users.orgId, org.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)))
       .limit(1);
     if (admin) sendOrgApprovalEmail(org.id, org.name, admin.email, admin.name);
+
+    // P-CNV32: fire referral success email on auto-approval if org was referred
+    if (org.referredByOrgId) {
+      const [referrer] = await db.select({ email: users.email, name: users.name, orgName: organizations.name })
+        .from(organizations)
+        .innerJoin(users, and(eq(users.orgId, organizations.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)))
+        .where(eq(organizations.id, org.referredByOrgId))
+        .limit(1);
+      if (referrer) {
+        sendReferralSuccessEmail({
+          referrerEmail: referrer.email, referrerName: referrer.name,
+          referrerOrgName: referrer.orgName, newOrgName: org.name,
+        }).catch((e: unknown) => { console.error('[P-CNV32] auto-approval referral success email failed:', e); });
+      }
+    }
 
     approved++;
   }

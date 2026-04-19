@@ -797,6 +797,14 @@ try {
   console.error('P-ADM43 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-CNV32: peer-referral growth loop — track which org referred each new signup
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS referred_by_org_id uuid REFERENCES organizations(id)`);
+  console.log('P-CNV32 referred_by_org_id column ensured');
+} catch (err) {
+  console.error('P-CNV32 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

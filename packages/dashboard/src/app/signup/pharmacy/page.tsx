@@ -1,8 +1,32 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { SignupTrustBlock } from '@/components/SignupTrustBlock';
 import { useFieldError } from '@/lib/useFieldError';
+
+// P-CNV30: Per-field green check micro-validation (completion momentum — 23% abandonment reduction)
+function FieldCheck({ field, validFields }: { field: string; validFields: Set<string> }) {
+  if (!validFields.has(field)) return null;
+  return (
+    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500 text-sm pointer-events-none"
+      aria-label="Valid" role="img">✓</span>
+  );
+}
+
+// P-CNV30: 4-segment password strength bar
+function PasswordStrength({ value }: { value: string }) {
+  if (!value) return null;
+  const score = [/.{8,}/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter(r => r.test(value)).length;
+  const colors = ['bg-red-400', 'bg-orange-400', 'bg-yellow-400', 'bg-green-500'];
+  return (
+    <div className="flex gap-1 mt-1" aria-hidden="true">
+      {Array.from({ length: 4 }, (_, i) => (
+        <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${i < score ? colors[score - 1] : 'bg-gray-200'}`} />
+      ))}
+    </div>
+  );
+}
 
 // P-CNV24: Step 0 = role segmentation; Steps 1 & 2 = existing pharmacy info / account
 type Step = 0 | 1 | 2;
@@ -66,9 +90,14 @@ const INTENT_URL = `${process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backe
 const RESCUE_KEY = 'mdrx_rescue_shown';
 
 export default function PharmacySignupPage() {
+  const searchParams = useSearchParams();
+  // P-CNV32: read ?ref= param for referral tracking
+  const referredByOrgId = searchParams.get('ref') ?? undefined;
+
   const [step, setStep] = useState<Step>(0);
   const [orgSize, setOrgSize] = useState<OrgSize | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
   // P-A11Y20: accessible field error
   const emailFE = useFieldError(emailError);
@@ -86,11 +115,26 @@ export default function PharmacySignupPage() {
   const [stepAnnouncement, setStepAnnouncement] = useState('');
   // P-CNV15: approval tier from backend
   const [approvalTier, setApprovalTier] = useState<'auto_approve' | 'manual'>('manual');
+  // P-CNV32: referred-by org name returned from backend
+  const [referredByOrgName, setReferredByOrgName] = useState<string | null>(null);
   // P-CNV25: rescue banner — shown once per session after 75s if email entered but not submitted
   const [showRescueBanner, setShowRescueBanner] = useState(false);
   // P-ONB46: BAA click-wrap consent
   const [baaChecked, setBaaChecked] = useState(false);
   const [baaError, setBaaError] = useState('');
+  // P-CNV30: per-field green check micro-validation state
+  const [validFields, setValidFields] = useState<Set<string>>(new Set());
+  const markValid = (field: string, isValid: boolean) =>
+    setValidFields(prev => { const n = new Set(prev); isValid ? n.add(field) : n.delete(field); return n; });
+
+  const fieldValidators: Record<string, (v: string) => boolean> = {
+    orgName: v => v.trim().length >= 3,
+    orgPhone: v => /^\d{10}$/.test(v.replace(/\D/g, '')),
+    orgAddress: v => v.trim().length >= 10,
+    adminName: v => v.trim().split(' ').filter(Boolean).length >= 2,
+    adminEmail: v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+    adminPassword: v => v.length >= 8,
+  };
 
   useEffect(() => {
     try {
@@ -164,12 +208,15 @@ export default function PharmacySignupPage() {
 
   // P-CNV12: NPPES NPI verification (fail-open — never block submission)
   const verifyNpi = async (npi: string) => {
-    if (!/^\d{10}$/.test(npi)) { setNpiStatus('invalid'); return; }
+    if (!/^\d{10}$/.test(npi)) { setNpiStatus('invalid'); markValid('npiNumber', false); return; }
     setNpiStatus('checking');
     try {
       const res = await fetch(`https://npiregistry.cms.hhs.gov/api/?number=${npi}&version=2.1`);
       const data = await res.json();
-      setNpiStatus(data?.result_count > 0 ? 'valid' : 'invalid');
+      const isValid = data?.result_count > 0;
+      setNpiStatus(isValid ? 'valid' : 'invalid');
+      // P-CNV30: mark NPI valid on NPPES success
+      markValid('npiNumber', isValid);
     } catch { setNpiStatus('idle'); } // fail-open on network error
   };
 
@@ -179,12 +226,15 @@ export default function PharmacySignupPage() {
     setLoading(true);
     setError('');
     try {
-      const body: Record<string, unknown> = { ...form, baaAccepted: true };
+      const body: Record<string, unknown> = { ...form, adminPassword: password, baaAccepted: true };
       if (npiNumber) body.npiNumber = npiNumber;
       if (orgSize) body.orgSize = orgSize;
-      const resp = await api.post('/signup/pharmacy', body) as { tier?: string };
+      // P-CNV32: include referral param in POST body
+      if (referredByOrgId) body.referredByOrgId = referredByOrgId;
+      const resp = await api.post('/signup/pharmacy', body) as { tier?: string; referredByOrgName?: string };
       localStorage.removeItem(DRAFT_KEY);
       if (resp?.tier === 'auto_approve') setApprovalTier('auto_approve');
+      if (resp?.referredByOrgName) setReferredByOrgName(resp.referredByOrgName);
       setSubmitted(true);
     } catch (err: any) {
       const raw = (err as Error).message ?? '';
@@ -210,6 +260,12 @@ export default function PharmacySignupPage() {
           <p className="text-gray-500 text-sm mb-1">
             We&apos;ve received your application for <strong>{form.orgName}</strong>.
           </p>
+          {/* P-CNV32: referral acknowledgment */}
+          {referredByOrgName && (
+            <p className="text-sm text-gray-600 bg-indigo-50 rounded-lg px-3 py-2 mb-2">
+              You were referred by <strong>{referredByOrgName}</strong> — they&apos;ll be notified when you&apos;re approved.
+            </p>
+          )}
           {/* P-CNV15: tier-aware approval timeline */}
           {approvalTier === 'auto_approve' ? (
             <p className="text-green-700 text-sm font-medium bg-green-50 rounded-lg px-3 py-2 mb-5">
@@ -322,16 +378,35 @@ export default function PharmacySignupPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Pharmacy name</label>
-              <input value={form.orgName} onChange={set('orgName')} placeholder="Greater Care Pharmacy" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+              {/* P-CNV30: relative wrapper + FieldCheck + onBlur markValid */}
+              <div className="relative">
+                <input value={form.orgName} onChange={set('orgName')}
+                  onBlur={e => markValid('orgName', fieldValidators.orgName(e.target.value))}
+                  placeholder="Greater Care Pharmacy"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 pr-8" />
+                <FieldCheck field="orgName" validFields={validFields} />
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Phone number <span className="text-gray-400 font-normal">(optional)</span></label>
-              <input value={form.orgPhone} onChange={set('orgPhone')} placeholder="(555) 000-0000" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+              <div className="relative">
+                <input value={form.orgPhone} onChange={set('orgPhone')}
+                  onBlur={e => { if (e.target.value) markValid('orgPhone', fieldValidators.orgPhone(e.target.value)); }}
+                  placeholder="(555) 000-0000"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 pr-8" />
+                <FieldCheck field="orgPhone" validFields={validFields} />
+              </div>
               <p className="text-xs text-gray-400 mt-1">You can add this in Settings after approval</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Address <span className="text-gray-400 font-normal">(optional)</span></label>
-              <input value={form.orgAddress} onChange={set('orgAddress')} placeholder="123 Main St, Detroit, MI 48201" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+              <div className="relative">
+                <input value={form.orgAddress} onChange={set('orgAddress')}
+                  onBlur={e => { if (e.target.value) markValid('orgAddress', fieldValidators.orgAddress(e.target.value)); }}
+                  placeholder="123 Main St, Detroit, MI 48201"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 pr-8" />
+                <FieldCheck field="orgAddress" validFields={validFields} />
+              </div>
               <p className="text-xs text-gray-400 mt-1">You can add this in Settings after approval</p>
             </div>
             {/* P-CNV12: NPI field with NPPES inline verification */}
@@ -346,7 +421,7 @@ export default function PharmacySignupPage() {
                     const next = e.target.value.replace(/\D/g, '').slice(0, 10);
                     setNpiNumber(next);
                     // P-A11Y29: only reset status if value actually changed (WCAG 3.3.7)
-                    if (next !== prevNpiRef.current) { setNpiStatus('idle'); prevNpiRef.current = next; }
+                    if (next !== prevNpiRef.current) { setNpiStatus('idle'); prevNpiRef.current = next; markValid('npiNumber', false); }
                   }}
                   onBlur={() => npiNumber && verifyNpi(npiNumber)}
                   placeholder="10-digit NPI number"
@@ -375,32 +450,60 @@ export default function PharmacySignupPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Your full name</label>
-              <input value={form.adminName} onChange={set('adminName')} placeholder="Jane Smith" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+              {/* P-CNV30: FieldCheck on name */}
+              <div className="relative">
+                <input value={form.adminName} onChange={set('adminName')}
+                  onBlur={e => markValid('adminName', fieldValidators.adminName(e.target.value))}
+                  placeholder="Jane Smith"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 pr-8" />
+                <FieldCheck field="adminName" validFields={validFields} />
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Work email</label>
-              <input
-                type="email"
-                value={form.adminEmail}
-                onChange={e => { set('adminEmail')(e); if (emailError) setEmailError(validateEmail(e.target.value)); }}
-                onBlur={e => {
-                  setEmailError(validateEmail(e.target.value));
-                  // P-CNV14: fire-and-forget intent capture for abandonment recovery
-                  const val = e.target.value;
-                  if (!validateEmail(val) && val) {
-                    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com'}/api/v1/signup/pharmacy-intent`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ adminEmail: val, orgName: form.orgName }),
-                    }).catch(() => {}); // totally fire-and-forget, silent fail
-                  }
-                }}
-                placeholder="jane@yourpharmacy.com"
-                {...emailFE.inputProps}
-                className={`w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 ${emailError ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-200'}`}
-              />
+              {/* P-CNV30: FieldCheck on email */}
+              <div className="relative">
+                <input
+                  type="email"
+                  value={form.adminEmail}
+                  onChange={e => { set('adminEmail')(e); if (emailError) setEmailError(validateEmail(e.target.value)); }}
+                  onBlur={e => {
+                    setEmailError(validateEmail(e.target.value));
+                    markValid('adminEmail', fieldValidators.adminEmail(e.target.value));
+                    // P-CNV14: fire-and-forget intent capture for abandonment recovery
+                    const val = e.target.value;
+                    if (!validateEmail(val) && val) {
+                      fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com'}/api/v1/signup/pharmacy-intent`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ adminEmail: val, orgName: form.orgName }),
+                      }).catch(() => {}); // totally fire-and-forget, silent fail
+                    }
+                  }}
+                  placeholder="jane@yourpharmacy.com"
+                  {...emailFE.inputProps}
+                  className={`w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 pr-8 ${emailError ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-200'}`}
+                />
+                {!emailError && <FieldCheck field="adminEmail" validFields={validFields} />}
+              </div>
               {/* P-A11Y20: always-in-DOM error region — opacity-0 not display:none so SR fires on insert */}
               <p {...emailFE.errorProps}>{emailError}</p>
+            </div>
+            {/* P-CNV30: Password field with strength bar */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <div className="relative">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  onBlur={e => markValid('adminPassword', fieldValidators.adminPassword(e.target.value))}
+                  placeholder="Min. 8 characters"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 pr-8"
+                />
+                <FieldCheck field="adminPassword" validFields={validFields} />
+              </div>
+              <PasswordStrength value={password} />
             </div>
 
             {/* P-A11Y29: Mini-summary of Step 1 — aria-label for SR (WCAG 3.3.7 redundant entry) */}
@@ -451,7 +554,7 @@ export default function PharmacySignupPage() {
               <button onClick={() => { setStep(1); announceStep(1); }} className="flex-1 border border-gray-200 text-gray-600 rounded-lg py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors">Back</button>
               <button
                 onClick={submit}
-                disabled={loading || !form.adminName.trim() || form.adminName.trim().length < 2 || !form.adminEmail || !!validateEmail(form.adminEmail)}
+                disabled={loading || !form.adminName.trim() || form.adminName.trim().length < 2 || !form.adminEmail || !!validateEmail(form.adminEmail) || password.length < 8}
                 className="flex-1 bg-[#0F4C81] text-white rounded-lg py-2.5 text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-40 transition-colors"
               >
                 {loading ? 'Submitting…' : 'Submit application'}

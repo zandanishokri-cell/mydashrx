@@ -1114,6 +1114,61 @@ function PermissionsTab({ orgId }: { orgId: string }) {
   );
 }
 
+// ─── Tab: Referral (P-CNV32) ─────────────────────────────────────────────────
+function ReferralTab({ orgId }: { orgId: string }) {
+  const [copied, setCopied] = useState(false);
+  const refUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/signup/pharmacy?ref=${orgId}`
+    : `https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app/signup/pharmacy?ref=${orgId}`;
+
+  const copy = () => {
+    navigator.clipboard.writeText(refUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
+
+  return (
+    <div className="max-w-xl space-y-6">
+      <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-5">
+        <p className="text-sm font-semibold text-gray-800 mb-1">Refer a pharmacy</p>
+        <p className="text-xs text-gray-500 mb-4">
+          Share MyDashRx with other Michigan pharmacies. We&apos;ll notify you when they&apos;re approved and live.
+        </p>
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            readOnly
+            value={refUrl}
+            className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-700 bg-white focus:outline-none"
+            onClick={e => (e.target as HTMLInputElement).select()}
+          />
+          <button
+            onClick={copy}
+            className="rounded-lg bg-indigo-600 text-white text-xs px-3 py-2 hover:bg-indigo-700 transition flex items-center gap-1.5 shrink-0"
+          >
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+        <a
+          href={`mailto:?subject=Try%20MyDashRx&body=I%20use%20MyDashRx%20for%20pharmacy%20delivery%20dispatching%20%E2%80%94%20you%20should%20check%20it%20out%3A%20${encodeURIComponent(refUrl)}`}
+          className="text-xs text-indigo-600 hover:underline"
+        >
+          Email a colleague →
+        </a>
+      </div>
+      <div className="rounded-xl border border-gray-200 bg-white p-5">
+        <p className="text-sm font-semibold text-gray-800 mb-2">How it works</p>
+        <ol className="space-y-2 text-xs text-gray-600 list-decimal list-inside">
+          <li>Share your referral link with another pharmacy owner.</li>
+          <li>They sign up using your link — their application is linked to your pharmacy.</li>
+          <li>When they&apos;re approved, you&apos;ll receive an email notification.</li>
+        </ol>
+      </div>
+    </div>
+  );
+}
+
 const TABS = [
   { id: 'org', label: 'Organization', icon: Building2 },
   { id: 'team', label: 'Team Members', icon: Users },
@@ -1121,12 +1176,20 @@ const TABS = [
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'compliance', label: 'Compliance', icon: ShieldCheck },
   { id: 'permissions', label: 'Permissions', icon: Lock },
+  { id: 'referral', label: 'Refer a Pharmacy', icon: Copy },
 ] as const;
 
 type TabId = typeof TABS[number]['id'];
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<TabId>('org');
+  // P-CNV32: support ?tab=referral deep link from referral success email CTA
+  const [tab, setTab] = useState<TabId>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search).get('tab');
+      if (p && TABS.some(t => t.id === p)) return p as TabId;
+    }
+    return 'org';
+  });
   const user = getUser();
   const orgId = user?.orgId ?? '';
   const userId = user?.id ?? '';
@@ -1152,6 +1215,7 @@ export default function SettingsPage() {
       {tab === 'notifications' && <NotificationsTab orgId={orgId} />}
       {tab === 'compliance' && <ComplianceTab orgId={orgId} />}
       {tab === 'permissions' && (user?.role === 'pharmacy_admin' || user?.role === 'super_admin') && <PermissionsTab orgId={orgId} />}
+      {tab === 'referral' && (user?.role === 'pharmacy_admin') && <ReferralTab orgId={orgId} />}
     </div>
   );
 }

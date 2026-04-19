@@ -18,12 +18,15 @@ const pharmacySignupSchema = z.object({
   orgAddress: z.string().min(5).max(200).optional(),
   adminName: z.string().min(2).max(100),
   adminEmail: z.string().email(),
+  adminPassword: z.string().min(8).max(128).optional(), // P-CNV30: password field
   npiNumber: z.string().regex(/^\d{10}$/).optional(), // P-ADM27
   orgSize: z.enum(['solo', 'small_group', 'enterprise']).optional(), // P-CNV24
   // P-ONB46: BAA click-wrap — must be true or request is rejected (HIPAA §164.308(b)(1))
   baaAccepted: z.literal(true, { errorMap: () => ({ message: 'Business Associate Agreement must be accepted before submitting' }) }),
   // P-ONB48: full NPPES payload echoed from frontend verify step
   npiPayload: z.record(z.unknown()).optional(),
+  // P-CNV32: peer-referral growth loop
+  referredByOrgId: z.string().uuid().optional(),
 });
 
 const driverSignupSchema = z.object({
@@ -197,7 +200,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
   app.post('/pharmacy', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req, reply) => {
     const parsed = pharmacySignupSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request' });
-    const { orgName, orgPhone, orgAddress, adminName, adminEmail, npiNumber, orgSize, npiPayload: clientNpiPayload } = parsed.data;
+    const { orgName, orgPhone, orgAddress, adminName, adminEmail, adminPassword, npiNumber, orgSize, npiPayload: clientNpiPayload, referredByOrgId } = parsed.data;
 
     const existing = await findUserByEmail(adminEmail);
     if (existing) return reply.code(409).send({ error: 'An account with this email already exists.' });
@@ -206,6 +209,15 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
 
     // P-ONB48: use backend-fetched payload if available; fall back to client-echoed payload
     const resolvedNpiPayload = npiPayloadFromVerify ?? clientNpiPayload ?? null;
+
+    // P-CNV32: validate referrer org exists before insert
+    let validatedReferrerOrgId: string | null = null;
+    let referredByOrgName: string | null = null;
+    if (referredByOrgId) {
+      const [referrer] = await db.select({ id: organizations.id, name: organizations.name })
+        .from(organizations).where(eq(organizations.id, referredByOrgId)).limit(1);
+      if (referrer) { validatedReferrerOrgId = referrer.id; referredByOrgName = referrer.name; }
+    }
 
     const [org] = await db.insert(organizations).values({
       name: orgName,
@@ -220,9 +232,11 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
       baaAcceptedAt: new Date(),
       baaAcceptedByIp: req.ip ?? null,
       baaVersion: 'v1.0',
+      // P-CNV32: store validated referrer FK
+      ...(validatedReferrerOrgId ? { referredByOrgId: validatedReferrerOrgId } : {}),
     }).returning();
 
-    const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
+    const passwordHash = await hashPassword(adminPassword ?? randomBytes(32).toString('hex'));
     await db.insert(users).values({
       orgId: org.id,
       email: adminEmail,
@@ -242,7 +256,12 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     // P-CNV15: return tier so frontend can show correct approval timeline
     // Never surface 'block' — treat as 'manual' to avoid tipping off bad actors
     const displayTier = trustTier === 'auto_approve' ? 'auto_approve' : 'manual';
-    return reply.code(201).send({ message: 'Application submitted. You will hear from us within 2–4 business hours.', tier: displayTier });
+    return reply.code(201).send({
+      message: 'Application submitted. You will hear from us within 2–4 business hours.',
+      tier: displayTier,
+      // P-CNV32: return referrer name for success screen acknowledgment
+      ...(referredByOrgName ? { referredByOrgName } : {}),
+    });
   });
 
   // ─── P-CNV14 + P-CNV25: Abandonment Intent Capture ──────────────────────

@@ -6,7 +6,7 @@ import { eq, isNull, sql, gte, lte, count, and, desc, asc, lt, or, isNotNull, in
 import { requireRole } from '../middleware/requireRole.js';
 import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
 import { invalidateOrgRole, invalidateOrg, listTemplates, upsertTemplate, seedOrgDefaults, getOrgPermissions } from '../lib/rbacCache.js';
-import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
+import { sendOrgApprovalEmail, sendReferralSuccessEmail } from '../lib/emailHelpers.js';
 import { cancelPendingDrip } from '../lib/onboardingDrip.js';
 
 // P-ADM39: in-memory SSE client registry for approval queue live updates
@@ -401,6 +401,21 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
     if (admin) sendOrgApprovalEmail(orgId, org.name, admin.email, admin.name);
 
+    // P-CNV32: fire referral success email if this org was referred by another org
+    if (org.referredByOrgId) {
+      const [referrer] = await db.select({
+        email: users.email, name: users.name, orgName: organizations.name,
+      }).from(organizations)
+        .innerJoin(users, and(eq(users.orgId, organizations.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)))
+        .where(eq(organizations.id, org.referredByOrgId)).limit(1);
+      if (referrer) {
+        sendReferralSuccessEmail({
+          referrerEmail: referrer.email, referrerName: referrer.name,
+          referrerOrgName: referrer.orgName, newOrgName: org.name,
+        }).catch((e: unknown) => { console.error('[P-CNV32] referral success email failed:', e); });
+      }
+    }
+
     const actor = req.user as { sub: string; email: string };
     await logAuditAction(actor.sub, actor.email, 'approve_org', orgId, org.name);
 
@@ -564,7 +579,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const now = new Date();
 
     // Fetch orgs in one query to validate existence + get names for audit
-    const orgs = await db.select({ id: organizations.id, name: organizations.name })
+    const orgs = await db.select({ id: organizations.id, name: organizations.name, referredByOrgId: organizations.referredByOrgId })
       .from(organizations).where(and(inArray(organizations.id, orgIds), isNull(organizations.deletedAt)));
     const foundIds = orgs.map(o => o.id);
     if (foundIds.length === 0) return reply.code(404).send({ error: 'No valid orgs found' });
@@ -605,6 +620,23 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       ];
       if (action === 'approve' && admin) {
         tasks.push(sendOrgApprovalEmail(orgId, org.name, admin.email, admin.name));
+        // P-CNV32: referral success email for batch-approved orgs
+        if (org.referredByOrgId) {
+          tasks.push(
+            db.select({ email: users.email, name: users.name, orgName: organizations.name })
+              .from(organizations)
+              .innerJoin(users, and(eq(users.orgId, organizations.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)))
+              .where(eq(organizations.id, org.referredByOrgId))
+              .limit(1)
+              .then(([referrer]) => {
+                if (referrer) return sendReferralSuccessEmail({
+                  referrerEmail: referrer.email, referrerName: referrer.name,
+                  referrerOrgName: referrer.orgName, newOrgName: org.name,
+                });
+              })
+              .catch((e: unknown) => { console.error('[P-CNV32] batch referral success email failed:', e); })
+          );
+        }
       }
       return tasks;
     }));

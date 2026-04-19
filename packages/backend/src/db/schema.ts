@@ -144,6 +144,8 @@ export const organizations = pgTable('organizations', {
   // 10-min TTL prevents two admins from simultaneously approving/rejecting the same org
   activeReviewerId: uuid('active_reviewer_id').references((): AnyPgColumn => users.id),
   activeReviewClaimedAt: timestamp('active_review_claimed_at'),
+  // P-CNV32: peer-referral growth loop — org that referred this signup
+  referredByOrgId: uuid('referred_by_org_id').references((): AnyPgColumn => organizations.id),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });
