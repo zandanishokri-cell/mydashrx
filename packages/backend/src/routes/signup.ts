@@ -303,7 +303,8 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const token = randomBytes(32).toString('hex');
-    const INVITE_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? 'fallback';
+    const INVITE_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET;
+    if (!INVITE_SECRET) throw new Error('MAGIC_LINK_SECRET or JWT_SECRET must be set in env');
     const tokenHash = createHmac('sha256', INVITE_SECRET).update(token).digest('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
@@ -351,7 +352,8 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request' });
     const { token, name } = parsed.data;
 
-    const INVITE_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? 'fallback';
+    const INVITE_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET;
+    if (!INVITE_SECRET) throw new Error('MAGIC_LINK_SECRET or JWT_SECRET must be set in env');
     const tokenHash = createHmac('sha256', INVITE_SECRET).update(token).digest('hex');
     const [invite] = await db
       .select()
@@ -407,7 +409,8 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     };
     if (!orgId || !exp || !sig) return reply.code(400).send({ error: 'Missing parameters' });
 
-    const secret = process.env.MAGIC_LINK_SECRET ?? 'fallback-secret';
+    const secret = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET;
+    if (!secret) throw new Error('MAGIC_LINK_SECRET or JWT_SECRET must be set in env');
     const payload = `reapply:${orgId}:${exp}`;
     const expected = createHmac('sha256', secret).update(payload).digest('hex');
     try {
@@ -458,7 +461,8 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     const { token } = req.query as { token?: string };
     if (!token) return reply.code(400).send({ error: 'Token required' });
 
-    const INVITE_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? 'fallback';
+    const INVITE_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET;
+    if (!INVITE_SECRET) throw new Error('MAGIC_LINK_SECRET or JWT_SECRET must be set in env');
     const tokenHash = createHmac('sha256', INVITE_SECRET).update(token).digest('hex');
     const [invite] = await db
       .select({ email: staffInvitations.email, role: staffInvitations.role, expiresAt: staffInvitations.expiresAt })

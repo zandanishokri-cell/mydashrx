@@ -398,6 +398,8 @@ export const auditLogs = pgTable('audit_logs', {
   userAgent: text('user_agent'),
   metadata: jsonb('metadata').notNull().default('{}'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
+  prevHash: text('prev_hash'),   // P-SEC33: hash chain for HIPAA tamper-proofing
+  rowHash: text('row_hash'),     // P-SEC33: SHA-256(id+org_id+action+created_at+prevHash)
 }, (t) => ({
   orgIdx: index('audit_org_idx').on(t.orgId),
   createdIdx: index('audit_created_idx').on(t.createdAt),
@@ -553,6 +555,8 @@ export const adminAuditLogs = pgTable('admin_audit_logs', {
   targetName: text('target_name').notNull(),
   metadata: jsonb('metadata'),      // { reason?: string, batchSize?: number, oldRole?: string, newRole?: string }
   createdAt: timestamp('created_at').notNull().defaultNow(),
+  prevHash: text('prev_hash'),      // P-SEC33: hash chain for HIPAA tamper-proofing
+  rowHash: text('row_hash'),        // P-SEC33: SHA-256(id+actor_id+action+created_at+prevHash)
 }, (t) => ({ actorIdx: index('audit_actor_idx').on(t.actorId) }));
 
 // ─── Magic Link Tokens ────────────────────────────────────────────────────────

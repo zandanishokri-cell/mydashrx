@@ -158,6 +158,74 @@ try {
   console.error('P-CNV17/18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-SEC32b: warn if MAGIC_LINK_SECRET falls back to JWT_SECRET (secret reuse)
+if (!process.env.MAGIC_LINK_SECRET) {
+  console.warn('SECURITY WARNING: MAGIC_LINK_SECRET not set — falling back to JWT_SECRET. Set MAGIC_LINK_SECRET as a separate env var for proper secret isolation (openssl rand -hex 64).');
+}
+
+// P-SEC33: idempotent DDL — audit log hash chain for HIPAA tamper-proofing
+// Adds prev_hash + row_hash columns and PostgreSQL BEFORE INSERT triggers that
+// maintain a SHA-256 hash chain across both audit tables. REVOKE DELETE/UPDATE
+// prevents app role from erasing HIPAA evidence. §164.312(b).
+try {
+  // Add hash columns to audit_logs
+  await db.execute(sql`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS prev_hash text`);
+  await db.execute(sql`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS row_hash text`);
+  // Add hash columns to admin_audit_logs
+  await db.execute(sql`ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS prev_hash text`);
+  await db.execute(sql`ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS row_hash text`);
+
+  // Trigger function for audit_logs
+  await db.execute(sql`
+    CREATE OR REPLACE FUNCTION audit_log_hash_chain()
+    RETURNS TRIGGER AS $$
+    DECLARE prev TEXT;
+    BEGIN
+      SELECT row_hash INTO prev FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 1;
+      NEW.prev_hash := COALESCE(prev, 'genesis');
+      NEW.row_hash  := encode(digest(
+        COALESCE(NEW.id::text,'') || COALESCE(NEW.org_id::text,'') ||
+        COALESCE(NEW.action,'') || COALESCE(NEW.created_at::text,'') ||
+        NEW.prev_hash, 'sha256'), 'hex');
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await db.execute(sql`DROP TRIGGER IF EXISTS audit_log_hash_before_insert ON audit_logs`);
+  await db.execute(sql`
+    CREATE TRIGGER audit_log_hash_before_insert
+      BEFORE INSERT ON audit_logs
+      FOR EACH ROW EXECUTE FUNCTION audit_log_hash_chain()
+  `);
+
+  // Trigger function for admin_audit_logs
+  await db.execute(sql`
+    CREATE OR REPLACE FUNCTION admin_audit_log_hash_chain()
+    RETURNS TRIGGER AS $$
+    DECLARE prev TEXT;
+    BEGIN
+      SELECT row_hash INTO prev FROM admin_audit_logs ORDER BY created_at DESC, id DESC LIMIT 1;
+      NEW.prev_hash := COALESCE(prev, 'genesis');
+      NEW.row_hash  := encode(digest(
+        COALESCE(NEW.id::text,'') || COALESCE(NEW.actor_id::text,'') ||
+        COALESCE(NEW.action,'') || COALESCE(NEW.created_at::text,'') ||
+        NEW.prev_hash, 'sha256'), 'hex');
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await db.execute(sql`DROP TRIGGER IF EXISTS admin_audit_log_hash_before_insert ON admin_audit_logs`);
+  await db.execute(sql`
+    CREATE TRIGGER admin_audit_log_hash_before_insert
+      BEFORE INSERT ON admin_audit_logs
+      FOR EACH ROW EXECUTE FUNCTION admin_audit_log_hash_chain()
+  `);
+
+  console.log('P-SEC33 audit log hash chain triggers ensured (HIPAA §164.312(b))');
+} catch (err) {
+  console.error('P-SEC33 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

@@ -1,8 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, timingSafeEqual, createHash } from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens, depots, approvalNotes } from '../db/schema.js';
-import { eq, isNull, sql, gte, lte, count, and, desc, lt, or, isNotNull, inArray } from 'drizzle-orm';
+import { organizations, users, stops, drivers, adminAuditLogs, auditLogs, magicLinkTokens, refreshTokens, depots, approvalNotes } from '../db/schema.js';
+import { eq, isNull, sql, gte, lte, count, and, desc, asc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
 import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
@@ -1071,5 +1071,53 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return reply.send({ generatedAt: new Date().toISOString(), page: pageNum, limit: pageSize, count: rows.length, sessions: rows });
+  });
+
+  // GET /admin/audit-chain-verify — P-SEC33: verify hash chain integrity of audit logs
+  // Super admin only. Returns broken chain count — 0 means tamper-free. HIPAA §164.312(b).
+  app.get('/audit-chain-verify', { preHandler: auth }, async (req, reply) => {
+    const jwtUser = (req as any).jwtUser;
+    if (jwtUser.role !== 'super_admin') return reply.code(403).send({ error: 'Forbidden' });
+
+    const computeHash = (id: string, orgId: string, action: string, createdAt: Date | string, prevHash: string) =>
+      createHash('sha256').update(String(id) + String(orgId) + String(action) + String(createdAt) + String(prevHash)).digest('hex');
+
+    // Verify audit_logs chain
+    const alRows = await db.select().from(auditLogs).orderBy(asc(auditLogs.createdAt));
+    let alBroken = 0;
+    for (let i = 0; i < alRows.length; i++) {
+      const r = alRows[i];
+      if (!r.rowHash) continue; // pre-P-SEC33 rows have no hash — skip
+      const expectedPrev = i === 0 ? 'genesis' : (alRows[i - 1].rowHash ?? 'genesis');
+      const expected = computeHash(r.id, r.orgId, r.action ?? '', r.createdAt, r.prevHash ?? expectedPrev);
+      if (expected !== r.rowHash) alBroken++;
+    }
+
+    // Verify admin_audit_logs chain
+    const aalRows = await db.select().from(adminAuditLogs).orderBy(asc(adminAuditLogs.createdAt));
+    let aalBroken = 0;
+    for (let i = 0; i < aalRows.length; i++) {
+      const r = aalRows[i];
+      if (!r.rowHash) continue;
+      const expectedPrev = i === 0 ? 'genesis' : (aalRows[i - 1].rowHash ?? 'genesis');
+      const expected = computeHash(r.id, r.actorId, r.action ?? '', r.createdAt, r.prevHash ?? expectedPrev);
+      if (expected !== r.rowHash) aalBroken++;
+    }
+
+    await db.insert(adminAuditLogs).values({
+      actorId: jwtUser.sub,
+      actorEmail: jwtUser.email,
+      action: 'audit_chain_verify',
+      targetId: jwtUser.sub,
+      targetName: 'audit_logs + admin_audit_logs',
+      metadata: { auditLogsBroken: alBroken, adminAuditLogsBroken: aalBroken, totalRows: alRows.length + aalRows.length },
+    } as any);
+
+    return reply.send({
+      generatedAt: new Date().toISOString(),
+      auditLogs: { total: alRows.length, broken: alBroken, intact: alBroken === 0 },
+      adminAuditLogs: { total: aalRows.length, broken: aalBroken, intact: aalBroken === 0 },
+      overallIntact: alBroken === 0 && aalBroken === 0,
+    });
   });
 };
