@@ -303,7 +303,19 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /admin/approvals/:orgId/reject
-  app.post('/approvals/:orgId/reject', { preHandler: auth }, async (req, reply) => {
+  app.post('/approvals/:orgId/reject', {
+    preHandler: auth,
+    schema: {
+      body: {
+        type: 'object',
+        properties: {
+          reason: { type: 'string', enum: ['missing_license_proof', 'invalid_npi', 'high_fraud_risk', 'incomplete_application', 'duplicate_account', 'service_area', 'other'] },
+          note: { type: 'string', maxLength: 1000 },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const { reason, note } = (req.body as { reason?: string; note?: string }) ?? {};
 

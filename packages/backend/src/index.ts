@@ -201,6 +201,11 @@ for (const [key, feature] of optionalEnvs) {
 // Auto-seed in background after server is live (non-blocking)
 setImmediate(async () => {
   try {
+    // Auto-heal: reset test org rejection every startup — prevents seed data corruption from blocking test logins
+    await db.update(organizations)
+      .set({ pendingApproval: false, approvedAt: new Date(), rejectedAt: null, rejectionReason: null, rejectionNote: null })
+      .where(sql`name = 'MyDashRx Test Pharmacy' AND rejected_at IS NOT NULL`);
+
     const [firstOrg] = await db.select({ id: organizations.id }).from(organizations).limit(1);
     if (!firstOrg) {
       console.log('DB empty — seeding in background...');
