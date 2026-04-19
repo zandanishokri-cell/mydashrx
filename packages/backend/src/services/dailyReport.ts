@@ -60,11 +60,14 @@ export async function sendDailyReport(orgId: string): Promise<void> {
       body: JSON.stringify({
         from: `MyDashRx Reports <reports@${process.env.SENDER_DOMAIN ?? 'cartana.life'}>`,
         to: user.email,
+        reply_to: 'support@mydashrx.com',
         subject: `${org.name} — Daily Delivery Report for ${dateStr}`,
         html,
         // P-DEL13: suppress tracking — report emails sent at scale; scanner link-rewrite risk
         track_clicks: false,
         track_opens: false,
+        // P-DEL17: Gmail postmaster stream bucketing
+        headers: { 'Feedback-ID': 'daily-report:mydashrx:resend:transactional' },
       }),
     }).catch(console.error);
   }
@@ -91,6 +94,7 @@ function buildEmailHtml(data: {
   .cta { display: block; background: #0F4C81; color: white; text-align: center; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 20px; font-weight: 600; }
 </style></head>
 <body>
+  <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${data.completed} of ${data.total} stops completed (${data.successRate}% success) — your ${data.date} delivery summary.</span>
   <div class="card">
     <div class="header">
       <div class="logo">MyDashRx</div>

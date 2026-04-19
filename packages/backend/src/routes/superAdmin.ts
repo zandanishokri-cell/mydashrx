@@ -385,11 +385,15 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         body: JSON.stringify({
           from: `MyDashRx <noreply@${senderDomain}>`,
           to: admin.email,
+          reply_to: 'support@mydashrx.com',
           subject: `MyDashRx — Application update for ${org.name}`,
           // P-DEL13: suppress tracking — reapply links in rejection emails must not be scanner-consumed
           track_clicks: false,
           track_opens: false,
+          // P-DEL17: Gmail postmaster stream bucketing
+          headers: { 'Feedback-ID': 'rejection:mydashrx:resend:transactional' },
           html: `
+            <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Update on your MyDashRx application for ${org.name} — review next steps.</span>
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
               <h2 style="color:#374151;margin:0 0 8px">Update on your MyDashRx application</h2>
               <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${admin.name},</p>
@@ -492,11 +496,14 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         body: JSON.stringify({
           from: `MyDashRx <noreply@${senderDomain}>`,
           to: admin.email,
+          reply_to: 'support@mydashrx.com',
           subject: `[MyDashRx] Additional information needed for ${org.name}`,
           // P-DEL13: suppress tracking — admin emails must not go through Resend CDN
           track_clicks: false,
           track_opens: false,
-          html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+          // P-DEL17: Gmail postmaster stream bucketing
+          headers: { 'Feedback-ID': 'hold-request:mydashrx:resend:transactional' },
+          html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">We need a little more information to complete your MyDashRx application review.</span><div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
             <h2 style="color:#374151;margin:0 0 8px">Additional information needed</h2>
             <p style="color:#374151;font-size:15px">Hi ${admin.name}, we're reviewing your application for <strong>${org.name}</strong> and need a bit more information before we can proceed.</p>
             <div style="background:#fef9ec;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:16px 0">
@@ -709,9 +716,12 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
           body: JSON.stringify({
             from: `MyDashRx <noreply@${senderDomain}>`,
             to: admin.email,
+            reply_to: 'onboarding@mydashrx.com',
             subject: '[MyDashRx] Your application is being reviewed',
             track_clicks: false,
-            html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+            // P-DEL17: Gmail postmaster stream bucketing
+            headers: { 'Feedback-ID': 'approval-reminder:mydashrx:resend:transactional' },
+            html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your MyDashRx application is actively being reviewed — approval expected within 2–4 hours.</span><div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
               <h2 style="color:#0F4C81;margin:0 0 8px">We're reviewing your application</h2>
               <p style="color:#374151;font-size:15px">Hi ${admin.name}, your application for <strong>${org.name}</strong> is actively being reviewed. Most applications are approved within 2–4 business hours.</p>
               <p style="color:#374151;font-size:15px">While you wait, you can <a href="${dashUrl}/pending-approval">prepare your onboarding checklist</a>.</p>
@@ -738,10 +748,13 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
             body: JSON.stringify({
               from: `MyDashRx Alerts <noreply@${senderDomain}>`,
               to: sa.email,
+              reply_to: 'support@mydashrx.com',
               subject: `[ACTION NEEDED] ${org.name} has been waiting 24hr for approval`,
               track_clicks: false,
-              html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
-                <h2 style="color:#dc2626;margin:0 0 8px">⚠ Pending approval: 24+ hours</h2>
+              // P-DEL17: Gmail postmaster stream bucketing
+              headers: { 'Feedback-ID': 'admin-escalation:mydashrx:resend:transactional' },
+              html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Urgent: ${org.name} has been waiting over 24 hours for approval — action required.</span><div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+                <h2 style="color:#dc2626;margin:0 0 8px">Pending approval: 24+ hours</h2>
                 <p style="color:#374151;font-size:15px">Hi ${sa.name}, <strong>${org.name}</strong> submitted their pharmacy application over 24 hours ago and is still awaiting approval.</p>
                 <p style="color:#374151;font-size:15px">Applied by: ${admin.email}</p>
                 <a href="${dashUrl}/admin/approvals" style="display:inline-block;background:#dc2626;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Review application →</a>
@@ -789,9 +802,12 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
           body: JSON.stringify({
             from: `MyDashRx <noreply@${senderDomain}>`,
             to: admin.email,
+            reply_to: 'onboarding@mydashrx.com',
             subject: '[MyDashRx] Still reviewing your application',
             track_clicks: false,
-            html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+            // P-DEL17: Gmail postmaster stream bucketing
+            headers: { 'Feedback-ID': 'approval-reminder:mydashrx:resend:transactional' },
+            html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your MyDashRx application review is still in progress — our team is on it.</span><div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
               <h2 style="color:#0F4C81;margin:0 0 8px">We haven't forgotten you</h2>
               <p style="color:#374151;font-size:15px">Hi ${admin.name}, your application for <strong>${org.name}</strong> is taking a little longer than usual. Our team will reach out personally if we need anything.</p>
               <p style="color:#374151;font-size:15px">Questions? Reply to this email — we respond within 2 hours.</p>
@@ -902,7 +918,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-          body: JSON.stringify({ from: `MyDashRx <noreply@${senderDomain}>`, to: admin.email, subject, html, track_clicks: false, track_opens: false }),
+          body: JSON.stringify({ from: `MyDashRx <noreply@${senderDomain}>`, to: admin.email, reply_to: 'onboarding@mydashrx.com', subject, html, track_clicks: false, track_opens: false, headers: { 'Feedback-ID': 'onboarding-nudge:mydashrx:resend:transactional' } }),
         }).catch((e: unknown) => { console.error('[ONB9] email failed:', e); });
 
         sent.push(`${org.id}:${window.label}`);

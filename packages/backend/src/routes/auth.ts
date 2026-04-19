@@ -203,9 +203,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
               body: JSON.stringify({
                 from: `MyDashRx <security@${senderDomain}>`,
                 to: user.email,
+                reply_to: 'support@mydashrx.com',
                 subject: '[MyDashRx] Unusual login activity on your account',
                 track_clicks: false,
+                // P-DEL17: Gmail postmaster stream bucketing
+                headers: { 'Feedback-ID': 'security-alert:mydashrx:resend:auth' },
                 html: `
+                  <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">We detected unusual login activity on your MyDashRx account — review now.</span>
                   <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
                     <h2 style="color:#dc2626;margin:0 0 8px">Unusual login activity</h2>
                     <p style="color:#374151;font-size:15px">Hi ${user.name},</p>
@@ -288,11 +292,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
             body: JSON.stringify({
               from: 'security@mydashrx.com',
               to: user.email,
+              reply_to: 'support@mydashrx.com',
               subject: 'Security alert: New country login detected',
               // P-DEL13: suppress tracking on security emails — PHI linkage risk
               track_clicks: false,
               track_opens: false,
-              html: `<p>Hi ${user.name},</p><p>We detected a login from a new country: <strong>${newCountry}</strong> (previously ${prevCountry}).</p><p>If this was you, no action is needed. If you don't recognize this login, please contact support immediately.</p><p>– MyDashRx Security</p>`,
+              // P-DEL17: Gmail postmaster stream bucketing
+              headers: { 'Feedback-ID': 'geo-alert:mydashrx:resend:auth' },
+              html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">We detected a sign-in from a new country on your MyDashRx account.</span><p>Hi ${user.name},</p><p>We detected a login from a new country: <strong>${newCountry}</strong> (previously ${prevCountry}).</p><p>If this was you, no action is needed. If you don't recognize this login, please contact support immediately.</p><p>– MyDashRx Security</p>`,
             }),
           }).catch(() => {});
         }
@@ -529,10 +536,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
               body: JSON.stringify({
                 from: 'security@mydashrx.com',
                 to: user.email,
+                reply_to: 'support@mydashrx.com',
                 subject: 'Security alert: Simultaneous login from multiple countries',
                 track_clicks: false,
                 track_opens: false,
-                html: `<p>Hi ${user.name},</p><p>Your MyDashRx account is active from multiple countries simultaneously.</p><p>Current refresh location: <strong>${refreshCountry}</strong></p><p>Other active locations: <strong>${[...new Set(otherCountries)].join(', ')}</strong></p><p>If this wasn't you, please sign out all devices and change your password immediately.</p><p>– MyDashRx Security</p>`,
+                // P-DEL17: Gmail postmaster stream bucketing
+                headers: { 'Feedback-ID': 'geo-anomaly:mydashrx:resend:auth' },
+                html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your MyDashRx account is active from multiple countries — verify it's you.</span><p>Hi ${user.name},</p><p>Your MyDashRx account is active from multiple countries simultaneously.</p><p>Current refresh location: <strong>${refreshCountry}</strong></p><p>Other active locations: <strong>${[...new Set(otherCountries)].join(', ')}</strong></p><p>If this wasn't you, please sign out all devices and change your password immediately.</p><p>– MyDashRx Security</p>`,
               }),
             }).catch(() => {});
           }
@@ -713,7 +723,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
             from: `MyDashRx <noreply@${senderDomain}>`,
             to: email,
             subject: 'Your MyDashRx login link (expires in 30 min)',
-            headers: { 'X-Entity-Ref-ID': randomUUID() },
+            headers: { 'X-Entity-Ref-ID': randomUUID(), 'Feedback-ID': 'magic-link:mydashrx:resend:auth' },
             track_clicks: false,
             track_opens: false,
             html: `

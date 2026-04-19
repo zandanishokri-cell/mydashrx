@@ -89,10 +89,14 @@ async function sendApplicantConfirmation(orgName: string, adminEmail: string, ad
     body: JSON.stringify({
       from: `MyDashRx <noreply@${senderDomain}>`,
       to: adminEmail,
+      reply_to: 'onboarding@mydashrx.com',
       subject: `We received your application — ${orgName}`,
       track_clicks: false,
       track_opens: false,
+      // P-DEL17: Gmail postmaster stream bucketing
+      headers: { 'Feedback-ID': 'signup-confirm:mydashrx:resend:transactional' },
       html: `
+        <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Application received for ${orgName} — review expected within 2–4 hours. Here's what to prepare.</span>
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#0F4C81;margin:0 0 8px">Application received!</h2>
           <p style="color:#374151;margin:0 0 16px;font-size:15px">Hi ${adminName},</p>
@@ -132,10 +136,14 @@ async function notifySuperAdmins(orgName: string, adminEmail: string) {
       body: JSON.stringify({
         from: `MyDashRx <noreply@${senderDomain}>`,
         to: sa.email,
+        reply_to: 'support@mydashrx.com',
         subject: `New pharmacy signup — ${orgName}`,
         track_clicks: false,
         track_opens: false,
+        // P-DEL17: Gmail postmaster stream bucketing
+        headers: { 'Feedback-ID': 'admin-notify:mydashrx:resend:transactional' },
         html: `
+          <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">New pharmacy signup requires your review — ${orgName} applied and is awaiting approval.</span>
           <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
             <h2 style="color:#0F4C81;margin:0 0 8px">New Pharmacy Signup</h2>
             <p style="color:#374151;margin:0 0 16px"><strong>${orgName}</strong> has submitted a signup request.</p>
@@ -329,10 +337,14 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
         body: JSON.stringify({
           from: `MyDashRx <noreply@${senderDomain}>`,
           to: email,
+          reply_to: 'support@mydashrx.com',
           subject: "You've been invited to MyDashRx",
           track_clicks: false,
           track_opens: false,
+          // P-DEL17: Gmail postmaster stream bucketing
+          headers: { 'Feedback-ID': 'staff-invite:mydashrx:resend:transactional' },
           html: `
+            <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">You've been invited to join MyDashRx — accept your invitation to get started.</span>
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
               <h2 style="color:#0F4C81;margin:0 0 8px">You're invited to MyDashRx</h2>
               <p style="color:#374151;margin:0 0 24px;font-size:15px">Click below to create your account. This invitation expires in 7 days.</p>

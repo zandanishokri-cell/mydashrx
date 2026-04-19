@@ -47,12 +47,16 @@ export async function sendOrgApprovalEmail(orgId: string, orgName: string, admin
     body: JSON.stringify({
       from: sender(),
       to: adminEmail,
+      reply_to: 'onboarding@mydashrx.com',
       subject: `Welcome to MyDashRx — ${orgName} is approved!`,
       // P-DEL13: suppress click/open tracking — approval links contain org-identifying params
       // that would flow through Resend's CDN clickstream without a BAA confirmation
       track_clicks: false,
       track_opens: false,
+      // P-DEL17: Gmail postmaster stream bucketing
+      headers: { 'Feedback-ID': 'approval:mydashrx:resend:transactional' },
       html: `
+        <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your pharmacy is approved! Complete setup in 3 steps and run your first delivery today.</span>
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#0F4C81;margin:0 0 8px">You're approved — let's get delivering!</h2>
           <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${adminName},</p>
@@ -89,17 +93,24 @@ export async function sendRejectionWithReapplyEmail(
 ): Promise<void> {
   const resendKey = process.env.RESEND_API_KEY;
   if (!resendKey) return;
+  // P-DEL18: suppress hard-bounced addresses — rejection emails contain org name + reason = PHI
+  // Without this check, PHI could be sent to a recycled address now owned by a different person
+  if (await isSuppressed(adminEmail)) { console.log(`[emailHelpers] suppressed rejection email to ${adminEmail} (hard bounce/opt-out)`); return; }
   fetch(RESEND, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
     body: JSON.stringify({
       from: sender(),
       to: adminEmail,
+      reply_to: 'support@mydashrx.com',
       subject: `Update on your MyDashRx application — ${orgName}`,
       // P-DEL13: suppress tracking — reapply links in rejection emails must not be scanner-consumed
       track_clicks: false,
       track_opens: false,
+      // P-DEL17: Gmail postmaster stream bucketing
+      headers: { 'Feedback-ID': 'rejection:mydashrx:resend:transactional' },
       html: `
+        <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your MyDashRx application status — review the next steps to reapply.</span>
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#dc2626;margin:0 0 8px">Application update</h2>
           <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${adminName},</p>
@@ -142,10 +153,14 @@ export async function sendRoleChangeEmail(
     body: JSON.stringify({
       from: sender(),
       to: targetEmail,
+      reply_to: 'support@mydashrx.com',
       subject: 'Your MyDashRx role has been updated',
       track_clicks: false,
       track_opens: false,
+      // P-DEL17: Gmail postmaster stream bucketing
+      headers: { 'Feedback-ID': 'role-change:mydashrx:resend:transactional' },
       html: `
+        <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your access role on MyDashRx has changed — sign in to use your updated permissions.</span>
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#0F4C81;margin:0 0 8px">Your role has been updated</h2>
           <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${targetName},</p>
@@ -176,11 +191,15 @@ export async function sendAbandonmentEmail(adminEmail: string, orgName: string |
     body: JSON.stringify({
       from: sender(),
       to: adminEmail,
+      reply_to: 'support@mydashrx.com',
       subject: 'Complete your MyDashRx application — takes 2 min',
       // P-DEL13: suppress tracking — signup links must survive corporate email scanners
       track_clicks: false,
       track_opens: false,
+      // P-DEL17: Gmail postmaster stream bucketing
+      headers: { 'Feedback-ID': 'abandonment:mydashrx:resend:transactional' },
       html: `
+        <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Finish setting up your pharmacy account — approval in under 2 hours, no sales call required.</span>
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <img src="${dash}/logo.png" alt="MyDashRx" style="height:32px;margin-bottom:24px" onerror="this.style.display='none'" />
           <h2 style="color:#0F4C81;margin:0 0 8px;font-size:20px">Still thinking about it?</h2>

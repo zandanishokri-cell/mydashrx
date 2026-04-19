@@ -337,6 +337,8 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
           to: [lead.email],
           subject,
           html: emailBody,
+          // P-DEL17: Gmail postmaster stream bucketing
+          headers: { 'Feedback-ID': 'outreach:mydashrx:resend:outreach' },
         }),
       });
       if (resendRes.ok) {
