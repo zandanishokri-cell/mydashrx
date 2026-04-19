@@ -200,6 +200,7 @@ function StepDepot({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: () 
 }
 
 function StepDriver({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: () => void; onSkip: () => void }) {
+  const [tab, setTab] = useState<'single' | 'csv'>('single');
   const [form, setForm] = useState({
     name: '', email: '', phone: '', password: '',
     vehicleType: 'car' as 'car' | 'van' | 'bicycle',
@@ -207,6 +208,9 @@ function StepDriver({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: ()
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // P-ONB27: CSV bulk invite state
+  const [csvText, setCsvText] = useState('');
+  const [csvResult, setCsvResult] = useState<{ email: string; status: string }[] | null>(null);
   const set = (k: string, v: string | boolean) => setForm(f => ({ ...f, [k]: v }));
 
   const submit = async (e: React.FormEvent) => {
@@ -221,6 +225,28 @@ function StepDriver({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: ()
     }
   };
 
+  // P-ONB27: parse CSV (name,email,phone) and POST to /bulk-invite
+  const submitCsv = async () => {
+    setSaving(true); setError(''); setCsvResult(null);
+    try {
+      const lines = csvText.trim().split('\n').filter(l => l.trim());
+      const driversPayload = lines.map(line => {
+        const [name, email, phone] = line.split(',').map(s => s.trim());
+        return { name: name ?? '', email: email ?? '', phone: phone ?? '' };
+      }).filter(d => d.name && d.email);
+      if (driversPayload.length === 0) { setError('No valid rows found. Format: Name, Email, Phone'); setSaving(false); return; }
+      if (driversPayload.length > 50) { setError('Maximum 50 drivers per upload'); setSaving(false); return; }
+      const res = await api.post(`/orgs/${orgId}/drivers/bulk-invite`, { drivers: driversPayload }) as { results: { email: string; status: string }[] };
+      setCsvResult(res.results ?? []);
+      const invited = res.results?.filter(r => r.status === 'invited').length ?? 0;
+      if (invited > 0) onSuccess();
+    } catch (err: any) {
+      setError(err.message ?? 'Bulk invite failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-1">
@@ -229,28 +255,68 @@ function StepDriver({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: ()
         </div>
         <h2 className="text-lg font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>Add Your First Driver</h2>
       </div>
-      <p className="text-xs text-gray-400 mb-6">
-        Drivers will receive login credentials via email.
+      <p className="text-xs text-gray-400 mb-4">
+        Drivers will receive an invite email with a magic link to activate their account.
       </p>
-      <form onSubmit={submit} className="space-y-3">
-        <FormField label="Full Name" value={form.name} onChange={e => set('name', e.target.value)} required placeholder="Maria Rodriguez" />
-        <FormField label="Email" type="email" value={form.email} onChange={e => set('email', e.target.value)} required placeholder="driver@pharmacy.com" />
-        <FormField label="Phone" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="+1 313 555 0101" />
-        <FormField label="Temporary Password" type="password" value={form.password} onChange={e => set('password', e.target.value)} required placeholder="They can change this later" />
-        <SelectField label="Vehicle Type" value={form.vehicleType} onChange={e => set('vehicleType', e.target.value)}>
-          <option value="car">Car</option>
-          <option value="van">Van</option>
-          <option value="bicycle">Bicycle</option>
-        </SelectField>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={form.drugCapable} onChange={e => set('drugCapable', e.target.checked)} className="rounded border-gray-300" />
-          <span className="text-sm text-gray-700">Rx / Drug Capable</span>
-        </label>
-        {error && <p className="text-red-500 text-sm">{error}</p>}
-        <Button type="submit" loading={saving} className="w-full mt-2">
-          Add Driver <ArrowRight size={15} />
-        </Button>
-      </form>
+
+      {/* P-ONB27: Tab switcher — single vs CSV */}
+      <div className="flex bg-gray-100 rounded-lg p-1 mb-4">
+        <button onClick={() => setTab('single')} className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${tab === 'single' ? 'bg-white text-[#0F4C81] shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Add one</button>
+        <button onClick={() => setTab('csv')} className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${tab === 'csv' ? 'bg-white text-[#0F4C81] shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Upload CSV (up to 50)</button>
+      </div>
+
+      {tab === 'single' && (
+        <form onSubmit={submit} className="space-y-3">
+          <FormField label="Full Name" value={form.name} onChange={e => set('name', e.target.value)} required placeholder="Maria Rodriguez" />
+          <FormField label="Email" type="email" value={form.email} onChange={e => set('email', e.target.value)} required placeholder="driver@pharmacy.com" />
+          <FormField label="Phone" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="+1 313 555 0101" />
+          <FormField label="Temporary Password" type="password" value={form.password} onChange={e => set('password', e.target.value)} required placeholder="They can change this later" />
+          <SelectField label="Vehicle Type" value={form.vehicleType} onChange={e => set('vehicleType', e.target.value)}>
+            <option value="car">Car</option>
+            <option value="van">Van</option>
+            <option value="bicycle">Bicycle</option>
+          </SelectField>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={form.drugCapable} onChange={e => set('drugCapable', e.target.checked)} className="rounded border-gray-300" />
+            <span className="text-sm text-gray-700">Rx / Drug Capable</span>
+          </label>
+          {error && <p className="text-red-500 text-sm">{error}</p>}
+          <Button type="submit" loading={saving} className="w-full mt-2">
+            Add Driver <ArrowRight size={15} />
+          </Button>
+        </form>
+      )}
+
+      {tab === 'csv' && (
+        <div className="space-y-3">
+          <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
+            <strong>Format:</strong> one driver per line — <code>Name, Email, Phone</code><br />
+            Each driver gets an invite email with a magic sign-in link.
+          </div>
+          <textarea
+            value={csvText}
+            onChange={e => setCsvText(e.target.value)}
+            rows={6}
+            placeholder={"Maria Rodriguez, maria@bestpharmacy.com, 3135550101\nJohn Smith, john@bestpharmacy.com, 3135550102"}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+          {csvResult && (
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {csvResult.map(r => (
+                <div key={r.email} className={`flex items-center justify-between text-xs px-2 py-1 rounded ${r.status === 'invited' ? 'bg-green-50 text-green-700' : r.status === 'already_exists' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>
+                  <span>{r.email}</span>
+                  <span className="font-medium">{r.status === 'invited' ? 'Invited' : r.status === 'already_exists' ? 'Already exists' : 'Failed'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {error && <p className="text-red-500 text-sm">{error}</p>}
+          <Button type="button" loading={saving} onClick={submitCsv} className="w-full">
+            Send Invite Emails <ArrowRight size={15} />
+          </Button>
+        </div>
+      )}
+
       <button
         type="button"
         onClick={onSkip}
