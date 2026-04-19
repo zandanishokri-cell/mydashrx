@@ -4,7 +4,7 @@
  * Falls back to static ROLE_PERMISSIONS from shared package if no DB template found.
  */
 import { db } from '../db/connection.js';
-import { roleTemplates } from '../db/schema.js';
+import { roleTemplates, organizations } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
@@ -89,6 +89,44 @@ export async function seedOrgDefaults(orgId: string): Promise<void> {
       // Best-effort — never blocks org creation
     });
   }
+}
+
+/**
+ * P-RBAC38: Detect permission drift — compare all org role_templates vs platform defaults.
+ * Returns org-role pairs where permissions diverge (added or removed vs baseline).
+ * HIPAA §164.308(a)(1)(ii)(D) — information system activity review.
+ */
+export async function detectPermissionDrift(): Promise<{
+  orgId: string; orgName: string; role: string; addedPerms: string[]; removedPerms: string[];
+}[]> {
+  // Load all platform defaults (orgId IS NULL)
+  const platformRows = await db.select({ role: roleTemplates.role, permissions: roleTemplates.permissions })
+    .from(roleTemplates).where(sql`org_id IS NULL`);
+  const platformMap = new Map(platformRows.map(r => [r.role, new Set(r.permissions ?? [])]));
+
+  // Load all org-specific overrides joined with org name
+  const orgRows = await db.select({
+    orgId: roleTemplates.orgId,
+    orgName: organizations.name,
+    role: roleTemplates.role,
+    permissions: roleTemplates.permissions,
+  }).from(roleTemplates)
+    .innerJoin(organizations, eq(organizations.id, roleTemplates.orgId!))
+    .where(sql`role_templates.org_id IS NOT NULL`);
+
+  const drift: { orgId: string; orgName: string; role: string; addedPerms: string[]; removedPerms: string[] }[] = [];
+  for (const row of orgRows) {
+    const platform = platformMap.get(row.role);
+    if (!platform) continue;
+    const orgPerms = (row.permissions ?? []) as string[];
+    const orgSet = new Set(orgPerms);
+    const addedPerms = orgPerms.filter(p => !platform.has(p));
+    const removedPerms = [...platform].filter(p => !orgSet.has(p));
+    if (addedPerms.length || removedPerms.length) {
+      drift.push({ orgId: row.orgId!, orgName: row.orgName ?? '', role: row.role, addedPerms, removedPerms });
+    }
+  }
+  return drift;
 }
 
 /** Upsert an org-specific template */

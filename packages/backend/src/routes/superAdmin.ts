@@ -5,7 +5,7 @@ import { organizations, users, stops, drivers, adminAuditLogs, auditLogs, magicL
 import { eq, isNull, sql, gte, lte, count, and, desc, asc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
-import { invalidateOrgRole, invalidateOrg, listTemplates, upsertTemplate, seedOrgDefaults } from '../lib/rbacCache.js';
+import { invalidateOrgRole, invalidateOrg, listTemplates, upsertTemplate, seedOrgDefaults, getOrgPermissions } from '../lib/rbacCache.js';
 import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
 import { cancelPendingDrip } from '../lib/onboardingDrip.js';
 
@@ -1717,6 +1717,111 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       ? Buffer.from(JSON.stringify({ created_at: last.timestamp?.toISOString?.() ?? last.timestamp, id: last.id })).toString('base64url')
       : null;
     return { events, nextCursor, hasMore };
+  });
+
+  // P-RBAC39: GET /admin/rbac-audit/permissions/export — CSV download for HIPAA §164.312(b)
+  // Streams permission-change audit events as a 10-col CSV artifact for OCR/BA audits
+  app.get('/rbac-audit/permissions/export', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+    const { from, to, orgId } = req.query as { from?: string; to?: string; orgId?: string };
+    const conditions: any[] = [
+      sql`action IN ('role_template_updated', 'org_role_permissions_updated')`,
+    ];
+    if (from) conditions.push(sql`created_at >= ${from}::timestamptz`);
+    if (to) conditions.push(sql`created_at <= ${to}::timestamptz`);
+    if (orgId) conditions.push(sql`target_id = ${orgId}::uuid`);
+
+    const rows = await db.select({
+      createdAt: adminAuditLogs.createdAt,
+      actorEmail: adminAuditLogs.actorEmail,
+      action: adminAuditLogs.action,
+      targetId: adminAuditLogs.targetId,
+      targetName: adminAuditLogs.targetName,
+      metadata: adminAuditLogs.metadata,
+    }).from(adminAuditLogs)
+      .where(sql`${conditions.reduce((a: any, b: any) => sql`${a} AND ${b}`)}`)
+      .orderBy(desc(adminAuditLogs.createdAt))
+      .limit(10000);
+
+    const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const header = 'timestamp,actorEmail,action,orgId,orgName,role,permissionsBefore,permissionsAfter,addedPerms,removedPerms\n';
+    const csvRows = rows.map(r => {
+      const m = r.metadata as Record<string, unknown> | null;
+      const before = Array.isArray(m?.before) ? (m!.before as string[]).join('|') : '';
+      const after = Array.isArray(m?.after) ? (m!.after as string[]).join('|') : (Array.isArray(m?.permissions) ? (m!.permissions as string[]).join('|') : '');
+      const added = Array.isArray((m?.diff as any)?.added) ? ((m!.diff as any).added as string[]).join('|') : '';
+      const removed = Array.isArray((m?.diff as any)?.removed) ? ((m!.diff as any).removed as string[]).join('|') : '';
+      // targetName format: "OrgName role:roleValue" or just role when platform
+      const parts = String(r.targetName ?? '').split(' role:');
+      const orgName = parts.length > 1 ? parts[0] : '';
+      const role = parts.length > 1 ? parts[1] : (r.targetName ?? '');
+      return [r.createdAt?.toISOString() ?? '', r.actorEmail ?? '', r.action ?? '', r.targetId ?? '', orgName, role, before, after, added, removed].map(escape).join(',');
+    });
+
+    // Audit the export itself — HIPAA §164.312(b)
+    const actor = req.user as { sub: string; email: string };
+    db.insert(adminAuditLogs).values({
+      actorId: actor.sub, actorEmail: actor.email, action: 'permission_history_exported',
+      targetId: actor.sub, targetName: actor.email,
+      metadata: { rowCount: rows.length, filters: { from, to, orgId } },
+    }).catch(() => {});
+
+    reply.header('Content-Type', 'text/csv');
+    reply.header('Content-Disposition', `attachment; filename="permission-history-${new Date().toISOString().slice(0, 10)}.csv"`);
+    return reply.send(header + csvRows.join('\n'));
+  });
+
+  // P-RBAC37: POST /admin/chains/:chainId/role-templates/propagate
+  // Fans out upsertTemplate() to all member orgs in the chain — atomic, audited, envelope-guarded
+  // HIPAA §164.308(a)(4)(ii)(B) — consistent access authorization across multi-location covered entities
+  app.post('/chains/:chainId/role-templates/propagate', {
+    preHandler: requireRole('super_admin'),
+    schema: {
+      params: { type: 'object', properties: { chainId: { type: 'string', format: 'uuid' } }, required: ['chainId'] },
+      body: { type: 'object', properties: { role: { type: 'string' }, permissions: { type: 'array', items: { type: 'string' } } }, required: ['role', 'permissions'] },
+    },
+  }, async (req, reply) => {
+    const actor = req.user as { sub: string; email: string };
+    const { chainId } = req.params as { chainId: string };
+    const { role, permissions } = req.body as { role: string; permissions: string[] };
+
+    // Envelope guard — same pattern as pharmacy self-serve (P-RBAC36)
+    const platformPerms = await getOrgPermissions(null, role);
+    const forbidden = permissions.filter(p => !new Set(platformPerms).has(p));
+    if (forbidden.length) return reply.code(403).send({ error: 'Exceeds platform envelope', forbidden });
+
+    const members = await db.select({ id: organizations.id, name: organizations.name })
+      .from(organizations)
+      .where(and(eq(organizations.chainId, chainId), isNull(organizations.deletedAt)));
+
+    if (!members.length) return reply.code(404).send({ error: 'No orgs in chain or chain not found' });
+
+    const results: { orgId: string; orgName: string; ok: boolean; error?: string }[] = [];
+    for (const member of members) {
+      try {
+        await upsertTemplate(member.id, role, permissions);
+        invalidateOrg(member.id);
+        results.push({ orgId: member.id, orgName: member.name ?? '', ok: true });
+      } catch (e) {
+        results.push({ orgId: member.id, orgName: member.name ?? '', ok: false, error: String(e) });
+      }
+    }
+
+    // Single audit entry covers entire propagation — HIPAA §164.312(b)
+    db.insert(adminAuditLogs).values({
+      actorId: actor.sub, actorEmail: actor.email, action: 'chain_role_template_propagated',
+      targetId: chainId, targetName: `chain:${chainId} role:${role}`,
+      metadata: { chainId, role, permissions, memberCount: members.length, results },
+    }).catch(() => {});
+
+    return reply.send({ ok: true, propagated: members.length, results });
+  });
+
+  // P-RBAC38: GET /admin/rbac-audit/drift — live permission drift report vs platform defaults
+  // HIPAA §164.308(a)(1)(ii)(D) information system activity review
+  app.get('/rbac-audit/drift', { preHandler: requireRole('super_admin') }, async (_req, reply) => {
+    const { detectPermissionDrift } = await import('../lib/rbacCache.js');
+    const drifts = await detectPermissionDrift();
+    return reply.send({ count: drifts.length, drifts });
   });
 
   // DELETE /admin/role-templates/:id — delete an org-specific template (restores platform default)

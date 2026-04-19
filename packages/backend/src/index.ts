@@ -577,6 +577,24 @@ try {
   console.error('P-RBAC32 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-RBAC38: permission_drift_snapshots — weekly drift detection store (HIPAA §164.308(a)(1)(ii)(D))
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS permission_drift_snapshots (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      added_perms TEXT[] NOT NULL DEFAULT '{}',
+      removed_perms TEXT[] NOT NULL DEFAULT '{}',
+      detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS pds_org_role_idx ON permission_drift_snapshots(org_id, role)`);
+  console.log('P-RBAC38 permission_drift_snapshots table ensured');
+} catch (err) {
+  console.error('P-RBAC38 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-RBAC14: assigned_dispatcher_id on routes — dispatcher resource scoping (HIPAA §164.502(b))
 try {
   await db.execute(sql`ALTER TABLE routes ADD COLUMN IF NOT EXISTS assigned_dispatcher_id uuid REFERENCES users(id)`);
@@ -1203,6 +1221,32 @@ setInterval(async () => {
   const now = new Date();
   if (now.getUTCDay() === 0 && now.getUTCHours() === 3) {
     runDkimHealthCheck().catch(console.error);
+  }
+}, 60 * 60 * 1000);
+
+// P-RBAC38: Permission drift detection — hourly tick, runs only Sunday 2AM UTC
+// Compares all org role_templates vs platform defaults; stores results in permission_drift_snapshots
+setInterval(async () => {
+  const now = new Date();
+  if (now.getUTCDay() !== 0 || now.getUTCHours() !== 2) return;
+  try {
+    const { detectPermissionDrift } = await import('./lib/rbacCache.js');
+    const drifts = await detectPermissionDrift();
+    if (drifts.length) {
+      // Purge snapshots older than 8 days, then insert fresh batch
+      await db.execute(sql`DELETE FROM permission_drift_snapshots WHERE detected_at < NOW() - INTERVAL '8 days'`);
+      for (const d of drifts) {
+        await db.execute(sql`
+          INSERT INTO permission_drift_snapshots (org_id, role, added_perms, removed_perms)
+          VALUES (${d.orgId}::uuid, ${d.role}, ${d.addedPerms}::text[], ${d.removedPerms}::text[])
+        `);
+      }
+      console.log(JSON.stringify({ event: 'permission_drift_detected', driftCount: drifts.length }));
+    } else {
+      console.log(JSON.stringify({ event: 'permission_drift_clean', driftCount: 0 }));
+    }
+  } catch (err) {
+    console.error('P-RBAC38 drift cron error (non-fatal):', err instanceof Error ? err.message : err);
   }
 }, 60 * 60 * 1000);
 

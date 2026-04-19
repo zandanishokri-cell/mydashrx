@@ -2,8 +2,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, setImpersonateOrgId } from '@/lib/api';
-import { getUser } from '@/lib/auth';
-import { Crown, Building2, Users, Truck, DollarSign, Plus, X, UserCheck, Mail, Activity } from 'lucide-react';
+import { getUser, getAccessToken } from '@/lib/auth';
+import { Crown, Building2, Users, Truck, DollarSign, Plus, X, UserCheck, Mail, Activity, Download, AlertTriangle } from 'lucide-react';
 
 interface OrgRow {
   id: string; name: string; billingPlan: string; pendingApproval: boolean;
@@ -76,6 +76,10 @@ export default function AdminPage() {
   const [createForm, setCreateForm] = useState({ name: '', timezone: 'America/New_York', adminName: '', adminEmail: '', adminPassword: '' });
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState('');
+  // P-RBAC38: permission drift report
+  const [drift, setDrift] = useState<{ count: number; drifts: Array<{ orgId: string; orgName: string; role: string; addedPerms: string[]; removedPerms: string[] }> } | null>(null);
+  // P-RBAC39: CSV export state
+  const [permExporting, setPermExporting] = useState(false);
 
   useEffect(() => {
     if (!user || user.role !== 'super_admin') { router.replace('/dashboard'); return; }
@@ -85,7 +89,7 @@ export default function AdminPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, o, f, rbacAudit, tlsAudit] = await Promise.all([
+      const [s, o, f, rbacAudit, tlsAudit, driftData] = await Promise.all([
         api.get<Stats>('/admin/stats'),
         api.get<OrgListResponse>('/admin/orgs'),
         api.get<MagicLinkFunnel>('/admin/magic-link/funnel').catch(() => null),
@@ -96,8 +100,13 @@ export default function AdminPage() {
         api.get<{ events: Array<{ action: string; metadata: Record<string, unknown>; createdAt: string }> }>(
           '/admin/audit-log?eventTypes=tls_rpt_failure,tls_rpt_clean&limit=1'
         ).catch(() => null),
+        // P-RBAC38: live permission drift report
+        api.get<{ count: number; drifts: Array<{ orgId: string; orgName: string; role: string; addedPerms: string[]; removedPerms: string[] }> }>(
+          '/admin/rbac-audit/drift'
+        ).catch(() => null),
       ]);
       setStats(s); setOrgs(o.orgs); setOrgsNextCursor(o.nextCursor); setOrgsHasMore(o.hasMore); setFunnel(f);
+      if (driftData) setDrift(driftData);
       // P-DEL27: parse latest TLS-RPT report for health indicator
       if (tlsAudit?.events?.length) {
         const e = tlsAudit.events[0];
@@ -169,6 +178,26 @@ export default function AdminPage() {
     } finally { setOrgsLoadingMore(false); }
   };
 
+  // P-RBAC39: download permission history CSV — HIPAA §164.312(b) audit artifact
+  const exportPermHistory = async () => {
+    if (permExporting) return;
+    setPermExporting(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com/api/v1';
+      const token = getAccessToken() ?? '';
+      const res = await fetch(`${backendUrl}/admin/rbac-audit/permissions/export`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `permission-history-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+    } catch { /* silent — user will see no download */ }
+    finally { setPermExporting(false); }
+  };
+
   if (!user || user.role !== 'super_admin') return null;
 
   return (
@@ -180,12 +209,23 @@ export default function AdminPage() {
             <Crown size={20} className="text-purple-600" />
             <h1 className="text-xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>Platform Admin</h1>
           </div>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
-          >
-            <Plus size={15} /> Create Org
-          </button>
+          <div className="flex items-center gap-2">
+            {/* P-RBAC39: permission history CSV export — HIPAA §164.312(b) evidence artifact */}
+            <button
+              onClick={exportPermHistory}
+              disabled={permExporting}
+              title="Export permission change history (HIPAA §164.312(b))"
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-purple-200 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-50 transition-colors disabled:opacity-50"
+            >
+              <Download size={14} /> {permExporting ? 'Exporting…' : 'Perm History'}
+            </button>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
+            >
+              <Plus size={15} /> Create Org
+            </button>
+          </div>
         </div>
         {/* Stats row */}
         {stats && (
@@ -329,6 +369,33 @@ export default function AdminPage() {
               {tlsHealth.action === 'tls_rpt_failure' && ' Investigate failure details in the audit log.'}
             </p>
           </div>
+        </div>
+      )}
+
+      {/* P-RBAC38: Permission Drift card — orgs whose role templates diverge from platform defaults */}
+      {drift && drift.count > 0 && (
+        <div className="px-6 py-3 border-b border-purple-100 bg-white/60 shrink-0">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle size={14} className="text-amber-500" />
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              Permission Drift — {drift.count} org-role pair{drift.count !== 1 ? 's' : ''} diverged from platform defaults
+            </span>
+          </div>
+          <div className="space-y-1.5 max-h-48 overflow-auto">
+            {drift.drifts.map((d, i) => (
+              <div key={i} className="flex items-center gap-3 text-xs bg-amber-50 rounded-lg px-3 py-2">
+                <span className="font-medium text-gray-900 w-40 truncate">{d.orgName}</span>
+                <span className="text-gray-500 w-28 truncate">{d.role}</span>
+                {d.addedPerms.length > 0 && (
+                  <span className="text-red-600 font-medium">+{d.addedPerms.length} elevated: {d.addedPerms.slice(0, 2).join(', ')}{d.addedPerms.length > 2 ? `…` : ''}</span>
+                )}
+                {d.removedPerms.length > 0 && (
+                  <span className="text-amber-600">-{d.removedPerms.length} removed</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-2">Refresh to re-run live drift check. Use RBAC admin to propagate fixes.</p>
         </div>
       )}
 
