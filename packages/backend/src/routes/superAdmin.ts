@@ -20,6 +20,16 @@ export function notifyApprovalClients(): void {
   }
 }
 
+// P-ADM44: broadcast watcher count to all connected SSE clients on connect/disconnect
+function broadcastWatcherCount(): void {
+  const count = approvalSseClients.size;
+  for (const reply of approvalSseClients) {
+    if (!reply.raw.writableEnded) {
+      reply.raw.write(`data: ${JSON.stringify({ type: 'watcher_count', count })}\n\n`);
+    }
+  }
+}
+
 // P-ADM40: SLA escalation ladder — HIPAA §164.308(a)(1)(ii)(A) timeliness evidence
 const SLA_LADDER = [
   { level: 1, afterHours: 2,  action: 'slack_ping',   message: 'Pending approval needs attention' },
@@ -157,6 +167,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         rejectedLast7d: rejectedLast7d[0]?.count ?? 0,
         pendingOver24h,
         avgHoursToApproval,
+        activeApprovalWatchers: approvalSseClients.size, // P-ADM44
       },
       activationHealth: {
         avgActivationHours,
@@ -377,7 +388,9 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Organization not found' });
 
-    await db.update(organizations).set({ pendingApproval: false, approvedAt: new Date() }).where(eq(organizations.id, orgId));
+    await db.update(organizations)
+      .set({ pendingApproval: false, approvedAt: new Date(), activeReviewerId: null, activeReviewClaimedAt: null }) // P-ADM43: clear claim on approve
+      .where(eq(organizations.id, orgId));
     await db.update(users).set({ pendingApproval: false }).where(and(eq(users.orgId, orgId), isNull(users.deletedAt)));
 
     // P-ONB47: cancel pending drip emails — org is approved, no more nurture needed
@@ -428,7 +441,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     if (!org) return reply.code(404).send({ error: 'Organization not found' });
 
     await db.update(organizations)
-      .set({ pendingApproval: false, rejectedAt: new Date(), rejectionReason: reason ?? null, rejectionNote: note ?? null })
+      .set({ pendingApproval: false, rejectedAt: new Date(), rejectionReason: reason ?? null, rejectionNote: note ?? null, activeReviewerId: null, activeReviewClaimedAt: null }) // P-ADM43: clear claim on reject
       .where(eq(organizations.id, orgId));
 
     // P-ONB47: cancel pending drip emails on rejection
@@ -725,6 +738,67 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     }).catch(e => console.error('[P-ADM37] notify email failed:', e));
 
     return { success: true, assignedReviewerId: actor.sub, assignedAt: new Date() };
+  });
+
+  // POST /admin/approvals/:orgId/claim — P-ADM43: reviewer claim lock (10-min TTL)
+  // Prevents two admins from simultaneously actioning the same org.
+  // 409 Conflict if another admin has an active claim (within 10-min TTL).
+  // ?force=true allows forceful takeover (super_admin escape hatch).
+  app.post('/approvals/:orgId/claim', { preHandler: auth }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { force } = req.query as { force?: string };
+    const actor = req.user as { sub: string; email: string };
+    const TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+    const [org] = await db.select({
+      id: organizations.id, name: organizations.name,
+      activeReviewerId: organizations.activeReviewerId,
+      activeReviewClaimedAt: organizations.activeReviewClaimedAt,
+    }).from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+
+    // Check if claimed by another admin with active (non-expired) TTL
+    if (org.activeReviewerId && org.activeReviewerId !== actor.sub) {
+      const claimedMs = org.activeReviewClaimedAt ? Date.now() - new Date(org.activeReviewClaimedAt).getTime() : Infinity;
+      if (claimedMs < TTL_MS && force !== 'true') {
+        // Resolve claimant email
+        const [claimant] = await db.select({ email: users.email })
+          .from(users).where(eq(users.id, org.activeReviewerId)).limit(1);
+        return reply.code(409).send({
+          error: 'Already claimed',
+          claimedBy: claimant?.email ?? org.activeReviewerId,
+          claimedAt: org.activeReviewClaimedAt,
+        });
+      }
+    }
+
+    const now = new Date();
+    await db.update(organizations)
+      .set({ activeReviewerId: actor.sub, activeReviewClaimedAt: now })
+      .where(eq(organizations.id, orgId));
+
+    return { ok: true, claimedBy: actor.email, claimedAt: now, expiresAt: new Date(now.getTime() + TTL_MS) };
+  });
+
+  // DELETE /admin/approvals/:orgId/claim — P-ADM43: release claim on drawer close
+  app.delete('/approvals/:orgId/claim', { preHandler: auth }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const actor = req.user as { sub: string; email: string };
+
+    const [org] = await db.select({ id: organizations.id, activeReviewerId: organizations.activeReviewerId })
+      .from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+
+    // Only the claimant (or force via approve/reject) can release
+    if (org.activeReviewerId && org.activeReviewerId !== actor.sub) {
+      return reply.code(403).send({ error: 'Can only release your own claim' });
+    }
+
+    await db.update(organizations)
+      .set({ activeReviewerId: null, activeReviewClaimedAt: null })
+      .where(eq(organizations.id, orgId));
+
+    return { ok: true };
   });
 
   // GET /admin/approvals/export — P-ADM36: HIPAA §164.308(a)(1)(ii)(D) approval decisions CSV
@@ -1092,6 +1166,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     reply.raw.flushHeaders?.();
 
     approvalSseClients.add(reply);
+    broadcastWatcherCount(); // P-ADM44: notify all clients (including new one) of new count
 
     // Heartbeat every 25s — keeps connection alive through proxies
     const heartbeat = setInterval(() => {
@@ -1101,6 +1176,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     req.raw.on('close', () => {
       clearInterval(heartbeat);
       approvalSseClients.delete(reply);
+      broadcastWatcherCount(); // P-ADM44: notify remaining clients
     });
 
     await new Promise<void>(resolve => req.raw.on('close', resolve));

@@ -23,6 +23,8 @@ type PendingOrg = {
     // P-ADM40: SLA breach tracking
     slaBreachedAt?: string | null;
     escalationLevel?: number | null;
+    // P-ADM43: reviewer claim lock
+    activeReviewerId?: string | null; activeReviewClaimedAt?: string | null;
   };
   admin: { id: string; name: string; email: string; createdAt: string } | null;
 };
@@ -59,6 +61,61 @@ function useLiveTimer() {
     const interval = setInterval(() => forceUpdate(n => n + 1), 60_000);
     return () => clearInterval(interval);
   }, []);
+}
+
+// P-ADM42: build ordered timeline events from approvalReminderSentAt JSONB + slaBreachedAt
+type TimelineEvent = { key: string; label: string; ts: string; icon: string; colorClass: string };
+
+function buildTimeline(
+  reminderMap: Record<string, string> | null | undefined,
+  slaBreachedAt: string | null | undefined,
+): TimelineEvent[] {
+  const KEY_CONFIG: Record<string, { label: string; icon: string; colorClass: string }> = {
+    t90: { label: '90-min status update sent',     icon: '📧', colorClass: 'text-blue-600' },
+    t4h: { label: '4h escalation sent',            icon: '⏰', colorClass: 'text-amber-600' },
+    l1:  { label: 'L1 — Slack ping sent',          icon: '💬', colorClass: 'text-indigo-600' },
+    l2:  { label: 'L2 — Slack urgent sent',        icon: '🔔', colorClass: 'text-orange-600' },
+    l3:  { label: 'L3 — Admin email escalation',   icon: '📨', colorClass: 'text-red-500' },
+    l4:  { label: 'L4 — SLA breach logged',        icon: '🚨', colorClass: 'text-red-700' },
+  };
+  const ORDER = ['t90', 't4h', 'l1', 'l2', 'l3', 'l4'];
+  const events: TimelineEvent[] = [];
+
+  if (reminderMap) {
+    for (const key of ORDER) {
+      if (reminderMap[key]) {
+        const cfg = KEY_CONFIG[key];
+        if (cfg) events.push({ key, label: cfg.label, ts: reminderMap[key], icon: cfg.icon, colorClass: cfg.colorClass });
+      }
+    }
+  }
+
+  // slaBreachedAt is a terminal red event (may overlap with l4 key, deduplicate)
+  if (slaBreachedAt && !events.find(e => e.key === 'l4')) {
+    events.push({ key: 'sla_breach', label: 'SLA BREACHED', ts: slaBreachedAt, icon: '🔴', colorClass: 'text-red-700 font-bold' });
+  }
+
+  return events.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+}
+
+function TimelinePanel({ org }: { org: PendingOrg['org'] }) {
+  const events = buildTimeline(org.approvalReminderSentAt, org.slaBreachedAt);
+  if (events.length === 0) return (
+    <p className="text-xs text-gray-400 italic">No escalation events yet</p>
+  );
+  return (
+    <ol className="space-y-1.5">
+      {events.map(ev => (
+        <li key={ev.key} className="flex items-start gap-2">
+          <span className="text-sm leading-5">{ev.icon}</span>
+          <div className="flex-1 min-w-0">
+            <p className={`text-xs ${ev.colorClass}`}>{ev.label}</p>
+            <p className="text-xs text-gray-400">{new Date(ev.ts).toLocaleString()}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 function SlaCountdown({ createdAt }: { createdAt: string }) {
@@ -107,6 +164,7 @@ function DetailDrawer({
   onHoldToggle,
   onAssign,
   currentUserId,
+  currentUserEmail,
 }: {
   item: PendingOrg;
   acting: Record<string, 'approving' | 'rejecting'>;
@@ -116,6 +174,7 @@ function DetailDrawer({
   onHoldToggle: (orgId: string, currentHold: boolean) => void;
   onAssign: (orgId: string) => void;
   currentUserId: string;
+  currentUserEmail: string;
 }) {
   const { org, admin } = item;
   const aging = getAgingClass(org.createdAt);
@@ -129,6 +188,8 @@ function DetailDrawer({
   const [assignSaving, setAssignSaving] = useState(false);
   // P-ML23: magic link audit modal
   const [showMlAudit, setShowMlAudit] = useState(false);
+  // P-ADM43: reviewer claim state
+  const [claimConflict, setClaimConflict] = useState<{ claimedBy: string; claimedAt: string } | null>(null);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -141,6 +202,28 @@ function DetailDrawer({
     api.get<ApprovalNote[]>(`/admin/approvals/${org.id}/notes`)
       .then(n => { setNotes(n); setNotesLoaded(true); })
       .catch(() => setNotesLoaded(true));
+  }, [org.id]);
+
+  // P-ADM43: claim drawer on open, release on close
+  useEffect(() => {
+    // Attempt to claim on mount — parse conflict from thrown Error message body
+    api.post<{ ok: boolean; claimedBy: string; claimedAt: string; expiresAt: string }>(
+      `/admin/approvals/${org.id}/claim`, {}
+    ).catch((err: unknown) => {
+      // api throws Error(`API ${status}: ${bodyText}`) — parse 409 body JSON
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.startsWith('API 409:')) {
+        try {
+          const json = JSON.parse(msg.slice('API 409:'.length).trim()) as { claimedBy?: string; claimedAt?: string };
+          setClaimConflict({ claimedBy: json.claimedBy ?? 'another admin', claimedAt: json.claimedAt ?? '' });
+        } catch { setClaimConflict({ claimedBy: 'another admin', claimedAt: '' }); }
+      }
+    });
+    // Release on unmount (drawer close)
+    return () => {
+      api.del(`/admin/approvals/${org.id}/claim`).catch(() => {});
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org.id]);
 
   const addNote = async () => {
@@ -219,6 +302,30 @@ function DetailDrawer({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {/* P-ADM43: reviewer collision warning — amber banner when claimed by another admin */}
+          {claimConflict && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-amber-800">⚠ Being reviewed by {claimConflict.claimedBy}</p>
+                  {claimConflict.claimedAt && (
+                    <p className="text-xs text-amber-600 mt-0.5">Since {new Date(claimConflict.claimedAt).toLocaleTimeString()}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    api.post<{ ok: boolean }>(`/admin/approvals/${org.id}/claim?force=true`, {})
+                      .then(() => setClaimConflict(null))
+                      .catch(() => {});
+                  }}
+                  className="shrink-0 text-xs font-medium text-amber-700 underline hover:text-amber-900"
+                >
+                  Take over
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Status badges */}
           <div className="flex items-center gap-2 flex-wrap">
             {/* P-ADM40: permanent SLA BREACHED badge — HIPAA §164.308(a)(1)(ii)(A) */}
@@ -415,6 +522,12 @@ function DetailDrawer({
             )}
           </div>
 
+          {/* P-ADM42: Escalation timeline — ordered event log from approvalReminderSentAt JSONB */}
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Escalation Timeline</p>
+            <TimelinePanel org={org} />
+          </div>
+
           {/* P-ADM19: Internal admin notes */}
           <div className="space-y-2">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
@@ -463,17 +576,20 @@ function DetailDrawer({
 
         {/* Footer actions */}
         <div className="px-5 py-4 border-t border-gray-100 space-y-2">
+          {/* P-ADM43: disable action buttons when another admin has the claim */}
           <div className="flex gap-3">
             <button
               onClick={() => onApprove(org.id)}
-              disabled={!!acting[org.id]}
+              disabled={!!acting[org.id] || !!claimConflict}
+              title={claimConflict ? `Claimed by ${claimConflict.claimedBy} — take over to act` : undefined}
               className="flex-1 bg-green-600 text-white text-sm font-semibold rounded-xl py-2.5 hover:bg-green-700 disabled:opacity-50 transition-colors"
             >
               {acting[org.id] === 'approving' ? 'Approving…' : 'Approve'}
             </button>
             <button
               onClick={() => onReject(org.id)}
-              disabled={!!acting[org.id]}
+              disabled={!!acting[org.id] || !!claimConflict}
+              title={claimConflict ? `Claimed by ${claimConflict.claimedBy} — take over to act` : undefined}
               className="flex-1 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl py-2.5 hover:bg-gray-50 disabled:opacity-50 transition-colors"
             >
               Reject
@@ -741,11 +857,14 @@ export default function ApprovalsPage() {
   const [approvalStats, setApprovalStats] = useState<{
     pending: number; approvedLast7d: number; rejectedLast7d: number;
     pendingOver24h: number; avgHoursToApproval: number | null;
+    activeApprovalWatchers?: number; // P-ADM44
   } | null>(null);
 
   // P-ADM41: vim-style keyboard navigation state
   const [kbSelectedIdx, setKbSelectedIdx] = useState<number>(-1);
   const [showHelpOverlay, setShowHelpOverlay] = useState(false);
+  // P-ADM44: live watcher count from SSE watcher_count events
+  const [watcherCount, setWatcherCount] = useState(0);
 
   useEffect(() => {
     if (!user || user.role !== 'super_admin') router.replace('/dashboard');
@@ -785,7 +904,16 @@ export default function ApprovalsPage() {
 
     const connect = () => {
       es = new EventSource(`${backendUrl}/admin/approvals/stream?token=${encodeURIComponent(token)}`);
-      es.onmessage = () => { load(); };
+      es.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data) as { type: string; count?: number };
+          if (msg.type === 'watcher_count' && typeof msg.count === 'number') {
+            setWatcherCount(msg.count); // P-ADM44
+          } else if (msg.type === 'refresh') {
+            load();
+          }
+        } catch { load(); } // fallback: treat any message as refresh
+      };
       es.onerror = () => {
         es?.close();
         es = null;
@@ -952,7 +1080,16 @@ export default function ApprovalsPage() {
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Pending Approvals</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-gray-900">Pending Approvals</h1>
+            {/* P-ADM44: animated indigo watcher badge — shown when >1 admin is watching */}
+            {watcherCount > 1 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block" />
+                {watcherCount} admins watching
+              </span>
+            )}
+          </div>
           <p className="text-sm text-gray-500 mt-0.5">New pharmacy accounts awaiting review</p>
         </div>
         <div className="flex items-center gap-2">
@@ -1227,6 +1364,7 @@ export default function ApprovalsPage() {
           onHoldToggle={handleHoldToggle}
           onAssign={handleAssign}
           currentUserId={user.id}
+          currentUserEmail={user.email}
         />
       )}
 

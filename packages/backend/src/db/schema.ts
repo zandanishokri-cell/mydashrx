@@ -140,6 +140,10 @@ export const organizations = pgTable('organizations', {
   pendingDripEmailIds: text('pending_drip_email_ids'),
   // P-ONB48: full NPPES API response at time of signup — admin review + audit trail
   npiPayload: jsonb('npi_payload'),
+  // P-ADM43: reviewer claim lock (Zendesk Agent Collision Detection pattern)
+  // 10-min TTL prevents two admins from simultaneously approving/rejecting the same org
+  activeReviewerId: uuid('active_reviewer_id').references((): AnyPgColumn => users.id),
+  activeReviewClaimedAt: timestamp('active_review_claimed_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

@@ -753,6 +753,15 @@ try {
   console.error('P-ONB46/47/48 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-ADM43: reviewer claim lock — collision detection (Zendesk Agent Collision Detection pattern)
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS active_reviewer_id uuid REFERENCES users(id)`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS active_review_claimed_at timestamptz`);
+  console.log('P-ADM43 active_reviewer_id, active_review_claimed_at columns ensured');
+} catch (err) {
+  console.error('P-ADM43 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {
