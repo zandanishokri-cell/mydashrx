@@ -32,6 +32,7 @@ import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
+import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import staticFiles from '@fastify/static';
 import { join } from 'path';
@@ -99,6 +100,9 @@ await app.register(jwt, {
   sign: { algorithm: 'HS256' },
   verify: { algorithms: ['HS256'] },
 });
+
+// P-SES20: HttpOnly cookie support for BFF token pattern
+await app.register(cookie, { secret: process.env.JWT_SECRET ?? 'dev-secret-change-in-prod-only' });
 
 await app.register(rateLimit, {
   max: process.env.NODE_ENV === 'production' ? 300 : 10000,

@@ -22,7 +22,7 @@ async function hasMxRecord(email: string): Promise<boolean> {
 }
 import { db } from '../db/connection.js';
 import { users, organizations, drivers, magicLinkTokens, refreshTokens, adminAuditLogs } from '../db/schema.js';
-import { eq, and, isNull, gt, count, desc, asc, inArray } from 'drizzle-orm';
+import { eq, and, isNull, gt, count, desc, asc, inArray, ne } from 'drizzle-orm';
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
 import { sql } from 'drizzle-orm';
@@ -92,6 +92,17 @@ async function enforceSessionCap(userId: string): Promise<void> {
   }
 }
 
+// P-SES18: stable device label stored once at RT creation
+function buildDeviceName(ua: string | null): string {
+  if (!ua) return 'Unknown device';
+  if (/iPhone/i.test(ua)) return 'iPhone · ' + (/Safari/i.test(ua) && !/Chrome/i.test(ua) ? 'Safari' : 'App');
+  if (/iPad/i.test(ua)) return 'iPad · Safari';
+  if (/Android/i.test(ua)) return 'Android · ' + (/Chrome/i.test(ua) ? 'Chrome' : 'App');
+  const os = /Windows/i.test(ua) ? 'Windows' : /Mac/i.test(ua) ? 'Mac' : /Linux/i.test(ua) ? 'Linux' : 'Desktop';
+  const br = /Edg/i.test(ua) ? 'Edge' : /Firefox/i.test(ua) ? 'Firefox' : /Chrome/i.test(ua) ? 'Chrome' : /Safari/i.test(ua) ? 'Safari' : 'Browser';
+  return `${os} · ${br}`;
+}
+
 async function seedRefreshToken(
   userId: string,
   familyId: string,
@@ -99,12 +110,14 @@ async function seedRefreshToken(
   req: { ip: string; headers: Record<string, string | string[] | undefined> },
 ): Promise<void> {
   const seedNow = new Date();
+  const ua = (req.headers['user-agent'] as string | undefined) ?? null;
   await db.insert(refreshTokens).values({
     jti,
     familyId,
     userId,
     ip: req.ip,
-    userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+    userAgent: ua,
+    deviceName: buildDeviceName(ua), // P-SES18
     lastUsedAt: seedNow, // P-SES16
     absoluteExpiresAt: new Date(seedNow.getTime() + 90 * 24 * 60 * 60 * 1000), // P-SES16: 90d hard cap
     expiresAt: new Date(seedNow.getTime() + 90 * 24 * 60 * 60 * 1000),
@@ -730,7 +743,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       jti: refreshTokens.jti,
       ip: refreshTokens.ip,
       userAgent: refreshTokens.userAgent,
+      deviceName: refreshTokens.deviceName, // P-SES18
       createdAt: refreshTokens.createdAt,
+      lastUsedAt: refreshTokens.lastUsedAt, // P-SES18
       expiresAt: refreshTokens.expiresAt,
     }).from(refreshTokens)
       .where(and(
@@ -741,6 +756,22 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(desc(refreshTokens.createdAt))
       .limit(50);
     return rows.map(r => ({ ...r, isCurrent: r.jti === payload.jti }));
+  });
+
+  // DELETE /auth/sessions/all — revoke all OTHER sessions (P-SES17, HIPAA §164.312(a)(2)(iii))
+  app.delete('/sessions/all', async (req, reply) => {
+    try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
+    const payload = req.user as { sub: string; jti?: string; email?: string; orgId?: string };
+    // Revoke all active RTs except current jti so this session stays alive
+    const conditions = [
+      eq(refreshTokens.userId, payload.sub),
+      eq(refreshTokens.status, 'active'),
+      ...(payload.jti ? [ne(refreshTokens.jti, payload.jti)] : []),
+    ];
+    await db.update(refreshTokens).set({ status: 'revoked' }).where(and(...conditions));
+    // HIPAA §164.312(a)(2)(iii) — log mass session revocation
+    logAuthEvent('sessions_revoked_all', { userId: payload.sub, email: payload.email ?? '', ip: req.ip, orgId: payload.orgId ?? undefined, metadata: { retainedJti: payload.jti } }).catch(() => {});
+    return reply.code(204).send();
   });
 
   // DELETE /auth/sessions/:jti — revoke single session (P-SES10)
@@ -754,6 +785,56 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (row.userId !== payload.sub) return reply.code(403).send({ error: 'Forbidden' });
     await db.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.jti, jti));
     return reply.code(204).send();
+  });
+
+  // POST /auth/token-cookie — P-SES20 Phase 1: store AT+RT in HttpOnly cookies (BFF migration path)
+  // Accepts AT+RT from Authorization header (existing localStorage flow), sets HttpOnly cookies
+  // This is ADDITIVE — does not break existing localStorage clients
+  app.post('/token-cookie', async (req, reply) => {
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith('Bearer ')) return reply.code(401).send({ error: 'Bearer token required' });
+    const at = auth.slice(7);
+    const body = req.body as { refreshToken?: string } | null;
+    const rt = body?.refreshToken;
+    const isProduction = process.env.NODE_ENV === 'production';
+    // Verify AT is valid before setting cookie
+    try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Invalid access token' }); }
+    reply.setCookie('at', at, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'strict',
+      path: '/',
+      maxAge: 15 * 60, // 15min — matches AT expiry
+    });
+    if (rt) {
+      reply.setCookie('rt', rt, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'strict',
+        path: '/api/v1/auth/refresh',
+        maxAge: 90 * 24 * 60 * 60, // 90d — matches RT absolute expiry
+      });
+    }
+    return { ok: true };
+  });
+
+  // GET /auth/whoami — P-SES20 Phase 1: read identity from HttpOnly cookie AT
+  // Parallel to GET /auth/me (which reads from Authorization header)
+  // Allows cookie-based clients to get current user without exposing AT to JS
+  app.get('/whoami', async (req, reply) => {
+    const cookieAt = (req as unknown as { cookies: Record<string, string> }).cookies?.at;
+    if (!cookieAt) return reply.code(401).send({ error: 'No session cookie' });
+    try {
+      const payload = app.jwt.verify<{ sub: string; email: string; role: string; orgId: string; depotIds: string[] }>(cookieAt);
+      const [user] = await db.select({
+        id: users.id, name: users.name, email: users.email,
+        role: users.role, orgId: users.orgId, depotIds: users.depotIds, mustChangePassword: users.mustChangePassword,
+      }).from(users).where(eq(users.id, payload.sub)).limit(1);
+      if (!user) return reply.code(401).send({ error: 'User not found' });
+      return user;
+    } catch {
+      return reply.code(401).send({ error: 'Invalid session cookie' });
+    }
   });
 
   // GET /auth/org-status — approval state for authenticated user (P-ADM7)

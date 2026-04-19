@@ -1,9 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { isAuthenticated, clearSession } from '@/lib/auth';
+import { isAuthenticated, clearSession, getUser } from '@/lib/auth';
 
-const WARN_MS = 25 * 60_000;
-const LOGOUT_MS = 30 * 60_000;
+// P-SES19: role-adaptive idle timeout — ONC 170.315(d)(5) + HIPAA §164.312(a)(2)(iii)
+// ePHI roles (pharmacy_admin, dispatcher) → 10min logout / 9min warn
+// Other roles → 30min logout / 25min warn
+const PHI_ROLES = new Set(['pharmacy_admin', 'dispatcher']);
+function getTimeouts() {
+  const role = getUser()?.role ?? '';
+  return PHI_ROLES.has(role)
+    ? { warn: 9 * 60_000, logout: 10 * 60_000, countdown: 60 }
+    : { warn: 25 * 60_000, logout: 30 * 60_000, countdown: 300 };
+}
+
 const EVENTS = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'] as const;
 
 export function useIdleTimeout() {
@@ -33,20 +42,23 @@ export function useIdleTimeout() {
       clearTimeout(logoutTimer);
       clearInterval(countdownInterval);
       setShowWarning(false);
-      setCountdown(300);
+      // P-SES19: recalculate timeouts on each reset to pick up role at actual call time
+      const { warn, logout, countdown: initialCountdown } = getTimeouts();
+      setCountdown(initialCountdown);
 
       warnTimer = setTimeout(() => {
+        const { countdown: c } = getTimeouts();
         setShowWarning(true);
-        setCountdown(300);
+        setCountdown(c);
         countdownInterval = setInterval(() => {
           setCountdown(s => {
             if (s <= 1) { doLogout(); return 0; }
             return s - 1;
           });
         }, 1000);
-      }, WARN_MS);
+      }, warn);
 
-      logoutTimer = setTimeout(doLogout, LOGOUT_MS);
+      logoutTimer = setTimeout(doLogout, logout);
     };
 
     resetRef.current = reset;
