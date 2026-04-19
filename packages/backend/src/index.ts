@@ -1,7 +1,19 @@
 import 'dotenv/config';
 
-// Build-16 live — P-SEC23, P-SEC25-fix, P-ADM7-sa-bypass
-// Surface startup errors clearly before anything else runs
+// Build-17 — env validation, deploy monitoring
+// Validate ALL required env vars before anything else — prints every missing var at once
+const REQUIRED_ENV: [string, string][] = [
+  ['DATABASE_URL',  'PostgreSQL connection string (Render: link to mydashrx-db)'],
+  ['JWT_SECRET',    'HS256 signing secret, min 32 chars (generate: openssl rand -hex 64)'],
+];
+const missing = REQUIRED_ENV.filter(([k]) => !process.env[k]);
+if (missing.length > 0) {
+  console.error('STARTUP FAILED — missing required env vars:');
+  for (const [k, hint] of missing) console.error(`  ✗ ${k}: ${hint}`);
+  console.error('Set these in the Render dashboard under Environment, then redeploy.');
+  process.exit(1);
+}
+
 process.on('uncaughtException', (err) => {
   console.error('STARTUP CRASH - uncaughtException:', err.message, err.stack);
   process.exit(1);
@@ -77,12 +89,9 @@ await app.register(cors, {
   credentials: true,
 });
 
-const jwtSecret = process.env.JWT_SECRET;
-if (!jwtSecret && process.env.NODE_ENV === 'production') {
-  throw new Error('JWT_SECRET environment variable is required in production');
-}
+const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-change-in-prod-only';
 await app.register(jwt, {
-  secret: jwtSecret ?? 'dev-secret-change-in-prod-only',
+  secret: jwtSecret,
   sign: { algorithm: 'HS256' },
   verify: { algorithms: ['HS256'] },
 });
