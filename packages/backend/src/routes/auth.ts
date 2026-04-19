@@ -283,6 +283,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
               from: 'security@mydashrx.com',
               to: user.email,
               subject: 'Security alert: New country login detected',
+              // P-DEL13: suppress tracking on security emails — PHI linkage risk
+              track_clicks: false,
+              track_opens: false,
               html: `<p>Hi ${user.name},</p><p>We detected a login from a new country: <strong>${newCountry}</strong> (previously ${prevCountry}).</p><p>If this was you, no action is needed. If you don't recognize this login, please contact support immediately.</p><p>– MyDashRx Security</p>`,
             }),
           }).catch(() => {});

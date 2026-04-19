@@ -386,6 +386,9 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
           from: `MyDashRx <noreply@${senderDomain}>`,
           to: admin.email,
           subject: `MyDashRx — Application update for ${org.name}`,
+          // P-DEL13: suppress tracking — reapply links in rejection emails must not be scanner-consumed
+          track_clicks: false,
+          track_opens: false,
           html: `
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
               <h2 style="color:#374151;margin:0 0 8px">Update on your MyDashRx application</h2>
@@ -453,6 +456,9 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
           from: `MyDashRx <noreply@${senderDomain}>`,
           to: admin.email,
           subject: `[MyDashRx] Additional information needed for ${org.name}`,
+          // P-DEL13: suppress tracking — admin emails must not go through Resend CDN
+          track_clicks: false,
+          track_opens: false,
           html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
             <h2 style="color:#374151;margin:0 0 8px">Additional information needed</h2>
             <p style="color:#374151;font-size:15px">Hi ${admin.name}, we're reviewing your application for <strong>${org.name}</strong> and need a bit more information before we can proceed.</p>
@@ -859,7 +865,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-          body: JSON.stringify({ from: `MyDashRx <noreply@${senderDomain}>`, to: admin.email, subject, html }),
+          body: JSON.stringify({ from: `MyDashRx <noreply@${senderDomain}>`, to: admin.email, subject, html, track_clicks: false, track_opens: false }),
         }).catch((e: unknown) => { console.error('[ONB9] email failed:', e); });
 
         sent.push(`${org.id}:${window.label}`);

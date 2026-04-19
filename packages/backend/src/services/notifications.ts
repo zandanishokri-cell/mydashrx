@@ -175,6 +175,9 @@ export async function sendDriverArrivalEmail(stop: {
         from: `MyDashRx <noreply@${senderDomain}>`,
         to: r.email,
         subject: `Driver arrived — ${stop.recipientName} · ${stop.address.split(',')[0]}`,
+        // P-DEL13: suppress tracking — operational emails contain patient address data
+        track_clicks: false,
+        track_opens: false,
         html,
       }),
     })
@@ -248,6 +251,9 @@ export async function sendRouteCompleteSummaryEmail(params: {
         from: `MyDashRx <noreply@${senderDomain}>`,
         to: r.email,
         subject: `Route complete — ${params.driverName} · ${params.completedCount}/${params.totalStops} delivered`,
+        // P-DEL13: suppress tracking — operational emails with driver/stop context
+        track_clicks: false,
+        track_opens: false,
         html,
       }),
     })

@@ -62,6 +62,9 @@ export async function sendDailyReport(orgId: string): Promise<void> {
         to: user.email,
         subject: `${org.name} — Daily Delivery Report for ${dateStr}`,
         html,
+        // P-DEL13: suppress tracking — report emails sent at scale; scanner link-rewrite risk
+        track_clicks: false,
+        track_opens: false,
       }),
     }).catch(console.error);
   }

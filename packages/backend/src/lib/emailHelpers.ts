@@ -24,6 +24,10 @@ export async function sendOrgApprovalEmail(orgId: string, orgName: string, admin
       from: sender(),
       to: adminEmail,
       subject: `Welcome to MyDashRx — ${orgName} is approved!`,
+      // P-DEL13: suppress click/open tracking — approval links contain org-identifying params
+      // that would flow through Resend's CDN clickstream without a BAA confirmation
+      track_clicks: false,
+      track_opens: false,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#0F4C81;margin:0 0 8px">You're approved — let's get delivering!</h2>
@@ -68,6 +72,9 @@ export async function sendRejectionWithReapplyEmail(
       from: sender(),
       to: adminEmail,
       subject: `Update on your MyDashRx application — ${orgName}`,
+      // P-DEL13: suppress tracking — reapply links in rejection emails must not be scanner-consumed
+      track_clicks: false,
+      track_opens: false,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#dc2626;margin:0 0 8px">Application update</h2>
@@ -97,6 +104,9 @@ export async function sendAbandonmentEmail(adminEmail: string, orgName: string |
       from: sender(),
       to: adminEmail,
       subject: 'Complete your MyDashRx application — takes 2 min',
+      // P-DEL13: suppress tracking — signup links must survive corporate email scanners
+      track_clicks: false,
+      track_opens: false,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <img src="${dash}/logo.png" alt="MyDashRx" style="height:32px;margin-bottom:24px" onerror="this.style.display='none'" />
