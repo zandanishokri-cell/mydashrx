@@ -76,6 +76,8 @@ import { phiAuditHook } from './middleware/phiAuditHook.js';
 import { sendDailyReport } from './services/dailyReport.js';
 import { deleteFromStorage } from './services/storage.js';
 import { runAutoApproval } from './lib/autoApproval.js';
+import { runDkimHealthCheck } from './lib/dkimHealthCheck.js';
+import { runPostmasterMonitor } from './lib/postmasterMonitor.js';
 import { db, client } from './db/connection.js';
 import { organizations, magicLinkTokens, signupIntents, users, roleEscalations, refreshTokens, adminAuditLogs, auditLogs, emailDailyCounts } from './db/schema.js';
 import { sendAbandonmentEmail } from './lib/emailHelpers.js';
@@ -986,6 +988,14 @@ setImmediate(async () => {
   }
 });
 
+// P-DEL22: DKIM health check — hourly tick, runs only Sunday 3AM UTC
+setInterval(async () => {
+  const now = new Date();
+  if (now.getUTCDay() === 0 && now.getUTCHours() === 3) {
+    runDkimHealthCheck().catch(console.error);
+  }
+}, 60 * 60 * 1000);
+
 // P-SES13: RT + magic link token cleanup — run on startup and every 6hr
 const runTokenCleanup = async () => {
   try {
@@ -1022,6 +1032,8 @@ setInterval(async () => {
   if (now.getUTCDay() === 1) {
     sendWeeklyDriverDigests().catch(console.error);
   }
+  // P-DEL24: Google Postmaster Tools daily spam rate check (fires with 7AM daily report)
+  runPostmasterMonitor().catch(console.error);
 }, 60 * 60 * 1000);
 
 // P-DRV4: sendWeeklyDriverDigests — sends each driver their weekly completion/on-time stats

@@ -20,7 +20,8 @@ import type { MapStop } from '@/components/ui/LeafletMap';
 const LeafletMap = dynamic(() => import('@/components/ui/LeafletMap'), { ssr: false });
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
-interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; totalDistance: number | null; }
+interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; totalDistance: number | null; assignedDispatcherId?: string | null; }
+interface Dispatcher { id: string; name: string; email: string; }
 interface Stop {
   id: string; routeId: string; recipientName: string; address: string;
   recipientPhone: string; status: string; sequenceNumber: number | null;
@@ -44,6 +45,8 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [routes, setRoutes] = useState<Route[]>([]);
   const [stopsByRoute, setStopsByRoute] = useState<Record<string, Stop[]>>({});
   const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [dispatchers, setDispatchers] = useState<Dispatcher[]>([]);
+  const [assigningDispatcher, setAssigningDispatcher] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [optimizing, setOptimizing] = useState(false);
   const [distributing, setDistributing] = useState(false);
@@ -88,14 +91,17 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     if (!user) return;
     try {
       // planData already embeds routes — skip redundant GET /plans/:planId/routes
-      const [planData, driversData] = await Promise.all([
+      const isAdminRole = user.role === 'pharmacy_admin' || user.role === 'super_admin';
+      const [planData, driversData, usersData] = await Promise.all([
         api.get<Plan & { routes: Route[] }>(`/orgs/${user.orgId}/plans/${planId}`),
         api.get<Driver[]>(`/orgs/${user.orgId}/drivers`),
+        isAdminRole ? api.get<{ users: Array<{ id: string; name: string; email: string; role: string }> }>(`/orgs/${user.orgId}/users`) : Promise.resolve({ users: [] }),
       ]);
       const routesData = planData.routes ?? [];
       setPlan(planData);
       setRoutes(routesData);
       setDrivers(driversData);
+      if (isAdminRole) setDispatchers((usersData.users ?? []).filter(u => u.role === 'dispatcher'));
 
       const stopsMap: Record<string, Stop[]> = {};
       await Promise.all(
@@ -302,6 +308,18 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     }
   };
 
+  const assignDispatcher = async (routeId: string, dispatcherId: string | null) => {
+    setAssigningDispatcher(prev => ({ ...prev, [routeId]: true }));
+    try {
+      await api.patch(`/orgs/${user!.orgId}/plans/${planId}/routes/${routeId}/assign-dispatcher`, { dispatcherId });
+      setRoutes(prev => prev.map(r => r.id === routeId ? { ...r, assignedDispatcherId: dispatcherId } : r));
+    } catch {
+      setError('Failed to assign dispatcher. Please try again.');
+    } finally {
+      setAssigningDispatcher(prev => ({ ...prev, [routeId]: false }));
+    }
+  };
+
   const totalStops = Object.values(stopsByRoute).reduce((s, arr) => s + arr.length, 0);
   const assignedDriverIds = new Set(routes.map(r => r.driverId));
   const availableDrivers = drivers.filter(d => !assignedDriverIds.has(d.id));
@@ -445,11 +463,26 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                     </div>
                     <Badge status={route.status} />
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap justify-end">
                     {route.estimatedDuration && (
                       <span className="text-xs text-gray-400">{Math.round(route.estimatedDuration / 60)} min</span>
                     )}
                     <span className="text-xs text-gray-500">{stops.length} stops{stops.length > 0 ? ` · ${completed} done` : ''}</span>
+                    {/* P-RBAC14: Dispatcher assignment dropdown — pharmacy_admin / super_admin only */}
+                    {(user?.role === 'pharmacy_admin' || user?.role === 'super_admin') && dispatchers.length > 0 && (
+                      <select
+                        aria-label="Assign dispatcher"
+                        className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 bg-white disabled:opacity-50 max-w-[140px]"
+                        value={route.assignedDispatcherId ?? ''}
+                        disabled={assigningDispatcher[route.id]}
+                        onChange={e => assignDispatcher(route.id, e.target.value || null)}
+                      >
+                        <option value="">Unassigned</option>
+                        {dispatchers.map(d => (
+                          <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                      </select>
+                    )}
                     <button onClick={() => setShowAddStop(route.id)} className="flex items-center gap-1 text-xs text-[#0F4C81] hover:underline">
                       <Plus size={12} /> Add Stop
                     </button>

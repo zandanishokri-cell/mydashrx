@@ -1,9 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, plans, depots, drivers, proofOfDeliveries, organizations } from '../db/schema.js';
-import { eq, and, isNull, desc, count, gt } from 'drizzle-orm';
+import { stops, routes, plans, depots, drivers, proofOfDeliveries, organizations, roleTemplates, adminAuditLogs } from '../db/schema.js';
+import { eq, and, isNull, desc, count, gt, sql } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { requireDeliveryWrite } from '../middleware/requireOrgRole.js';
+import { getOrgPermissions, upsertTemplate, invalidateOrg } from '../lib/rbacCache.js';
 import { todayInTz } from '../utils/date.js';
 import { encryptPhi, decryptPhi, encryptPhiArray, decryptPhiArray } from '../lib/phiCrypto.js';
 
@@ -247,5 +248,56 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
       approvedAt: orgRow[0]?.approvedAt ?? null,
       dismissedAt: orgRow[0]?.onboardingBannerDismissedAt ?? null,
     });
+  });
+
+  // P-RBAC36: Pharmacy admin self-serve permission management
+  // GET /pharmacy/role-templates — view org's current permission set per role
+  app.get('/role-templates', {
+    preHandler: requireRole('pharmacy_admin'),
+  }, async (req, reply) => {
+    const user = req.user as { orgId: string };
+    const rows = await db.select().from(roleTemplates)
+      .where(sql`org_id = ${user.orgId}::uuid OR org_id IS NULL`)
+      .orderBy(roleTemplates.role);
+    return reply.send({ templates: rows });
+  });
+
+  // PATCH /pharmacy/role-templates — update a role's permissions (envelope guard)
+  // Envelope guard: requested permissions must be a subset of platform defaults
+  // (prevents privilege escalation — pharmacy_admin can only grant perms they're entitled to)
+  app.patch('/role-templates', {
+    preHandler: requireRole('pharmacy_admin'),
+  }, async (req, reply) => {
+    const user = req.user as { sub: string; email: string; orgId: string };
+    const { role, permissions } = req.body as { role: string; permissions: string[] };
+
+    if (!role || !Array.isArray(permissions)) {
+      return reply.code(400).send({ error: 'role and permissions array required' });
+    }
+
+    // Envelope: get caller's own effective permissions for the platform
+    // (pharmacy_admin can only grant permissions that platform allows for the target role)
+    const platformPerms = await getOrgPermissions(null, role);
+    const platformSet = new Set(platformPerms);
+    const forbidden = permissions.filter(p => !platformSet.has(p));
+    if (forbidden.length > 0) {
+      return reply.code(403).send({
+        error: 'Cannot grant permissions outside platform envelope',
+        forbidden,
+      });
+    }
+
+    await upsertTemplate(user.orgId, role, permissions);
+
+    db.insert(adminAuditLogs).values({
+      actorId: user.sub,
+      actorEmail: user.email,
+      action: 'org_role_permissions_updated',
+      targetId: user.orgId,
+      targetName: `role:${role}`,
+      metadata: { orgId: user.orgId, role, permissions, source: 'pharmacy_admin_self_serve' },
+    }).catch(() => {});
+
+    return reply.send({ ok: true, role, permissions });
   });
 };

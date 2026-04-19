@@ -60,6 +60,8 @@ export default function AdminPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
   const [funnel, setFunnel] = useState<MagicLinkFunnel | null>(null);
+  // P-DEL24: latest postmaster spam rate entries from adminAuditLogs
+  const [spamRates, setSpamRates] = useState<Array<{ domain: string; rate: string; severity: string; date: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ name: '', timezone: 'America/New_York', adminName: '', adminEmail: '', adminPassword: '' });
@@ -74,12 +76,26 @@ export default function AdminPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, o, f] = await Promise.all([
+      const [s, o, f, rbacAudit] = await Promise.all([
         api.get<Stats>('/admin/stats'),
         api.get<OrgRow[]>('/admin/orgs'),
         api.get<MagicLinkFunnel>('/admin/magic-link/funnel').catch(() => null),
+        api.get<{ events: Array<{ action: string; metadata: Record<string, string>; createdAt: string }> }>(
+          '/admin/audit-log?eventTypes=postmaster_spam_rate_alert,postmaster_spam_rate_ok&limit=20'
+        ).catch(() => null),
       ]);
       setStats(s); setOrgs(o); setFunnel(f);
+      // Build latest entry per domain from audit log
+      if (rbacAudit?.events) {
+        const byDomain = new Map<string, { domain: string; rate: string; severity: string; date: string }>();
+        for (const e of rbacAudit.events) {
+          const m = e.metadata as Record<string, string>;
+          if (m?.domain && !byDomain.has(m.domain)) {
+            byDomain.set(m.domain, { domain: m.domain, rate: m.rate ?? '—', severity: m.severity ?? 'ok', date: m.date ?? '' });
+          }
+        }
+        setSpamRates([...byDomain.values()]);
+      }
     } finally { setLoading(false); }
   };
 
@@ -226,6 +242,35 @@ export default function AdminPage() {
           </div>
         );
       })()}
+
+      {/* P-DEL24: Email Spam Rate card */}
+      {spamRates.length > 0 && (
+        <div className="px-6 py-3 border-b border-purple-100 bg-white/60 shrink-0">
+          <div className="flex items-center gap-2 mb-3">
+            <Mail size={14} className="text-purple-500" />
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Email Spam Rate (Google Postmaster)</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {spamRates.map(sr => {
+              const rateNum = parseFloat(sr.rate);
+              const color = sr.severity === 'critical' ? 'text-red-600' : sr.severity === 'warn' ? 'text-amber-600' : 'text-green-600';
+              const bg = sr.severity === 'critical' ? 'bg-red-50' : sr.severity === 'warn' ? 'bg-amber-50' : 'bg-purple-50';
+              return (
+                <div key={sr.domain} className={`${bg} rounded-lg px-4 py-3`}>
+                  <p className="text-xs text-gray-400 mb-1 truncate">{sr.domain}</p>
+                  <p className={`text-lg font-bold ${color}`}>
+                    {isNaN(rateNum) ? '—' : `${rateNum}%`}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {sr.severity === 'critical' ? '⚠ CRITICAL — action required' : sr.severity === 'warn' ? '⚠ Warning — monitor closely' : 'OK'} · {sr.date}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-gray-400 mt-2">Thresholds: warn ≥0.08% · critical ≥0.15% · Gmail hard block 0.30%</p>
+        </div>
+      )}
 
       {/* Orgs table */}
       <div className="flex-1 overflow-auto px-6 py-4">

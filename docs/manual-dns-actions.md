@@ -7,12 +7,40 @@ They cannot be automated from the codebase. Complete these before activating P-D
 
 ## DNS Records (Cloudflare / Registrar)
 
-### DMARC — PHI spoofing protection (P-DMARC-DNS)
+### DMARC — PHI spoofing protection (P-DMARC-DNS / P-DEL25)
+
+**Staged escalation plan — do NOT jump stages:**
+
+#### Week 1 (deploy now — current target)
 ```
 Type:  TXT
 Name:  _dmarc.mydashrx.com
 Value: v=DMARC1; p=quarantine; pct=25; rua=mailto:dmarc@mydashrx.com
 ```
+Starts quarantining 25% of spoofed email. Leaves 75% delivering — safe to deploy before verifying clean Postmaster data.
+
+#### Week 2 (after clean Google Postmaster data — spam rate <0.08% for 7 days)
+```
+Type:  TXT
+Name:  _dmarc.mydashrx.com
+Value: v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc@mydashrx.com
+```
+Full quarantine. No legitimate mail should be affected if SPF + DKIM are correctly configured.
+
+#### Week 6 (after stable pct=100 quarantine — no legitimate mail loss for 4+ weeks)
+```
+Type:  TXT
+Name:  _dmarc.mydashrx.com
+Value: v=DMARC1; p=reject; pct=100; rua=mailto:dmarc@mydashrx.com
+```
+Full reject. **Required prerequisite for BIMI logo display (P-DEL20).** Providers will reject unauthenticated mail outright.
+
+**Notes:**
+- `p=quarantine pct=25` is safe even before subdomain warm-up (P-DEL15) — only 25% of unauthenticated mail is affected
+- Monitor `dmarc@mydashrx.com` inbox for aggregate reports — look for legitimate sources appearing as failures before escalating
+- `p=reject` is the prerequisite for BIMI (DigiCert VMC/CMC cert + DNS TXT record, see P-DEL20 section below)
+- Current `pct=25` leaves 75% of spoofed emails delivering — escalate to `pct=100` as soon as Postmaster confirms clean spam rates
+
 **Status:** PENDING — closes HIPAA §164.312(d) PHI spoofing gap.
 
 ---
@@ -84,6 +112,30 @@ Value: v=BIMI1; l=https://mydashrx.com/bimi-logo.svg; a=<CMC_CERT_URL>
 | `MAIL_SENDER_DOMAIN` | `mail.mydashrx.com` (after Resend subdomain verified) | P-DEL15 |
 | `OUTREACH_SENDER_DOMAIN` | `outreach.mydashrx.com` (after Resend subdomain verified) | P-DEL15 + P-DEL21 |
 | `RESEND_WEBHOOK_SECRET` | From Resend dashboard → Webhooks (starts with `whsec_`) | P-DEL11 bounce tracking |
+| `GOOGLE_POSTMASTER_SA_JSON` | Service account JSON (raw or base64-encoded) — see setup below | P-DEL24 spam rate monitoring |
+
+---
+
+## Google Postmaster Tools Setup (P-DEL24)
+
+**Required for spam rate monitoring — ~30min one-time setup:**
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) → Create or select project
+2. Enable **Gmail Postmaster Tools API**: APIs & Services → Enable APIs → search "Gmail Postmaster Tools API" → Enable
+3. Create a **Service Account**: IAM & Admin → Service Accounts → Create
+   - Name: `mydashrx-postmaster`
+   - Role: None needed at project level (Postmaster Tools uses domain-level access)
+4. Download JSON key: Service Account → Keys → Add Key → JSON → Download
+5. Go to [Google Postmaster Tools](https://postmaster.google.com/) → Add each sender domain
+6. Verify each domain ownership (DNS TXT record provided by Postmaster Tools)
+7. Grant service account access: Postmaster Tools → domain → Settings → Add user → paste service account email
+8. Encode JSON key for Render: `base64 -i service-account-key.json | tr -d '\n'`
+9. Set `GOOGLE_POSTMASTER_SA_JSON` in Render dashboard with the base64 output
+
+**Thresholds (P-DEL24):**
+- `≥ 0.08%` spam rate → warn (logged as `postmaster_spam_rate_alert` severity=warn)
+- `≥ 0.15%` spam rate → critical (logged as `postmaster_spam_rate_alert` severity=critical)
+- Gmail hard block threshold: `0.30%` — our alerts fire well before this
 
 ---
 

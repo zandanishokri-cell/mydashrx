@@ -6,7 +6,7 @@ import { useFirstVisit } from '@/hooks/useFirstVisit';
 import { useFieldError } from '@/lib/useFieldError';
 import {
   Building2, Users, Warehouse, Bell, Check, X, Copy,
-  Plus, Trash2, Pencil, Loader2, ChevronDown, AlertCircle, ShieldCheck, FileText,
+  Plus, Trash2, Pencil, Loader2, ChevronDown, AlertCircle, ShieldCheck, FileText, Lock,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1002,12 +1002,125 @@ function ComplianceTab({ orgId }: { orgId: string }) {
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── Tab: Permissions (P-RBAC36) ──────────────────────────────────────────────
+// Pharmacy admin can view/edit org role templates within platform envelope
+interface RoleTemplate { id: string; orgId: string | null; role: string; permissions: string[]; isDefault: boolean; }
+
+const MANAGEABLE_ROLES = ['dispatcher', 'driver', 'pharmacist'] as const;
+
+function PermissionsTab({ orgId }: { orgId: string }) {
+  const [templates, setTemplates] = useState<RoleTemplate[]>([]);
+  const [platformTemplates, setPlatformTemplates] = useState<RoleTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [saved, setSaved] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.get<{ templates: RoleTemplate[] }>('/pharmacy/role-templates')
+      .then(({ templates: all }) => {
+        setPlatformTemplates(all.filter(t => t.orgId === null));
+        setTemplates(all.filter(t => t.orgId === orgId));
+      })
+      .catch(() => setError('Failed to load permissions'))
+      .finally(() => setLoading(false));
+  }, [orgId]);
+
+  const getEffective = (role: string) =>
+    templates.find(t => t.role === role)?.permissions
+    ?? platformTemplates.find(t => t.role === role)?.permissions
+    ?? [];
+
+  const getPlatform = (role: string) =>
+    platformTemplates.find(t => t.role === role)?.permissions ?? [];
+
+  const togglePerm = (role: string, perm: string) => {
+    const current = getEffective(role);
+    const next = current.includes(perm) ? current.filter(p => p !== perm) : [...current, perm];
+    setTemplates(prev => {
+      const existing = prev.find(t => t.role === role);
+      if (existing) return prev.map(t => t.role === role ? { ...t, permissions: next } : t);
+      return [...prev, { id: '', orgId, role, permissions: next, isDefault: false }];
+    });
+    setSaved(prev => ({ ...prev, [role]: false }));
+  };
+
+  const saveRole = async (role: string) => {
+    setSaving(prev => ({ ...prev, [role]: true }));
+    setError('');
+    try {
+      await api.patch('/pharmacy/role-templates', { role, permissions: getEffective(role) });
+      setSaved(prev => ({ ...prev, [role]: true }));
+      setTimeout(() => setSaved(prev => ({ ...prev, [role]: false })), 2000);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to save';
+      setError(msg);
+    } finally {
+      setSaving(prev => ({ ...prev, [role]: false }));
+    }
+  };
+
+  if (loading) return <div className="animate-pulse h-32 bg-gray-50 rounded-xl" />;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-base font-semibold text-gray-900">Role Permissions</h2>
+        <p className="text-sm text-gray-500 mt-0.5">
+          Customize what each role can do within your organization. You cannot grant permissions beyond the platform defaults.
+        </p>
+      </div>
+      {error && <div className="bg-red-50 text-red-700 text-sm px-4 py-2 rounded-lg">{error}</div>}
+      {MANAGEABLE_ROLES.map(role => {
+        const platformPerms = getPlatform(role);
+        const effective = getEffective(role);
+        return (
+          <div key={role} className="bg-white border border-gray-100 rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-800 capitalize">{role.replace('_', ' ')}</h3>
+              <button
+                onClick={() => saveRole(role)}
+                disabled={saving[role]}
+                className="text-xs bg-[#0F4C81] text-white px-3 py-1.5 rounded-lg hover:bg-[#0d3f6e] disabled:opacity-50 flex items-center gap-1"
+              >
+                {saving[role] ? <Loader2 size={11} className="animate-spin" /> : saved[role] ? <Check size={11} /> : null}
+                {saved[role] ? 'Saved' : 'Save'}
+              </button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {platformPerms.map(perm => {
+                const enabled = effective.includes(perm);
+                return (
+                  <label key={perm} className="flex items-center gap-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={() => togglePerm(role, perm)}
+                      className="rounded border-gray-300 text-[#0F4C81] focus:ring-[#0F4C81]"
+                      aria-label={perm}
+                    />
+                    <span className="text-xs text-gray-700 group-hover:text-gray-900 font-mono">{perm}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {platformPerms.length === 0 && (
+              <p className="text-xs text-gray-400 flex items-center gap-1"><Lock size={11} /> No configurable permissions for this role</p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const TABS = [
   { id: 'org', label: 'Organization', icon: Building2 },
   { id: 'team', label: 'Team Members', icon: Users },
   { id: 'depots', label: 'Depots', icon: Warehouse },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'compliance', label: 'Compliance', icon: ShieldCheck },
+  { id: 'permissions', label: 'Permissions', icon: Lock },
 ] as const;
 
 type TabId = typeof TABS[number]['id'];
@@ -1038,6 +1151,7 @@ export default function SettingsPage() {
       {tab === 'depots' && <DepotsTab orgId={orgId} />}
       {tab === 'notifications' && <NotificationsTab orgId={orgId} />}
       {tab === 'compliance' && <ComplianceTab orgId={orgId} />}
+      {tab === 'permissions' && (user?.role === 'pharmacy_admin' || user?.role === 'super_admin') && <PermissionsTab orgId={orgId} />}
     </div>
   );
 }

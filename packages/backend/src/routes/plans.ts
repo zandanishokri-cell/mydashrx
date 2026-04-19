@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { plans, routes, stops, depots, drivers } from '../db/schema.js';
+import { plans, routes, stops, depots, drivers, users, adminAuditLogs } from '../db/schema.js';
 import { eq, and, isNull, inArray, notInArray, or, sql } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { optimizeRoute } from '../services/routeOptimizer.js';
@@ -116,6 +116,49 @@ export const planRoutes: FastifyPluginAsync = async (app) => {
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     // Notify assigned drivers — fire-and-forget, non-blocking
     sendRouteReadyNotifications(planId, orgId).catch(console.error);
+    return updated;
+  });
+
+  // P-RBAC14: Dispatcher assignment to a route — pharmacy_admin / super_admin only
+  // HIPAA §164.502(b) minimum-necessary: dispatchers only see routes assigned to them
+  app.patch('/:planId/routes/:routeId/assign-dispatcher', {
+    preHandler: requireOrgRole('pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, planId, routeId } = req.params as { orgId: string; planId: string; routeId: string };
+    const actor = req.user as { sub: string; email: string };
+    const { dispatcherId } = req.body as { dispatcherId: string | null };
+
+    // Verify plan belongs to org
+    const [plan] = await db.select({ id: plans.id }).from(plans)
+      .where(and(eq(plans.id, planId), eq(plans.orgId, orgId), isNull(plans.deletedAt))).limit(1);
+    if (!plan) return reply.code(404).send({ error: 'Plan not found' });
+
+    // Verify route belongs to plan
+    const [route] = await db.select({ id: routes.id, assignedDispatcherId: routes.assignedDispatcherId })
+      .from(routes).where(and(eq(routes.id, routeId), eq(routes.planId, planId), isNull(routes.deletedAt))).limit(1);
+    if (!route) return reply.code(404).send({ error: 'Route not found' });
+
+    // If assigning (not clearing), verify dispatcher belongs to this org
+    if (dispatcherId) {
+      const [dispatcher] = await db.select({ id: users.id }).from(users)
+        .where(and(eq(users.id, dispatcherId), eq(users.orgId, orgId), isNull(users.deletedAt))).limit(1);
+      if (!dispatcher) return reply.code(400).send({ error: 'Dispatcher not found in this org' });
+    }
+
+    const [updated] = await db.update(routes)
+      .set({ assignedDispatcherId: dispatcherId ?? null })
+      .where(eq(routes.id, routeId))
+      .returning();
+
+    db.insert(adminAuditLogs).values({
+      actorId: actor.sub,
+      actorEmail: actor.email,
+      action: 'dispatcher_assigned_to_route',
+      targetId: routeId,
+      targetName: `plan:${planId}`,
+      metadata: { orgId, planId, routeId, dispatcherId: dispatcherId ?? null, previous: route.assignedDispatcherId ?? null },
+    }).catch(() => {});
+
     return updated;
   });
 
