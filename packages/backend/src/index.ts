@@ -152,12 +152,13 @@ try {
   console.error('P-SES15 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
-// P-CNV17/18: idempotent DDL for TTA + activation nudge columns on organizations
+// P-CNV17/18/P-ONB38: idempotent DDL for TTA + activation nudge + firstDispatchAt columns
 try {
   await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS activated_at timestamptz`);
   await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS nudge_sent_at timestamptz`);
   await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS nudge2_sent_at timestamptz`);
-  console.log('P-CNV17/18 activation columns ensured');
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS first_dispatch_at timestamptz`);
+  console.log('P-CNV17/18/P-ONB38 activation columns ensured');
 } catch (err) {
   console.error('P-CNV17/18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
@@ -440,9 +441,10 @@ const runAbandonmentSweep = async () => {
 };
 setInterval(() => { runAbandonmentSweep().catch(console.error); }, 30 * 60 * 1000);
 
-// P-CNV18: Activation nudge cron — runs hourly, fires emails at 10 AM UTC
-// Day-3: approved 3d+ ago, activatedAt IS NULL, nudgeSentAt IS NULL
-// Day-7: approved 7d+ ago, activatedAt IS NULL, nudge2SentAt IS NULL
+// P-CNV18/P-ONB38: Activation nudge cron — runs hourly, fires emails at 10 AM UTC
+// Day-3: approved 3d+ ago, firstDispatchAt IS NULL, nudgeSentAt IS NULL
+// Day-7: approved 7d+ ago, firstDispatchAt IS NULL, nudge2SentAt IS NULL
+// Uses firstDispatchAt (first route dispatched) NOT activatedAt (first stop created) — P-ONB38
 const runActivationNudgeCron = async () => {
   const hour = new Date().getUTCHours();
   if (hour !== 10) return; // Only fires at 10 AM UTC
@@ -455,13 +457,13 @@ const runActivationNudgeCron = async () => {
   const day3Cutoff = new Date(now - 3 * 86400_000);
   const day7Cutoff = new Date(now - 7 * 86400_000);
 
-  // Fetch all approved, unactivated orgs with their admin email (join users WHERE role=pharmacy_admin)
+  // Fetch all approved orgs that have NOT dispatched yet — firstDispatchAt IS NULL
   const candidates = await db
     .select({
       id: organizations.id,
       name: organizations.name,
       approvedAt: organizations.approvedAt,
-      activatedAt: organizations.activatedAt,
+      firstDispatchAt: organizations.firstDispatchAt,
       nudgeSentAt: organizations.nudgeSentAt,
       nudge2SentAt: organizations.nudge2SentAt,
       onboardingDepotAt: organizations.onboardingDepotAt,
@@ -470,7 +472,7 @@ const runActivationNudgeCron = async () => {
     .from(organizations)
     .where(and(
       isNotNull(organizations.approvedAt),
-      isNull(organizations.activatedAt),
+      isNull(organizations.firstDispatchAt),
       isNull(organizations.deletedAt),
     ));
 

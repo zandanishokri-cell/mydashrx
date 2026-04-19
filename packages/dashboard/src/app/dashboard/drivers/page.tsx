@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { FormField, SelectField } from '@/components/ui/FormField';
 import { Truck, Plus, Search, Pencil, Trash2, Download, Users, AlertTriangle } from 'lucide-react';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 interface Driver {
   id: string; orgId: string; name: string; email: string; phone: string;
@@ -232,20 +233,23 @@ export default function DriversPage() {
           {[1, 2, 3].map(i => <div key={i} className="h-16 bg-white rounded-xl border border-gray-100 animate-pulse" />)}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-          {search ? (
-            <>
-              <Truck size={48} className="text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500 text-sm">No drivers match your search.</p>
-            </>
-          ) : (
-            <>
-              <Users size={48} className="text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-800 font-semibold text-sm mb-1">No drivers yet</p>
-              <p className="text-gray-400 text-sm">Add your first driver to start assigning deliveries.</p>
-            </>
-          )}
-        </div>
+        search || statusFilter ? (
+          <EmptyState
+            icon={Truck}
+            title="No drivers match your filters"
+            description="Try clearing the search or status filter."
+          />
+        ) : (
+          <EmptyState
+            icon={Users}
+            title="No drivers yet"
+            description="Add your first driver to start assigning deliveries."
+            primaryLabel={canManage ? 'Add driver' : undefined}
+            onPrimary={canManage ? () => setShowAdd(true) : undefined}
+            secondaryLabel="Learn about driver management"
+            secondaryHref="/dashboard/settings"
+          />
+        )
       ) : (
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
           {/* P-A11Y14: table caption + scope=col (WCAG 1.3.1 Level A) */}

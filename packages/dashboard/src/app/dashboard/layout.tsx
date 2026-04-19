@@ -101,12 +101,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [user, router]);
 
   // Role-based portal redirects — drivers and pharmacists have dedicated portals
+  // P-ONB35: dispatcher/driver first-run welcome fork — show once then skip via localStorage
   useEffect(() => {
     if (!user) return;
-    if (user.role === 'driver' && !pathname.startsWith('/dashboard/driver')) {
+    if (user.role === 'driver' && !pathname.startsWith('/dashboard/driver') && !pathname.startsWith('/dashboard/welcome')) {
       router.replace('/dashboard/driver/me/routes');
     } else if (user.role === 'pharmacist' && !pathname.startsWith('/pharmacist') && !pathname.startsWith('/dashboard/compliance') && !pathname.startsWith('/dashboard/mi-compliance') && !pathname.startsWith('/dashboard/settings')) {
       router.replace('/pharmacist/queue');
+    } else if ((user.role === 'dispatcher' || user.role === 'driver') && pathname === '/dashboard' && typeof window !== 'undefined') {
+      // Show welcome page on first login if not yet seen
+      const key = `mdrx_welcome_seen_${user.role}`;
+      if (!localStorage.getItem(key)) router.replace('/dashboard/welcome');
     }
   }, [user, pathname, router]);
 

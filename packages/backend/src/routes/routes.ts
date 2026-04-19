@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { routes, stops, plans, drivers } from '../db/schema.js';
+import { routes, stops, plans, drivers, organizations } from '../db/schema.js';
 import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
@@ -61,6 +61,15 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(routes.id, routeId), eq(routes.planId, planId)))
       .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
+
+    // P-ONB38: set firstDispatchAt on first route dispatch for this org (idempotent)
+    if (status === 'active') {
+      db.update(organizations)
+        .set({ firstDispatchAt: new Date() })
+        .where(and(eq(organizations.id, userOrgId), isNull(organizations.firstDispatchAt)))
+        .catch(console.error);
+    }
+
     return updated;
   });
 

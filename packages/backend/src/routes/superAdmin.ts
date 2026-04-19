@@ -30,7 +30,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const since30d = new Date(Date.now() - 30 * 86400000).toISOString();
 
     const [allOrgs, allDrivers, stops30d, stopsAll] = await Promise.all([
-      db.select({ id: organizations.id, billingPlan: organizations.billingPlan, approvedAt: organizations.approvedAt, activatedAt: organizations.activatedAt })
+      db.select({ id: organizations.id, billingPlan: organizations.billingPlan, approvedAt: organizations.approvedAt, activatedAt: organizations.activatedAt, firstDispatchAt: organizations.firstDispatchAt })
         .from(organizations).where(isNull(organizations.deletedAt)),
       db.select({ id: drivers.id }).from(drivers).where(isNull(drivers.deletedAt)),
       db.select({ count: sql<number>`count(*)::int` }).from(stops)
@@ -86,10 +86,11 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .map(o => (new Date(o.approvedAt!).getTime() - new Date(o.createdAt).getTime()) / 3600_000);
     const avgHoursToApproval = hoursArr.length ? Math.round(hoursArr.reduce((s, h) => s + h, 0) / hoursArr.length * 10) / 10 : null;
 
-    // P-CNV17: avgActivationHours — hours from approvedAt to first stop (activatedAt)
+    // P-ONB38: avgActivationHours — hours from approvedAt to first dispatch (firstDispatchAt)
+    // firstDispatchAt = first route→active, more accurate TTV than first stop created
     const activationTimes = allOrgs
-      .filter(o => o.approvedAt && o.activatedAt)
-      .map(o => (new Date(o.activatedAt!).getTime() - new Date(o.approvedAt!).getTime()) / 3600_000);
+      .filter(o => o.approvedAt && o.firstDispatchAt)
+      .map(o => (new Date(o.firstDispatchAt!).getTime() - new Date(o.approvedAt!).getTime()) / 3600_000);
     const avgActivationHours = activationTimes.length
       ? Math.round(activationTimes.reduce((s, h) => s + h, 0) / activationTimes.length * 10) / 10
       : null;
@@ -116,7 +117,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       activationHealth: {
         avgActivationHours,
         activatedOrgs: activationTimes.length,
-        unactivatedOrgs: allOrgs.filter(o => o.approvedAt && !o.activatedAt).length,
+        unactivatedOrgs: allOrgs.filter(o => o.approvedAt && !o.firstDispatchAt).length,
       },
     };
   });

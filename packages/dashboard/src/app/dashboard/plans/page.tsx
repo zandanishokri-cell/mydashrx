@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { Plus, Calendar, ChevronLeft, ChevronRight, Zap, Route, AlertCircle, X } from 'lucide-react';
 import { localDateStr } from '@/lib/dateUtils';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; }
@@ -135,13 +136,16 @@ export default function PlansPage() {
 
       {/* Top-level onboarding empty state — zero plans ever created */}
       {!loading && plans.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <Route size={64} className="text-gray-200 mb-4" />
-          <p className="text-gray-800 font-semibold text-base mb-2">No delivery plans yet</p>
-          <p className="text-gray-400 text-sm max-w-xs">
-            Create your first delivery plan to start organizing routes and dispatching drivers.
-          </p>
-        </div>
+        <EmptyState
+          icon={Route}
+          title="No delivery plans yet"
+          description="Create your first delivery plan to start organizing routes and dispatching drivers."
+          primaryLabel="Create plan"
+          onPrimary={() => { window.location.href = '/dashboard/plans/new'; }}
+          secondaryLabel="View stops"
+          secondaryHref="/dashboard/stops"
+          highlight
+        />
       )}
 
       {/* Week calendar + day view — only shown when plans exist or loading */}
@@ -203,10 +207,13 @@ export default function PlansPage() {
                 {[1, 2].map(i => <div key={i} className="h-16 bg-white rounded-xl border border-gray-100 animate-pulse" />)}
               </div>
             ) : forDate.length === 0 ? (
-              <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-                <Calendar size={48} className="text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500 text-sm">No routes for this day.</p>
-              </div>
+              <EmptyState
+                icon={Calendar}
+                title="No routes for this day"
+                description="Create a delivery plan for this date to start assigning stops."
+                primaryLabel="Create plan"
+                onPrimary={() => { window.location.href = '/dashboard/plans/new'; }}
+              />
             ) : (
               <div className="space-y-2">
                 {forDate.map(plan => (

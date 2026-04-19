@@ -90,6 +90,8 @@ export const organizations = pgTable('organizations', {
   onboardingCompletedAt: timestamp('onboarding_completed_at'), // P-ONB10: when full onboarding completed
   // P-CNV17: TTA — first stop created by this org (idempotent, set once)
   activatedAt: timestamp('activated_at'),
+  // P-ONB38: firstDispatchAt — first route dispatched (status→active). Correct TTV metric.
+  firstDispatchAt: timestamp('first_dispatch_at'),
   // P-CNV18: activation nudge email timestamps (prevents duplicate nudges)
   nudgeSentAt: timestamp('nudge_sent_at'),   // Day-3 nudge sent at
   nudge2SentAt: timestamp('nudge2_sent_at'), // Day-7 nudge sent at
