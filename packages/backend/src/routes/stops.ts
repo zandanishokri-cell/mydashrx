@@ -10,6 +10,7 @@ import { TERMINAL_STATUSES, type StopStatus } from '@mydash-rx/shared';
 import { ETA_PER_STOP_MS } from './tracking.js';
 import { filterStopsForRole } from '../lib/fieldPermissions.js';
 import { invalidateAnalytics } from '../lib/responseCache.js';
+import { encryptPhi, decryptPhi, encryptPhiArray, decryptPhiArray } from '../lib/phiCrypto.js';
 
 export async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
   const [route] = await db.select({ completedAt: routes.completedAt, driverId: routes.driverId })
@@ -192,13 +193,13 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     const [stop] = await db.insert(stops).values({
       routeId,
       orgId: userOrgId,
-      recipientName: body.recipientName,
-      recipientPhone: body.recipientPhone,
+      recipientName: encryptPhi(body.recipientName),       // P-SEC40: AES-256-GCM at rest
+      recipientPhone: encryptPhi(body.recipientPhone),     // P-SEC40: AES-256-GCM at rest
       recipientEmail: body.recipientEmail,
       address: body.address,
       lat: body.lat,
       lng: body.lng,
-      rxNumbers: body.rxNumbers ?? [],
+      rxNumbers: encryptPhiArray(body.rxNumbers ?? []) as unknown as string[],  // P-SEC40: encrypted JSON
       packageCount: body.packageCount ?? 1,
       requiresRefrigeration: body.requiresRefrigeration ?? false,
       controlledSubstance: body.controlledSubstance ?? false,
@@ -213,7 +214,13 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     }).returning();
 
     // P-ONB37: activatedAt now set on first route dispatch (routes.ts) — not on stop creation
-    return reply.code(201).send(stop);
+    // P-SEC40: decrypt PHI fields before returning to client
+    return reply.code(201).send({
+      ...stop,
+      recipientName: decryptPhi(stop.recipientName ?? ''),
+      recipientPhone: decryptPhi(stop.recipientPhone ?? ''),
+      rxNumbers: decryptPhiArray(stop.rxNumbers as unknown as string),
+    });
   });
 
   // Reorder stops within a route — PATCH /reorder
@@ -296,13 +303,21 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     const [updated] = await db.update(stops).set(updates).where(and(eq(stops.id, stopId), eq(stops.orgId, userOrgId))).returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
 
+    // P-SEC40: decrypt PHI fields for downstream use (notifications, triggers, response)
+    const decryptedStop = {
+      ...updated,
+      recipientName: decryptPhi(updated.recipientName ?? ''),
+      recipientPhone: decryptPhi(updated.recipientPhone ?? ''),
+      rxNumbers: decryptPhiArray(updated.rxNumbers as unknown as string),
+    };
+
     // P-PERF4: invalidate analytics cache on status change — data is now stale
     invalidateAnalytics(userOrgId);
 
     // Fire notifications async — don't await
-    sendStopNotification(updated, status).catch(console.error);
+    sendStopNotification(decryptedStop as typeof updated, status).catch(console.error);
     if (status === 'arrived') {
-      sendDriverArrivalEmail(updated).catch(console.error);
+      sendDriverArrivalEmail(decryptedStop as typeof updated).catch(console.error);
     }
     if ((status === 'completed' || status === 'failed' || status === 'rescheduled') && updated.routeId) {
       checkAndNotifyRouteComplete(updated.orgId, updated.routeId).catch(console.error);
@@ -327,8 +342,8 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
         trigger: status === 'completed' ? 'stop_completed' : status === 'failed' ? 'stop_failed' : 'stop_status_changed',
         resourceId: updated.id,
         data: {
-          patientName: updated.recipientName,
-          patientPhone: updated.recipientPhone,
+          patientName: decryptedStop.recipientName,
+          patientPhone: decryptedStop.recipientPhone,
           patientEmail: updated.recipientEmail ?? '',
           address: updated.address,
           stopStatus: status,
@@ -337,7 +352,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       });
     })().catch(console.error);
 
-    return updated;
+    return decryptedStop;
   });
 
   app.delete('/:stopId', {

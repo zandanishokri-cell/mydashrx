@@ -7,6 +7,7 @@ import { requireRole } from '../middleware/requireRole.js';
 import bcrypt from 'bcryptjs';
 import { checkDriverLimit } from '../utils/usageLimits.js';
 import { sendRoleChangeEmail } from '../lib/emailHelpers.js';
+import { decryptPhi } from '../lib/phiCrypto.js';
 
 // P-RBAC11: Validate that all provided depotIds belong to the org — prevents cross-org depot injection
 async function validateDepotIds(orgId: string, depotIds: string[]): Promise<boolean> {
@@ -647,7 +648,7 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       metadata: {
         originalStopId: stopId,
         retriedFromStopId: stopId,
-        recipientName: original.recipientName,
+        recipientName: decryptPhi(original.recipientName ?? ''), // P-SEC40: decrypt for audit log readability
         controlledSubstance: original.controlledSubstance,
         targetRouteId: targetRouteId ?? null,
         actorId: actor.sub,
@@ -655,7 +656,12 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       },
     }).catch((e: unknown) => { console.error('[AuditLog] stop_retry_created failed:', e); });
 
-    return reply.code(201).send(retryStop);
+    // P-SEC40: decrypt PHI before returning
+    return reply.code(201).send({
+      ...retryStop,
+      recipientName: decryptPhi(retryStop.recipientName ?? ''),
+      recipientPhone: decryptPhi(retryStop.recipientPhone ?? ''),
+    });
   });
 
   // GET /orgs/:orgId/baa/status — P-COMP11: BAA acceptance status for compliance tab

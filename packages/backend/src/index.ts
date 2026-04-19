@@ -3,11 +3,12 @@ import 'dotenv/config';
 // Build-17 — env validation, deploy monitoring
 // Validate ALL required env vars before anything else — prints every missing var at once
 const REQUIRED_ENV: [string, string][] = [
-  ['DATABASE_URL',    'PostgreSQL connection string (Render: link to mydashrx-db)'],
-  ['JWT_SECRET',      'HS256 signing secret, min 32 chars (generate: openssl rand -hex 64)'],
-  ['RESEND_API_KEY',  'Resend API key — required for magic link emails'],
-  ['SENDER_DOMAIN',   'Email sender domain, e.g. cartana.life'],
-  ['DASHBOARD_URL',   'Frontend URL for magic link redirect, e.g. https://...vercel.app'],
+  ['DATABASE_URL',           'PostgreSQL connection string (Render: link to mydashrx-db)'],
+  ['JWT_SECRET',             'HS256 signing secret, min 32 chars (generate: openssl rand -hex 64)'],
+  ['RESEND_API_KEY',         'Resend API key — required for magic link emails'],
+  ['SENDER_DOMAIN',          'Email sender domain, e.g. cartana.life'],
+  ['DASHBOARD_URL',          'Frontend URL for magic link redirect, e.g. https://...vercel.app'],
+  ['PHI_ENCRYPTION_KEY',     'P-SEC40: AES-256-GCM PHI encryption key — 32 random bytes hex (generate: openssl rand -hex 32)'],
 ];
 const missing = REQUIRED_ENV.filter(([k]) => !process.env[k]);
 if (missing.length > 0) {
@@ -76,7 +77,7 @@ import { sendDailyReport } from './services/dailyReport.js';
 import { deleteFromStorage } from './services/storage.js';
 import { runAutoApproval } from './lib/autoApproval.js';
 import { db, client } from './db/connection.js';
-import { organizations, magicLinkTokens, signupIntents, users, roleEscalations, refreshTokens, adminAuditLogs } from './db/schema.js';
+import { organizations, magicLinkTokens, signupIntents, users, roleEscalations, refreshTokens, adminAuditLogs, auditLogs } from './db/schema.js';
 import { sendAbandonmentEmail } from './lib/emailHelpers.js';
 import { isNull, isNotNull, and, or, lt, sql, eq, desc, inArray } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
@@ -577,8 +578,35 @@ await app.register(rateLimit, {
   },
 });
 
+// P-SEC39: Multipart flood DoS hardening — no parts/fields/files count was HIPAA-risk (authenticated DoS)
 await app.register(multipart, {
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10 MB per file
+    files: 5,
+    fields: 20,
+    parts: 25,
+    fieldNameSize: 200,
+    fieldSize: 1 * 1024 * 1024, // 1 MB per field
+  },
+});
+// P-SEC39: Log multipart flood attempts — structured log + DB audit when authenticated
+app.addHook('onError', async (req, _reply, error) => {
+  const MULTIPART_LIMIT_CODES = new Set(['FST_PARTS_LIMIT', 'FST_FILES_LIMIT', 'FST_FIELDS_LIMIT', 'FST_FIELD_NAME_TOO_LONG', 'FST_FIELD_TOO_LARGE']);
+  if (MULTIPART_LIMIT_CODES.has((error as NodeJS.ErrnoException).code ?? '')) {
+    const actor = (req as { user?: { sub?: string; orgId?: string; email?: string } }).user;
+    req.log.warn({ ip: req.ip, url: req.url, userId: actor?.sub, orgId: actor?.orgId, code: (error as NodeJS.ErrnoException).code }, 'multipart_limit_exceeded');
+    if (actor?.orgId) {
+      db.insert(auditLogs).values({
+        orgId: actor.orgId,
+        userId: actor.sub ?? undefined,
+        userEmail: actor.email ?? undefined,
+        action: 'multipart_limit_exceeded',
+        resource: 'upload',
+        ipAddress: req.ip,
+        metadata: { url: req.url, errorCode: (error as NodeJS.ErrnoException).code },
+      }).catch(() => { /* non-blocking */ });
+    }
+  }
 });
 
 app.addHook('onSend', phiFilterHook);

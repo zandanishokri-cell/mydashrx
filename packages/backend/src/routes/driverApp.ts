@@ -12,6 +12,7 @@ import type { StopStatus } from '@mydash-rx/shared';
 import { todayInTz } from '../utils/date.js';
 import sharp from 'sharp';
 import { requireTrustedDeviceForCOD } from '../lib/abacPolicies.js'; // P-RBAC35
+import { decryptPhi, decryptPhiArray } from '../lib/phiCrypto.js'; // P-SEC40
 
 async function resolveDriverId(
   user: { driverId?: string; email: string; orgId: string },
@@ -225,13 +226,19 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     };
 
     // Verify driver owns this stop's route (fetch full stop for copay check)
-    const [stop] = await db.select({
+    const [_stopRaw] = await db.select({
       id: stops.id, routeId: stops.routeId, orgId: stops.orgId,
       codAmount: stops.codAmount, paymentLinkSentAt: stops.paymentLinkSentAt,
       recipientName: stops.recipientName, recipientPhone: stops.recipientPhone, address: stops.address,
       idempotencyKey: stops.idempotencyKey,
     }).from(stops).where(eq(stops.id, stopId)).limit(1);
-    if (!stop) return reply.code(404).send({ error: 'Not found' });
+    if (!_stopRaw) return reply.code(404).send({ error: 'Not found' });
+    // P-SEC40: decrypt PHI before use in copay SMS + notifications
+    const stop = {
+      ..._stopRaw,
+      recipientName: decryptPhi(_stopRaw.recipientName ?? ''),
+      recipientPhone: decryptPhi(_stopRaw.recipientPhone ?? ''),
+    };
 
     // P-DRV3: Idempotency — duplicate offline queue retry returns 200 (cached response)
     if (idempotencyKey && stop.idempotencyKey === idempotencyKey) {
@@ -255,7 +262,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     if (idempotencyKey) updates.idempotencyKey = idempotencyKey;
 
     const [updated] = await db.update(stops).set(updates).where(eq(stops.id, stopId)).returning();
-    sendStopNotification(updated, status).catch(console.error);
+    // P-SEC40: decrypt for notification — updated has encrypted values from DB
+    const decryptedUpdated = { ...updated, recipientName: decryptPhi(updated.recipientName ?? ''), recipientPhone: decryptPhi(updated.recipientPhone ?? '') };
+    sendStopNotification(decryptedUpdated as typeof updated, status).catch(console.error);
 
     // P-COMP11: Send pre-delivery Stripe copay SMS when driver is en_route + copay > 0 (not yet sent)
     if (status === 'en_route' && (stop.codAmount ?? 0) > 0 && !stop.paymentLinkSentAt && stop.recipientPhone) {
@@ -266,7 +275,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       ).catch(console.error);
     }
 
-    return updated;
+    return decryptedUpdated;
   });
 
   // POST /driver/me/stops/:stopId/photo — upload delivery photo
@@ -373,8 +382,10 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
 
     // Verify driver owns this stop's route
-    const [stopCheck] = await db.select({ id: stops.id, routeId: stops.routeId, orgId: stops.orgId, recipientName: stops.recipientName, address: stops.address })
+    const [_stopCheckRaw] = await db.select({ id: stops.id, routeId: stops.routeId, orgId: stops.orgId, recipientName: stops.recipientName, address: stops.address })
       .from(stops).where(eq(stops.id, stopId)).limit(1);
+    // P-SEC40: decrypt PHI before use
+    const stopCheck = _stopCheckRaw ? { ..._stopCheckRaw, recipientName: decryptPhi(_stopCheckRaw.recipientName ?? '') } : _stopCheckRaw;
     if (!stopCheck) return reply.code(404).send({ error: 'Not found' });
     const [routeCheck] = await db.select({ driverId: routes.driverId })
       .from(routes).where(and(eq(routes.id, stopCheck.routeId!), isNull(routes.deletedAt))).limit(1);
@@ -607,7 +618,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       orgId: jwtUser.orgId,
       trigger: 'stop_failed',
       resourceId: stopId,
-      data: { patientName: stop.recipientName ?? '', address: stop.address ?? '', stopStatus: 'failed', controlledSubstance: String(stop.controlledSubstance ?? false) },
+      data: { patientName: decryptPhi(stop.recipientName ?? ''), address: stop.address ?? '', stopStatus: 'failed', controlledSubstance: String(stop.controlledSubstance ?? false) }, // P-SEC40
     }).catch(console.error);
 
     return { ok: true, returnedAt: updated.returnedAt };

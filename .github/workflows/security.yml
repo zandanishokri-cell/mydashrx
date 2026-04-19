@@ -1,0 +1,72 @@
+name: Security Vulnerability Scan
+
+# P-SEC41: HIPAA 2025 NPRM §164.308(a)(8) — biannual vulnerability scanning required
+# Runs: Jan 1 + Jul 1 at 2am UTC, and on every push to master
+# Note: Snyk integration requires SNYK_TOKEN GitHub secret (manual step — add in repo Settings > Secrets)
+# Until SNYK_TOKEN is set, npm audit provides baseline vulnerability detection
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '0 2 1 1,7 *'   # Jan 1 + Jul 1 at 02:00 UTC (biannual per HIPAA NPRM)
+  workflow_dispatch:          # allow manual trigger
+
+jobs:
+  audit-backend:
+    name: Backend npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/backend/package-lock.json
+
+      - name: Install backend deps
+        working-directory: packages/backend
+        run: npm ci --ignore-scripts
+
+      - name: npm audit (HIGH+CRITICAL)
+        working-directory: packages/backend
+        run: npm audit --audit-level=high
+        continue-on-error: false
+
+      # Snyk: uncomment once SNYK_TOKEN is added to repo secrets
+      # - name: Snyk backend scan
+      #   uses: snyk/actions/node@master
+      #   env:
+      #     SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      #   with:
+      #     args: --severity-threshold=high --file=packages/backend/package.json
+
+  audit-frontend:
+    name: Frontend npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/dashboard/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: packages/dashboard
+        run: npm ci --ignore-scripts
+
+      - name: npm audit (HIGH+CRITICAL)
+        working-directory: packages/dashboard
+        run: npm audit --audit-level=high
+        continue-on-error: false
+
+      # Snyk: uncomment once SNYK_TOKEN is added to repo secrets
+      # - name: Snyk frontend scan
+      #   uses: snyk/actions/node@master
+      #   env:
+      #     SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      #   with:
+      #     args: --severity-threshold=high --file=packages/dashboard/package.json

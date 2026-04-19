@@ -5,6 +5,7 @@ import { eq, and, isNull, desc, count, gt } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { requireDeliveryWrite } from '../middleware/requireOrgRole.js';
 import { todayInTz } from '../utils/date.js';
+import { encryptPhi, decryptPhi, encryptPhiArray, decryptPhiArray } from '../lib/phiCrypto.js';
 
 export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
   // GET /pharmacy/my-depot — get this pharmacy's depot info
@@ -123,12 +124,12 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
     const [stop] = await db.insert(stops).values({
       routeId: defaultRoute.id,
       orgId: user.orgId,
-      recipientName: body.recipientName,
-      recipientPhone: body.recipientPhone ?? '',
+      recipientName: encryptPhi(body.recipientName),         // P-SEC40: AES-256-GCM at rest
+      recipientPhone: encryptPhi(body.recipientPhone ?? ''), // P-SEC40: AES-256-GCM at rest
       address: body.address,
       lat: body.lat ?? 0,
       lng: body.lng ?? 0,
-      rxNumbers: body.rxNumbers ?? [],
+      rxNumbers: encryptPhiArray(body.rxNumbers ?? []) as unknown as string[], // P-SEC40
       packageCount: body.packageCount ?? 1,
       requiresRefrigeration: body.requiresRefrigeration ?? false,
       controlledSubstance: body.controlledSubstance ?? false,
@@ -137,7 +138,15 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
       deliveryNotes: body.deliveryNotes,
     }).returning();
 
-    return reply.code(201).send({ ...stop, planId: plan.id, planDate: plan.date });
+    // P-SEC40: decrypt PHI before returning
+    return reply.code(201).send({
+      ...stop,
+      recipientName: decryptPhi(stop.recipientName ?? ''),
+      recipientPhone: decryptPhi(stop.recipientPhone ?? ''),
+      rxNumbers: decryptPhiArray(stop.rxNumbers as unknown as string),
+      planId: plan.id,
+      planDate: plan.date,
+    });
   });
 
   // GET /pharmacy/orders/:stopId — order detail with driver + POD
@@ -186,7 +195,14 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
     // Fetch POD if completed
     const [pod] = await db.select().from(proofOfDeliveries).where(eq(proofOfDeliveries.stopId, stopId)).limit(1);
 
-    return { ...row, pod: pod ?? null };
+    // P-SEC40: decrypt PHI fields on read
+    return {
+      ...row,
+      recipientName: decryptPhi(row.recipientName ?? ''),
+      recipientPhone: decryptPhi(row.recipientPhone ?? ''),
+      rxNumbers: decryptPhiArray(row.rxNumbers as unknown as string),
+      pod: pod ?? null,
+    };
   });
 
   // DELETE /pharmacy/orders/:stopId — cancel a pending stop
