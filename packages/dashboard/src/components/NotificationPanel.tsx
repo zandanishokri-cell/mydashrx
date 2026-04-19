@@ -41,6 +41,8 @@ export default function NotificationPanel() {
   const [prefs, setPrefs] = useState<Record<string, boolean>>({ route_completed: true, stop_failed: true, stop_assigned: true });
   const [prefsLoading, setPrefsLoading] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const bellRef = useRef<HTMLButtonElement>(null);
+  const firstFocusRef = useRef<HTMLButtonElement>(null);
   const router = useRouter();
   const user = getUser();
 
@@ -84,9 +86,23 @@ export default function NotificationPanel() {
   const unread = events.filter(e => !seen.has(e.id)).length;
 
   const handleOpen = () => {
-    setOpen(v => !v);
-    if (!open) setSeen(new Set(events.map(e => e.id)));
+    const next = !open;
+    setOpen(next);
+    if (next) {
+      setSeen(new Set(events.map(e => e.id)));
+      setTimeout(() => firstFocusRef.current?.focus(), 50);
+    }
   };
+
+  // Escape key closes panel + returns focus to bell
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setOpen(false); bellRef.current?.focus(); }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open]);
 
   const handleClick = (e: NotifEvent) => {
     if (e.link) { router.push(e.link); setOpen(false); }
@@ -106,9 +122,12 @@ export default function NotificationPanel() {
   return (
     <div className="relative" ref={panelRef}>
       <button
+        ref={bellRef}
         onClick={handleOpen}
-        className="relative p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+        aria-expanded={open}
+        aria-controls="notification-panel"
         aria-label="Notifications"
+        className="relative p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
       >
         <Bell size={16} />
         {unread > 0 && (
@@ -118,72 +137,78 @@ export default function NotificationPanel() {
         )}
       </button>
 
-      {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl border border-gray-100 shadow-xl z-50 overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-700">Notifications</span>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">Last 24h</span>
-              <button
-                onClick={() => setShowSettings(v => !v)}
-                className={`p-1 rounded-md transition-colors ${showSettings ? 'bg-gray-100 text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
-                title="Notification settings"
-              >
-                <Settings size={12} />
-              </button>
-            </div>
+      {/* Always-mounted: opacity/pointer-events toggle — WCAG 4.1.3 + 2.1.1 */}
+      <div
+        id="notification-panel"
+        role="dialog"
+        aria-label="Notifications"
+        aria-hidden={!open}
+        className={`absolute right-0 top-full mt-2 w-80 bg-white rounded-xl border border-gray-100 shadow-xl z-50 overflow-hidden transition-opacity duration-150 ${open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+      >
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+          <span className="text-xs font-semibold text-gray-700">Notifications</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">Last 24h</span>
+            <button
+              ref={firstFocusRef}
+              onClick={() => setShowSettings(v => !v)}
+              className={`p-1 rounded-md transition-colors ${showSettings ? 'bg-gray-100 text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+              title="Notification settings"
+            >
+              <Settings size={12} />
+            </button>
           </div>
+        </div>
 
-          {showSettings ? (
-            <div className="px-4 py-3 space-y-3">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Show notifications for</p>
-              {([
-                { key: 'route_completed', label: 'Route completed', icon: <CheckCircle size={13} className="text-emerald-500" /> },
-                { key: 'stop_failed', label: 'Stop failed', icon: <XCircle size={13} className="text-red-500" /> },
-                { key: 'stop_assigned', label: 'New stop assigned', icon: <Plus size={13} className="text-blue-500" /> },
-              ] as const).map(({ key, label, icon }) => (
-                <button
-                  key={key}
-                  onClick={() => togglePref(key)}
-                  disabled={prefsLoading}
-                  className="w-full flex items-center justify-between text-left hover:bg-gray-50 rounded-lg px-2 py-1.5 transition-colors disabled:opacity-60"
-                >
-                  <span className="flex items-center gap-2 text-xs text-gray-700">
-                    {icon}{label}
-                  </span>
-                  <span className={`w-8 h-4 rounded-full transition-colors flex items-center ${prefs[key] !== false ? 'bg-[#00B8A9]' : 'bg-gray-200'}`}>
-                    <span className={`w-3 h-3 bg-white rounded-full shadow transition-transform mx-0.5 ${prefs[key] !== false ? 'translate-x-4' : 'translate-x-0'}`} />
-                  </span>
-                </button>
-              ))}
+        {showSettings ? (
+          <div className="px-4 py-3 space-y-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Show notifications for</p>
+            {([
+              { key: 'route_completed', label: 'Route completed', icon: <CheckCircle size={13} className="text-emerald-500" /> },
+              { key: 'stop_failed', label: 'Stop failed', icon: <XCircle size={13} className="text-red-500" /> },
+              { key: 'stop_assigned', label: 'New stop assigned', icon: <Plus size={13} className="text-blue-500" /> },
+            ] as const).map(({ key, label, icon }) => (
+              <button
+                key={key}
+                onClick={() => togglePref(key)}
+                disabled={prefsLoading}
+                className="w-full flex items-center justify-between text-left hover:bg-gray-50 rounded-lg px-2 py-1.5 transition-colors disabled:opacity-60"
+              >
+                <span className="flex items-center gap-2 text-xs text-gray-700">
+                  {icon}{label}
+                </span>
+                <span className={`w-8 h-4 rounded-full transition-colors flex items-center ${prefs[key] !== false ? 'bg-[#00B8A9]' : 'bg-gray-200'}`}>
+                  <span className={`w-3 h-3 bg-white rounded-full shadow transition-transform mx-0.5 ${prefs[key] !== false ? 'translate-x-4' : 'translate-x-0'}`} />
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          events.length === 0 ? (
+            <div className="px-4 py-8 text-center">
+              <Bell size={20} className="text-gray-300 mx-auto mb-2" />
+              <p className="text-xs text-gray-400">No events in the last 24 hours</p>
             </div>
           ) : (
-            events.length === 0 ? (
-              <div className="px-4 py-8 text-center">
-                <Bell size={20} className="text-gray-300 mx-auto mb-2" />
-                <p className="text-xs text-gray-400">No events in the last 24 hours</p>
-              </div>
-            ) : (
-              <ul className="max-h-80 overflow-y-auto divide-y divide-gray-50">
-                {events.map(e => (
-                  <li
-                    key={e.id}
-                    onClick={() => handleClick(e)}
-                    className={`flex gap-2.5 px-4 py-3 ${e.link ? 'cursor-pointer hover:bg-gray-50' : ''} transition-colors`}
-                  >
-                    {eventIcon(e.type)}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-gray-800 truncate">{e.title}</p>
-                      <p className="text-xs text-gray-500 truncate">{e.body}</p>
-                    </div>
-                    <span className="text-[10px] text-gray-400 shrink-0 mt-0.5">{timeSince(e.timestamp)}</span>
-                  </li>
-                ))}
-              </ul>
-            )
-          )}
-        </div>
-      )}
+            <ul className="max-h-80 overflow-y-auto divide-y divide-gray-50">
+              {events.map(e => (
+                <li
+                  key={e.id}
+                  onClick={() => handleClick(e)}
+                  className={`flex gap-2.5 px-4 py-3 ${e.link ? 'cursor-pointer hover:bg-gray-50' : ''} transition-colors`}
+                >
+                  {eventIcon(e.type)}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-gray-800 truncate">{e.title}</p>
+                    <p className="text-xs text-gray-500 truncate">{e.body}</p>
+                  </div>
+                  <span className="text-[10px] text-gray-400 shrink-0 mt-0.5">{timeSince(e.timestamp)}</span>
+                </li>
+              ))}
+            </ul>
+          )
+        )}
+      </div>
     </div>
   );
 }

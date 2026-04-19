@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { api } from '@/lib/api';
-import { ArrowLeft, MapPin, CheckCircle2, XCircle, Clock, Navigation, Play, PartyPopper } from 'lucide-react';
+import { ArrowLeft, MapPin, CheckCircle2, XCircle, Clock, Navigation, Play, PartyPopper, MessageSquare } from 'lucide-react';
 
 interface Stop {
   id: string; routeId: string; recipientName: string; address: string;
@@ -11,6 +11,7 @@ interface Stop {
   requiresSignature: boolean; rxNumbers: string[]; packageCount: number;
   deliveryNotes?: string; priority?: string;
   windowEnd?: string | null;
+  noteCount?: number; // P-DISP5
 }
 
 interface EtaData {
@@ -299,6 +300,15 @@ export default function DriverRoutePage() {
                       {stop.requiresRefrigeration && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">❄ Cold</span>}
                       {stop.controlledSubstance && <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full font-medium">⚠ Ctrl</span>}
                       {stop.requiresSignature && <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full font-medium">✍ Sig</span>}
+                      {(stop.noteCount ?? 0) > 0 && (
+                        <span
+                          className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-medium flex items-center gap-1"
+                          aria-label={`${stop.noteCount} dispatcher note${stop.noteCount! > 1 ? 's' : ''}`}
+                        >
+                          <MessageSquare size={10} />
+                          {stop.noteCount! > 1 ? stop.noteCount : ''}
+                        </span>
+                      )}
                       {stop.windowEnd && stop.status !== 'completed' && stop.status !== 'failed' && (() => {
                         const minLeft = Math.floor((new Date(stop.windowEnd).getTime() - Date.now()) / 60000);
                         if (minLeft < -60) return null;

@@ -31,6 +31,9 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
   const lastPos = useRef<{ x: number; y: number } | null>(null);
   const [hasSig, setHasSig] = useState(false);
   const [sigPreview, setSigPreview] = useState<string | null>(null);
+  // P-A11Y26: signature waiver
+  const [sigWaived, setSigWaived] = useState(false);
+  const [sigWaiverReason, setSigWaiverReason] = useState<'door_drop'|'patient_declined'|'mobility_impaired'|'other'|''>('');
 
   // Step: delivery photo
   const photoInputRef = useRef<HTMLInputElement>(null);
@@ -140,7 +143,7 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
   const canAdvance = (() => {
     switch (currentStepName) {
       case 'recipient': return recipientName.trim().length > 0;
-      case 'signature': return hasSig;
+      case 'signature': return hasSig || (sigWaived && sigWaiverReason !== '');
       case 'photo': return !!deliveryPhotoDataUrl;
       case 'id': return !!idPhotoDataUrl && dobConfirmed && mapsConfirmed;
       case 'cod': return codMethod !== '' && parseFloat(codAmountConfirmed) > 0;
@@ -169,7 +172,9 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
       packageCount: confirmedPackageCount,
       recipientName,
       isControlledSubstance: isCS,
-      signatureData,
+      signatureData: sigWaived ? undefined : signatureData,
+      signatureWaived: sigWaived,
+      signatureWaivedReason: sigWaived ? sigWaiverReason : undefined,
       idPhotoUrl: idPhotoDataUrl ?? undefined,
       idVerified: isCS ? (!!idPhotoDataUrl && dobConfirmed) : false,
       idDobConfirmed: dobConfirmed,
@@ -274,25 +279,59 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
                 <h3 className="font-semibold text-gray-800">Recipient Signature</h3>
               </div>
               <p className="text-sm text-gray-500">Ask {recipientName || 'the recipient'} to sign below</p>
-              <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none select-none">
-                <canvas
-                  ref={canvasRef}
-                  width={600}
-                  height={220}
-                  className="w-full cursor-crosshair"
-                  onMouseDown={startDraw}
-                  onMouseMove={draw}
-                  onMouseUp={stopDraw}
-                  onMouseLeave={stopDraw}
-                  onTouchStart={startDraw}
-                  onTouchMove={draw}
-                  onTouchEnd={stopDraw}
+              {!sigWaived && (
+                <>
+                  <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none select-none">
+                    <canvas
+                      ref={canvasRef}
+                      role="img"
+                      aria-label="Signature capture area — draw signature here"
+                      width={600}
+                      height={220}
+                      className="w-full cursor-crosshair"
+                      onMouseDown={startDraw}
+                      onMouseMove={draw}
+                      onMouseUp={stopDraw}
+                      onMouseLeave={stopDraw}
+                      onTouchStart={startDraw}
+                      onTouchMove={draw}
+                      onTouchEnd={stopDraw}
+                    />
+                  </div>
+                  {!hasSig && <p className="text-center text-xs text-gray-400">Draw signature above</p>}
+                  <button onClick={clearSig} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mx-auto">
+                    <RotateCcw size={14} /> Clear signature
+                  </button>
+                </>
+              )}
+              {/* P-A11Y26: signature waiver — WCAG 2.5.1 + Michigan R 338.3162 */}
+              <label className="flex items-start gap-3 cursor-pointer bg-amber-50 border border-amber-200 rounded-xl p-3 mt-2">
+                <input
+                  type="checkbox"
+                  checked={sigWaived}
+                  onChange={e => { setSigWaived(e.target.checked); if (!e.target.checked) setSigWaiverReason(''); }}
+                  className="mt-0.5 w-5 h-5 rounded accent-amber-500"
                 />
-              </div>
-              {!hasSig && <p className="text-center text-xs text-gray-400">Draw signature above</p>}
-              <button onClick={clearSig} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mx-auto">
-                <RotateCcw size={14} /> Clear signature
-              </button>
+                <span className="text-sm text-amber-800 font-medium">Unable to obtain signature</span>
+              </label>
+              {sigWaived && (
+                <div className="mt-2">
+                  <label htmlFor="sig-waiver-reason" className="block text-sm font-medium text-gray-700 mb-1">Reason required</label>
+                  <select
+                    id="sig-waiver-reason"
+                    value={sigWaiverReason}
+                    onChange={e => setSigWaiverReason(e.target.value as typeof sigWaiverReason)}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/20 focus:border-[#0F4C81]"
+                    aria-required="true"
+                  >
+                    <option value="">Select reason…</option>
+                    <option value="door_drop">Door drop</option>
+                    <option value="patient_declined">Patient declined</option>
+                    <option value="mobility_impaired">Mobility impaired</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              )}
             </div>
           )}
 
@@ -434,7 +473,10 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Signature</span>
-                  <span className="font-medium text-green-600 flex items-center gap-1"><CheckCircle2 size={13} /> Captured</span>
+                  {sigWaived
+                    ? <span className="font-medium text-amber-600 flex items-center gap-1"><AlertTriangle size={13} /> Waived ({sigWaiverReason.replace('_',' ')})</span>
+                    : <span className="font-medium text-green-600 flex items-center gap-1"><CheckCircle2 size={13} /> Captured</span>
+                  }
                 </div>
                 {requiresPhoto && (
                   <div className="flex justify-between">

@@ -74,6 +74,10 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [bulkMoveTargetRouteId, setBulkMoveTargetRouteId] = useState('');
   const [bulkMoving, setBulkMoving] = useState(false);
   const [bulkMoveError, setBulkMoveError] = useState('');
+  // P-DISP6: bulk status override
+  const [bulkStatusValue, setBulkStatusValue] = useState<'pending'|'failed'|'rescheduled'|''>('');
+  const [bulkStatusLoading, setBulkStatusLoading] = useState(false);
+  const [bulkStatusError, setBulkStatusError] = useState('');
   const [removingRoute, setRemovingRoute] = useState(false);
   // P-DEL10: per-route map toggle
   const [mapOpenRoutes, setMapOpenRoutes] = useState<Set<string>>(new Set());
@@ -257,7 +261,28 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     setSelectionSourceRouteId(null);
     setBulkMoveTargetRouteId('');
     setBulkMoveError('');
+    setBulkStatusValue('');
+    setBulkStatusError('');
   }, []);
+
+  // P-DISP6: bulk status override handler
+  const executeBulkStatus = async () => {
+    if (!bulkStatusValue || bulkStatusLoading || !user) return;
+    setBulkStatusLoading(true);
+    setBulkStatusError('');
+    try {
+      await api.patch<{ updated: number }>(`/orgs/${user.orgId}/stops/bulk-status`, {
+        stopIds: Array.from(selectedStopIds),
+        status: bulkStatusValue,
+      });
+      clearSelection();
+      await loadPlan();
+    } catch {
+      setBulkStatusError('Failed to update status. Please try again.');
+    } finally {
+      setBulkStatusLoading(false);
+    }
+  };
 
   const executeBulkMove = async () => {
     if (!bulkMoveTargetRouteId || !selectionSourceRouteId || bulkMoving) return;
@@ -552,21 +577,48 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
             </select>
           </div>
           {bulkMoveError && <span className="text-xs text-red-600">{bulkMoveError}</span>}
-          <div className="flex items-center gap-2 shrink-0">
+          <Button
+            size="sm"
+            onClick={executeBulkMove}
+            disabled={!bulkMoveTargetRouteId || bulkMoving}
+            loading={bulkMoving}
+          >
+            <MoveRight size={13} /> Move
+          </Button>
+          <div className="h-4 border-l border-gray-200 hidden sm:block" />
+          {/* P-DISP6: bulk status override */}
+          <div className="flex items-center gap-2 min-w-0">
+            <label htmlFor="bulk-status-select" className="text-sm text-gray-500 shrink-0">Status:</label>
+            <select
+              id="bulk-status-select"
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm min-w-0 max-w-[140px]"
+              value={bulkStatusValue}
+              onChange={e => setBulkStatusValue(e.target.value as typeof bulkStatusValue)}
+              disabled={bulkStatusLoading || bulkMoving}
+            >
+              <option value="">Override…</option>
+              <option value="pending">Pending</option>
+              <option value="failed">Failed</option>
+              <option value="rescheduled">Rescheduled</option>
+            </select>
             <Button
               size="sm"
-              onClick={executeBulkMove}
-              disabled={!bulkMoveTargetRouteId || bulkMoving}
-              loading={bulkMoving}
+              onClick={executeBulkStatus}
+              disabled={!bulkStatusValue || bulkStatusLoading || bulkMoving}
+              loading={bulkStatusLoading}
             >
-              <MoveRight size={13} /> Move
+              Apply
             </Button>
-            <Button variant="secondary" size="sm" onClick={clearSelection} disabled={bulkMoving}>
+          </div>
+          {bulkStatusError && <span className="text-xs text-red-600">{bulkStatusError}</span>}
+          <div className="flex items-center gap-2 shrink-0">
+            <Button variant="secondary" size="sm" onClick={clearSelection} disabled={bulkMoving || bulkStatusLoading}>
               Cancel
             </Button>
           </div>
         </div>
       )}
+
 
       {/* Add Driver Modal */}
       {showAddRoute && (

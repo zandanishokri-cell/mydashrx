@@ -165,6 +165,18 @@ try {
   console.error('P-DEL9 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-A11Y26: signature_waived_reason on proof_of_deliveries — WCAG 2.5.1 + Michigan R 338.3162
+try {
+  await db.execute(sql`
+    ALTER TABLE proof_of_deliveries
+    ADD COLUMN IF NOT EXISTS signature_waived_reason TEXT
+    CHECK (signature_waived_reason IN ('door_drop','patient_declined','mobility_impaired','other'))
+  `);
+  console.log('P-A11Y26 signature_waived_reason column ensured');
+} catch (err) {
+  console.error('P-A11Y26 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-SES15: idempotent DDL for lastKnownCountry column on users
 try {
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_known_country text`);

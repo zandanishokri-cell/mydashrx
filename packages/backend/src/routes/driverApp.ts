@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory, auditLogs } from '../db/schema.js';
-import { eq, and, isNull, sql } from 'drizzle-orm';
+import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory, auditLogs, stopNotes } from '../db/schema.js';
+import { eq, and, isNull, sql, inArray } from 'drizzle-orm';
 import { getDriverRoutes } from '../db/preparedStatements.js'; // P-PERF10
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification, sendTwilioSms } from '../services/notifications.js';
@@ -171,9 +171,26 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const [route] = await db.select().from(routes).where(eq(routes.id, routeId)).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
 
-    return db.select().from(stops)
+    const stopRows = await db.select().from(stops)
       .where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
+
+    if (!stopRows.length) return stopRows;
+
+    // P-DISP5: bulk-count driver-visible notes per stop
+    const stopIds = stopRows.map(s => s.id);
+    const noteCounts = await db
+      .select({ stopId: stopNotes.stopId, count: sql<number>`COUNT(*)::int` })
+      .from(stopNotes)
+      .where(and(
+        inArray(stopNotes.stopId, stopIds),
+        eq(stopNotes.visibleToDriver, true),
+        isNull(stopNotes.deletedAt),
+      ))
+      .groupBy(stopNotes.stopId);
+
+    const noteCountMap = Object.fromEntries(noteCounts.map(n => [n.stopId, n.count]));
+    return stopRows.map(s => ({ ...s, noteCount: noteCountMap[s.id] ?? 0 }));
   });
 
   // POST /driver/me/stops/:stopId/barcode — scan and record a package barcode
@@ -396,6 +413,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       recipientName?: string;
       deliveryNotes?: string;
       signatureData?: string;
+      signatureWaived?: boolean;
+      signatureWaivedReason?: 'door_drop'|'patient_declined'|'mobility_impaired'|'other';
       idPhotoUrl?: string;
       idVerified?: boolean;
       isControlledSubstance?: boolean;
@@ -408,7 +427,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       // Update with new enhanced fields if already exists (photo uploaded separately)
       const [updated] = await db.update(proofOfDeliveries).set({
         recipientName: body.recipientName,
-        signatureData: body.signatureData,
+        signatureData: body.signatureWaived ? null : body.signatureData,
+        signatureWaivedReason: body.signatureWaived ? (body.signatureWaivedReason ?? null) : null,
         idPhotoUrl: body.idPhotoUrl,
         idVerified: body.idVerified ?? false,
         isControlledSubstance: body.isControlledSubstance ?? false,
@@ -431,6 +451,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       if (body.isControlledSubstance && !body.idVerified) {
         logCsAudit(stopId, driverId).catch(console.error);
       }
+      if (body.signatureWaived && body.signatureWaivedReason) {
+        logSigWaiverAudit(stopId, driverId, body.signatureWaivedReason, !!body.isControlledSubstance).catch(console.error);
+      }
       return reply.code(200).send(updated);
     }
 
@@ -440,7 +463,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       packageCount: body.packageCount ?? 1,
       recipientName: body.recipientName,
       deliveryNotes: body.deliveryNotes,
-      signatureData: body.signatureData,
+      signatureData: body.signatureWaived ? null : body.signatureData,
+      signatureWaivedReason: body.signatureWaived ? (body.signatureWaivedReason ?? null) : null,
       idPhotoUrl: body.idPhotoUrl,
       idVerified: body.idVerified ?? false,
       isControlledSubstance: body.isControlledSubstance ?? false,
@@ -467,6 +491,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
 
     if (body.isControlledSubstance && !body.idVerified) {
       logCsAudit(stopId, driverId).catch(console.error);
+    }
+    if (body.signatureWaived && body.signatureWaivedReason) {
+      logSigWaiverAudit(stopId, driverId, body.signatureWaivedReason, !!body.isControlledSubstance).catch(console.error);
     }
 
     return reply.code(201).send(pod);
@@ -726,6 +753,27 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true, codMethod: updated.codMethod, codCollectedAt: updated.codCollectedAt };
   });
 };
+
+async function logSigWaiverAudit(stopId: string, driverId: string, reason: string, isCS: boolean) {
+  try {
+    const { auditLogs, stops: stopsTable } = await import('../db/schema.js');
+    const [stop] = await db.select({ orgId: stopsTable.orgId }).from(stopsTable).where(eq(stopsTable.id, stopId)).limit(1);
+    if (!stop) return;
+    await db.insert(auditLogs).values({
+      orgId: stop.orgId,
+      action: 'pod_signature_waived',
+      resource: 'stop',
+      resourceId: stopId,
+      metadata: {
+        driverId,
+        reason,
+        rule: 'WCAG 2.5.1 + R 338.3162',
+        ...(isCS ? { controlled_substance_waiver: true } : {}),
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch { /* non-blocking */ }
+}
 
 async function logCsAudit(stopId: string, driverId: string) {
   try {

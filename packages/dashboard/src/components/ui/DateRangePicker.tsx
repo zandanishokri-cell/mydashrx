@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { localDateStr } from '@/lib/dateUtils';
 
@@ -70,11 +70,12 @@ const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
 function CalendarMonth({
   year, month, selecting, selectedFrom, selectedTo, hoverDate,
-  onSelectDate, onHoverDate,
+  onSelectDate, onHoverDate, focusedDate, onFocusDate,
 }: {
   year: number; month: number; selecting: 'from' | 'to' | null;
   selectedFrom: string | null; selectedTo: string | null; hoverDate: string | null;
   onSelectDate: (d: string) => void; onHoverDate: (d: string | null) => void;
+  focusedDate: string | null; onFocusDate: (d: string | null) => void;
 }) {
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -83,37 +84,75 @@ function CalendarMonth({
   while (cells.length % 7 !== 0) cells.push(null);
 
   const fmt = (d: number) => `${year}-${String(month + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  const todayStr = localDateStr(new Date());
+
+  // Keyboard nav within grid
+  const handleKeyDown = useCallback((e: React.KeyboardEvent, dateStr: string) => {
+    const d = new Date(dateStr + 'T00:00:00');
+    let next: Date | null = null;
+    if (e.key === 'ArrowRight') { next = new Date(d); next.setDate(d.getDate() + 1); }
+    else if (e.key === 'ArrowLeft') { next = new Date(d); next.setDate(d.getDate() - 1); }
+    else if (e.key === 'ArrowDown') { next = new Date(d); next.setDate(d.getDate() + 7); }
+    else if (e.key === 'ArrowUp') { next = new Date(d); next.setDate(d.getDate() - 7); }
+    else if (e.key === 'Home') { next = new Date(d); next.setDate(d.getDate() - d.getDay()); }
+    else if (e.key === 'End') { next = new Date(d); next.setDate(d.getDate() + (6 - d.getDay())); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectDate(dateStr); return; }
+    if (next) { e.preventDefault(); onFocusDate(localDateStr(next)); }
+  }, [onSelectDate, onFocusDate]);
+
+  const rows: (number | null)[][] = [];
+  for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
 
   return (
     <div className="w-64">
-      <div className="grid grid-cols-7 gap-0.5 mb-1">
-        {DAYS.map(d => <div key={d} className="text-center text-xs text-gray-400 font-medium py-1">{d}</div>)}
-        {cells.map((day, i) => {
-          if (!day) return <div key={`e${i}`} />;
-          const dateStr = fmt(day);
-          const isFrom = dateStr === selectedFrom;
-          const isTo = dateStr === selectedTo;
-          const endDate = selectedTo ?? (selecting === 'to' && hoverDate ? hoverDate : null);
-          const inRange = selectedFrom && endDate && dateStr > selectedFrom && dateStr < endDate;
-          const isHover = dateStr === hoverDate && selecting === 'to';
-          return (
-            <button
-              key={day}
-              onClick={() => onSelectDate(dateStr)}
-              onMouseEnter={() => onHoverDate(dateStr)}
-              onMouseLeave={() => onHoverDate(null)}
-              className={`
-                w-full aspect-square text-xs rounded transition-colors
-                ${isFrom || isTo ? 'bg-[#0F4C81] text-white font-semibold' : ''}
-                ${inRange ? 'bg-blue-100 text-blue-800' : ''}
-                ${isHover && !isFrom && !isTo ? 'bg-blue-200 text-blue-900' : ''}
-                ${!isFrom && !isTo && !inRange && !isHover ? 'hover:bg-gray-100 text-gray-700' : ''}
-              `}
-            >
-              {day}
-            </button>
-          );
-        })}
+      <div role="grid" aria-label={`${MONTHS[month]} ${year}`} className="grid grid-cols-7 gap-0.5 mb-1">
+        <div role="row" className="contents">
+          {DAYS.map((d, i) => (
+            <div key={d} role="columnheader" aria-label={['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][i]}
+              className="text-center text-xs text-gray-400 font-medium py-1">{d}</div>
+          ))}
+        </div>
+        {rows.map((row, ri) => (
+          <div key={ri} role="row" className="contents">
+            {row.map((day, ci) => {
+              if (!day) return <div key={`e${ri}-${ci}`} role="gridcell" />;
+              const dateStr = fmt(day);
+              const isFrom = dateStr === selectedFrom;
+              const isTo = dateStr === selectedTo;
+              const endDate = selectedTo ?? (selecting === 'to' && hoverDate ? hoverDate : null);
+              const inRange = !!(selectedFrom && endDate && dateStr > selectedFrom && dateStr < endDate);
+              const isHover = dateStr === hoverDate && selecting === 'to';
+              const isToday = dateStr === todayStr;
+              const isFocused = dateStr === focusedDate;
+              const fullLabel = `${MONTHS[month]} ${day}, ${year}${isFrom ? ', selected start' : isTo ? ', selected end' : inRange ? ', in range' : ''}`;
+              return (
+                <div key={day} role="gridcell">
+                  <button
+                    tabIndex={isFocused || (!focusedDate && isToday) || (!focusedDate && !todayStr && day === 1) ? 0 : -1}
+                    aria-label={fullLabel}
+                    aria-selected={isFrom || isTo || inRange}
+                    aria-current={isToday ? 'date' : undefined}
+                    onClick={() => onSelectDate(dateStr)}
+                    onMouseEnter={() => onHoverDate(dateStr)}
+                    onMouseLeave={() => onHoverDate(null)}
+                    onFocus={() => onFocusDate(dateStr)}
+                    onKeyDown={e => handleKeyDown(e, dateStr)}
+                    className={`
+                      w-full aspect-square text-xs rounded transition-colors
+                      ${isFrom || isTo ? 'bg-[#0F4C81] text-white font-semibold' : ''}
+                      ${inRange ? 'bg-blue-100 text-blue-800' : ''}
+                      ${isHover && !isFrom && !isTo ? 'bg-blue-200 text-blue-900' : ''}
+                      ${!isFrom && !isTo && !inRange && !isHover ? 'hover:bg-gray-100 text-gray-700' : ''}
+                      ${isToday && !isFrom && !isTo ? 'ring-1 ring-inset ring-[#0F4C81]/40' : ''}
+                    `}
+                  >
+                    {day}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -129,6 +168,7 @@ export function DateRangePicker({ value, onChange, presets = ['today','week','mo
   const [hoverDate, setHoverDate] = useState<string | null>(null);
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(new Date().getMonth());
+  const [focusedDate, setFocusedDate] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -241,6 +281,8 @@ export function DateRangePicker({ value, onChange, presets = ['today','week','mo
                 hoverDate={hoverDate}
                 onSelectDate={handleDateSelect}
                 onHoverDate={setHoverDate}
+                focusedDate={focusedDate}
+                onFocusDate={setFocusedDate}
               />
               {calFrom && calTo && (
                 <button

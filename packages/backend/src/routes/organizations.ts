@@ -774,6 +774,44 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
+  // P-DISP6: PATCH /orgs/:orgId/stops/bulk-status — dispatcher bulk stop status override
+  app.patch('/:orgId/stops/bulk-status', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { orgId: userOrgId, sub: userId } = req.user as { orgId: string; sub: string };
+    if (orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
+
+    const { stopIds, status, failureReason } = req.body as {
+      stopIds: string[];
+      status: 'pending' | 'failed' | 'rescheduled';
+      failureReason?: string;
+    };
+
+    if (!Array.isArray(stopIds) || stopIds.length === 0) return reply.code(400).send({ error: 'stopIds must be non-empty array' });
+    if (stopIds.length > 100) return reply.code(400).send({ error: 'max 100 stops per request' });
+    const VALID_STATUSES = ['pending', 'failed', 'rescheduled'];
+    if (!VALID_STATUSES.includes(status)) return reply.code(400).send({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
+
+    const updated = await db.update(stops)
+      .set({ status, ...(failureReason ? { failureReason } : {}) })
+      .where(and(inArray(stops.id, stopIds), eq(stops.orgId, orgId), isNull(stops.deletedAt)))
+      .returning({ id: stops.id, status: stops.status });
+
+    // Per-stop audit log
+    await Promise.all(updated.map(s =>
+      db.insert(auditLogs).values({
+        orgId,
+        action: 'bulk_stop_status_override',
+        resource: 'stop',
+        resourceId: s.id,
+        metadata: { userId, status, failureReason: failureReason ?? null, batchSize: stopIds.length },
+      }).catch(() => {}),
+    ));
+
+    return { updated: updated.length, skipped: stopIds.length - updated.length };
+  });
+
   // GET /orgs/:orgId/users/:userId/escalations — escalation history
   app.get('/:orgId/users/:userId/escalations', { preHandler: requireRole('super_admin') }, async (req, reply) => {
     const { orgId, userId } = req.params as { orgId: string; userId: string };

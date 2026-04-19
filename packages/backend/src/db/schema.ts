@@ -325,6 +325,8 @@ export const proofOfDeliveries = pgTable('proof_of_deliveries', {
   deliveryNotes: text('delivery_notes'),
   isControlledSubstance: boolean('is_controlled_substance').notNull().default(false),
   idDobConfirmed: boolean('id_dob_confirmed').notNull().default(false),
+  // P-A11Y26: WCAG 2.5.1 + Michigan R 338.3162 signature waiver
+  signatureWaivedReason: text('signature_waived_reason'),
   capturedAt: timestamp('captured_at').notNull().defaultNow(),
   // P-DEL9: HIPAA 164.310(d)(2)(i) PHI retention — 6yr from capture, weekly purge cron
   retentionExpiresAt: timestamp('retention_expires_at'),
