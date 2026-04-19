@@ -4,6 +4,8 @@ import { useRouter, usePathname } from 'next/navigation';
 import { attemptSilentBootstrap } from '@/lib/auth';
 import Link from 'next/link';
 import { FlaskConical, ListOrdered, BarChart2, LogOut } from 'lucide-react';
+import { useIdleTimeout } from '@/hooks/useIdleTimeout';
+import { IdleWarningModal } from '@/components/IdleWarningModal';
 
 export default function PharmacistLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -20,6 +22,9 @@ export default function PharmacistLayout({ children }: { children: React.ReactNo
       setReady(true);
     });
   }, [router]);
+
+  // P-SES25: HIPAA §164.312(a)(2)(iii) — automatic logoff for pharmacist portal
+  const { showWarning, extendSession, countdown } = useIdleTimeout();
 
   if (!ready) return null;
 
@@ -75,6 +80,7 @@ export default function PharmacistLayout({ children }: { children: React.ReactNo
       </div>
 
       <main className="max-w-4xl mx-auto px-4 py-6">{children}</main>
+      {showWarning && <IdleWarningModal countdown={countdown} onExtend={extendSession} />}
     </div>
   );
 }

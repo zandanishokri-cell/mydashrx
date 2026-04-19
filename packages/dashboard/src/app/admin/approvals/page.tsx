@@ -12,6 +12,8 @@ type PendingOrg = {
     onHold?: boolean; holdReason?: string | null; holdRequestedAt?: string | null;
     noteCount?: number;
     npiNumber?: string | null; npiVerified?: boolean | null; npiVerifiedAt?: string | null; // P-ADM16
+    riskScore?: number | null; trustTier?: string | null; // P-ADM22
+    baaAcceptedAt?: string | null; baaAcceptedByUserId?: string | null; // P-ONB37
   };
   admin: { id: string; name: string; email: string; createdAt: string } | null;
 };
@@ -234,9 +236,9 @@ function DetailDrawer({
             <div className="flex items-start justify-between py-1.5 border-b border-gray-50">
               <span className="text-xs text-gray-400 w-24 shrink-0">BAA</span>
               <div className="text-right">
-                {(org as { baaAcceptedAt?: string | null }).baaAcceptedAt ? (
+                {org.baaAcceptedAt ? (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded bg-green-50 text-green-700 border border-green-200">
-                    ✓ Signed {new Date((org as { baaAcceptedAt: string }).baaAcceptedAt).toLocaleDateString()}
+                    ✓ Signed {new Date(org.baaAcceptedAt).toLocaleDateString()}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded bg-amber-50 text-amber-700 border border-amber-200">
@@ -578,8 +580,8 @@ export default function ApprovalsPage() {
       }
       if (filterHold === 'on_hold' && !org.onHold) return false;
       if (filterHold === 'not_hold' && org.onHold) return false;
-      if (filterBaa === 'missing' && (org as { baaAcceptedAt?: string | null }).baaAcceptedAt) return false;
-      if (filterBaa === 'signed' && !(org as { baaAcceptedAt?: string | null }).baaAcceptedAt) return false;
+      if (filterBaa === 'missing' && org.baaAcceptedAt) return false;
+      if (filterBaa === 'signed' && !org.baaAcceptedAt) return false;
       return true;
     })
     .sort((a, b) => {

@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { attemptSilentBootstrap } from '@/lib/auth';
+import { useIdleTimeout } from '@/hooks/useIdleTimeout';
+import { IdleWarningModal } from '@/components/IdleWarningModal';
 
 export default function DriverLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -16,11 +18,15 @@ export default function DriverLayout({ children }: { children: React.ReactNode }
     });
   }, [router]);
 
+  // P-SES25: HIPAA §164.312(a)(2)(iii) — automatic logoff for driver portal
+  const { showWarning, extendSession, countdown } = useIdleTimeout();
+
   if (!ready) return null;
 
   return (
     <div className="min-h-screen bg-gray-50 max-w-lg mx-auto">
       {children}
+      {showWarning && <IdleWarningModal countdown={countdown} onExtend={extendSession} />}
     </div>
   );
 }

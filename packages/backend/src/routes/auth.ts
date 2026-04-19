@@ -487,6 +487,52 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       });
 
       console.log(JSON.stringify({ event: 'rt_rotated', userId: user.id, familyId: txFamilyId, ip: req.ip, ts: now.toISOString() }));
+
+      // P-SES26: concurrent multi-geo RT anomaly detection — fire-and-forget, never blocks refresh
+      lookupCountry(req.ip).then(async (refreshCountry) => {
+        if (!refreshCountry) return;
+        // Check if there are OTHER active RT sessions with IPs from a different country (concurrent use anomaly)
+        // Use raw SQL to avoid loading all sessions — find any active RT for this user NOT in this family
+        const concurrentRows = await db.execute(sql`
+          SELECT ip FROM refresh_tokens
+          WHERE user_id = ${user.id}
+            AND status = 'active'
+            AND jti != ${newJti}
+            AND expires_at > NOW()
+            AND ip IS NOT NULL
+          LIMIT 5
+        `).catch(() => ({ rows: [] })) as { rows?: Array<{ ip: string }> };
+        const rows = (concurrentRows as unknown as { rows: Array<{ ip: string }> }).rows ?? [];
+        // Lookup countries for concurrent sessions (parallel, fail-open)
+        const countryChecks = await Promise.all(rows.map(r => lookupCountry(r.ip))).catch(() => []);
+        const otherCountries = (countryChecks as (string|null)[]).filter(c => c && c !== refreshCountry);
+        if (otherCountries.length > 0) {
+          logAuthEvent('session_geo_anomaly', {
+            userId: user.id,
+            email: user.email,
+            ip: req.ip,
+            orgId: user.orgId ?? undefined,
+            metadata: { refreshCountry, concurrentCountries: [...new Set(otherCountries)] },
+          }).catch(() => {});
+          // Send security alert email
+          const resendKey = process.env.RESEND_API_KEY;
+          if (resendKey) {
+            fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+              body: JSON.stringify({
+                from: 'security@mydashrx.com',
+                to: user.email,
+                subject: 'Security alert: Simultaneous login from multiple countries',
+                track_clicks: false,
+                track_opens: false,
+                html: `<p>Hi ${user.name},</p><p>Your MyDashRx account is active from multiple countries simultaneously.</p><p>Current refresh location: <strong>${refreshCountry}</strong></p><p>Other active locations: <strong>${[...new Set(otherCountries)].join(', ')}</strong></p><p>If this wasn't you, please sign out all devices and change your password immediately.</p><p>– MyDashRx Security</p>`,
+              }),
+            }).catch(() => {});
+          }
+        }
+      }).catch(() => {});
+
       // P-SEC28: set rotated RT as httpOnly cookie
       setRtCookie(reply, tokens.refreshToken);
       return reply.send(tokens);
