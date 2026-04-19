@@ -15,6 +15,7 @@ export interface JWTPayload {
   email: string;
   role: Role;
   orgId: string;
+  tenantId: string;  // P-RBAC21: explicit tenant claim — always equals orgId, closes cross-tenant isolation risk
   depotIds: string[];
   mustChangePw?: boolean;
   iat: number;

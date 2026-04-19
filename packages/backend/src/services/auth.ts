@@ -24,8 +24,9 @@ export function signTokens(
   const atExpiry = restrictedRoles.includes(payload.role as string)
     ? '5m'
     : (process.env.JWT_EXPIRES_IN ?? '15m');
+  // P-RBAC21: always embed tenantId = orgId so routes never read orgId from client-supplied params
   const accessToken = app.jwt.sign(
-    { ...payload as object, ...(rtMeta ? { jti: rtMeta.jti } : {}) },
+    { ...payload as object, tenantId: payload.orgId, ...(rtMeta ? { jti: rtMeta.jti } : {}) },
     { expiresIn: atExpiry },
   );
   const refreshToken = app.jwt.sign(

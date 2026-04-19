@@ -90,6 +90,8 @@ async function sendApplicantConfirmation(orgName: string, adminEmail: string, ad
       from: `MyDashRx <noreply@${senderDomain}>`,
       to: adminEmail,
       subject: `We received your application — ${orgName}`,
+      track_clicks: false,
+      track_opens: false,
       html: `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#0F4C81;margin:0 0 8px">Application received!</h2>
@@ -131,6 +133,8 @@ async function notifySuperAdmins(orgName: string, adminEmail: string) {
         from: `MyDashRx <noreply@${senderDomain}>`,
         to: sa.email,
         subject: `New pharmacy signup — ${orgName}`,
+        track_clicks: false,
+        track_opens: false,
         html: `
           <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
             <h2 style="color:#0F4C81;margin:0 0 8px">New Pharmacy Signup</h2>
@@ -325,6 +329,8 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
           from: `MyDashRx <noreply@${senderDomain}>`,
           to: email,
           subject: "You've been invited to MyDashRx",
+          track_clicks: false,
+          track_opens: false,
           html: `
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
               <h2 style="color:#0F4C81;margin:0 0 8px">You're invited to MyDashRx</h2>

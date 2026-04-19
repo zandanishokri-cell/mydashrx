@@ -13,6 +13,7 @@ export interface JWTPayload {
     email: string;
     role: Role;
     orgId: string;
+    tenantId: string;
     depotIds: string[];
     mustChangePw?: boolean;
     iat: number;
