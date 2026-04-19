@@ -3,13 +3,14 @@ import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
 import { z } from 'zod';
 import { db } from '../db/connection.js';
 import { organizations, users, drivers, staffInvitations, signupIntents } from '../db/schema.js';
-import { eq, and, isNull, gt, sql } from 'drizzle-orm';
+import { eq, and, isNull, gt, sql, lt } from 'drizzle-orm';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
 const disposableDomains: string[] = _require('disposable-email-domains');
 import { notifyApprovalClients } from './superAdmin.js';
 import { hashPassword, signTokens, findUserByEmail } from '../services/auth.js';
 import { seedOrgDefaults } from '../lib/rbacCache.js';
+import { triggerPendingApprovalDrip } from '../lib/onboardingDrip.js';
 
 const pharmacySignupSchema = z.object({
   orgName: z.string().min(2).max(120),
@@ -19,6 +20,10 @@ const pharmacySignupSchema = z.object({
   adminEmail: z.string().email(),
   npiNumber: z.string().regex(/^\d{10}$/).optional(), // P-ADM27
   orgSize: z.enum(['solo', 'small_group', 'enterprise']).optional(), // P-CNV24
+  // P-ONB46: BAA click-wrap — must be true or request is rejected (HIPAA §164.308(b)(1))
+  baaAccepted: z.literal(true, { errorMap: () => ({ message: 'Business Associate Agreement must be accepted before submitting' }) }),
+  // P-ONB48: full NPPES payload echoed from frontend verify step
+  npiPayload: z.record(z.unknown()).optional(),
 });
 
 const driverSignupSchema = z.object({
@@ -33,24 +38,27 @@ const acceptInviteSchema = z.object({
   name: z.string().min(2).max(100),
 });
 
-/** P-ADM27: Call NPPES free API to verify NPI — fail-open with 2s timeout */
-async function verifyNpi(npi: string): Promise<'valid' | 'invalid' | 'unknown'> {
+/** P-ADM27 / P-ONB48: Call NPPES free API to verify NPI — fail-open with 2s timeout. Returns status + full payload. */
+async function verifyNpi(npi: string): Promise<{ status: 'valid' | 'invalid' | 'unknown'; payload?: Record<string, unknown> }> {
   try {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 2000);
     const res = await fetch(`https://npiregistry.cms.hhs.gov/api/?number=${npi}&version=2.1`, { signal: ctrl.signal });
     clearTimeout(tid);
-    if (!res.ok) return 'unknown';
-    const data = await res.json() as { result_count?: number };
-    return (data.result_count ?? 0) > 0 ? 'valid' : 'invalid';
-  } catch { return 'unknown'; }
+    if (!res.ok) return { status: 'unknown' };
+    const data = await res.json() as { result_count?: number; results?: Record<string, unknown>[] };
+    if ((data.result_count ?? 0) > 0 && data.results?.[0]) {
+      return { status: 'valid', payload: data.results[0] };
+    }
+    return { status: 'invalid' };
+  } catch { return { status: 'unknown' }; }
 }
 
 async function assessSignupRisk(
   orgName: string,
   adminEmail: string,
   npiNumber?: string,
-): Promise<{ flags: string[]; score: number; tier: string; npiVerified: boolean }> {
+): Promise<{ flags: string[]; score: number; tier: string; npiVerified: boolean; npiPayloadFromVerify?: Record<string, unknown> }> {
   const flags: string[] = [];
   const domain = adminEmail.split('@')[1]?.toLowerCase() ?? '';
   if ((disposableDomains as string[]).includes(domain)) flags.push('disposable_email');
@@ -61,12 +69,13 @@ async function assessSignupRisk(
     .limit(3);
   if (similar.length > 0) flags.push('similar_org_name');
 
-  // P-ADM27: NPI verification — +40 if invalid, -10 if verified
+  // P-ADM27 / P-ONB48: NPI verification — +40 if invalid, -10 if verified
   let npiVerified = false;
+  let npiPayloadFromVerify: Record<string, unknown> | undefined;
   if (npiNumber) {
-    const npiStatus = await verifyNpi(npiNumber);
+    const { status: npiStatus, payload } = await verifyNpi(npiNumber);
     if (npiStatus === 'invalid') { flags.push('invalid_npi'); }
-    else if (npiStatus === 'valid') { npiVerified = true; }
+    else if (npiStatus === 'valid') { npiVerified = true; npiPayloadFromVerify = payload; }
   }
 
   // P-ADM22: weighted risk score + trust tier routing
@@ -79,7 +88,7 @@ async function assessSignupRisk(
     : (score <= 15 && !hasDisposable) ? 'auto_approve'
     : 'manual';
 
-  return { flags, score, tier, npiVerified };
+  return { flags, score, tier, npiVerified, npiPayloadFromVerify };
 }
 
 async function sendApplicantConfirmation(orgName: string, adminEmail: string, adminName: string) {
@@ -188,12 +197,15 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
   app.post('/pharmacy', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req, reply) => {
     const parsed = pharmacySignupSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request' });
-    const { orgName, orgPhone, orgAddress, adminName, adminEmail, npiNumber, orgSize } = parsed.data;
+    const { orgName, orgPhone, orgAddress, adminName, adminEmail, npiNumber, orgSize, npiPayload: clientNpiPayload } = parsed.data;
 
     const existing = await findUserByEmail(adminEmail);
     if (existing) return reply.code(409).send({ error: 'An account with this email already exists.' });
 
-    const { flags: riskFlags, score: riskScore, tier: trustTier, npiVerified } = await assessSignupRisk(orgName, adminEmail, npiNumber);
+    const { flags: riskFlags, score: riskScore, tier: trustTier, npiVerified, npiPayloadFromVerify } = await assessSignupRisk(orgName, adminEmail, npiNumber);
+
+    // P-ONB48: use backend-fetched payload if available; fall back to client-echoed payload
+    const resolvedNpiPayload = npiPayloadFromVerify ?? clientNpiPayload ?? null;
 
     const [org] = await db.insert(organizations).values({
       name: orgName,
@@ -202,7 +214,12 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
       riskScore,
       trustTier,
       ...(npiNumber ? { npiNumber, npiVerified, ...(npiVerified ? { npiVerifiedAt: new Date() } : {}) } : {}),
+      ...(resolvedNpiPayload ? { npiPayload: resolvedNpiPayload } : {}),
       ...(orgSize ? { orgSize } : {}), // P-CNV24: role segmentation
+      // P-ONB46: BAA click-wrap — baaAccepted:true validated by zod, store IP + version
+      baaAcceptedAt: new Date(),
+      baaAcceptedByIp: req.ip ?? null,
+      baaVersion: 'v1.0',
     }).returning();
 
     const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
@@ -216,10 +233,10 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     });
 
     notifySuperAdmins(orgName, adminEmail).catch((e: unknown) => { console.error('[Resend] pharmacy signup notify failed:', e); });
-    sendApplicantConfirmation(orgName, adminEmail, adminName).catch((e: unknown) => { console.error('[Resend] applicant confirmation failed:', e); });
+    // P-ONB47: trigger 3-email nurture drip (replaces single applicant confirmation)
+    triggerPendingApprovalDrip(org.id, adminEmail, adminName).catch((e: unknown) => { console.error('[P-ONB47] drip trigger failed:', e); });
     notifyApprovalClients(); // P-ADM39: push new signup to SSE subscribers
     // P-RBAC23: seed org-specific role templates from platform defaults — fire-and-forget
-    // Each org gets isolated permission baseline; future platform changes won't silently affect this org
     seedOrgDefaults(org.id).catch((e: unknown) => { console.error('[P-RBAC23] seedOrgDefaults failed:', e); });
 
     // P-CNV15: return tier so frontend can show correct approval timeline
@@ -279,6 +296,39 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
         .where(eq(signupIntents.adminEmail, email));
     }
     return reply.type('text/html').send('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2>You\'ve been unsubscribed.</h2><p>You won\'t receive any more emails from MyDashRx signup reminders.</p></body></html>');
+  });
+
+  // ─── P-ONB49: Pending-approval status + queue position ───────────────────
+  app.get('/status', { onRequest: [async (req, reply) => { try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); } }] }, async (req, reply) => {
+    const me = req.user as { sub: string };
+    const [user] = await db.select({ orgId: users.orgId }).from(users).where(eq(users.id, me.sub)).limit(1);
+    if (!user?.orgId) return reply.send({ status: 'no_org' });
+
+    const [org] = await db.select({
+      status: organizations.pendingApproval,
+      approvedAt: organizations.approvedAt,
+      rejectedAt: organizations.rejectedAt,
+      createdAt: organizations.createdAt,
+    }).from(organizations).where(eq(organizations.id, user.orgId)).limit(1);
+
+    if (!org) return reply.send({ status: 'no_org' });
+
+    // Count orgs pending ahead (created before this org, still pending)
+    const [{ count: queueAhead }] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(organizations)
+      .where(and(
+        eq(organizations.pendingApproval, true),
+        isNull(organizations.rejectedAt),
+        lt(organizations.createdAt, org.createdAt),
+      ));
+
+    const status = org.approvedAt ? 'approved' : org.rejectedAt ? 'rejected' : 'pending';
+    return reply.send({
+      status,
+      queuePosition: Number(queueAhead) + 1,
+      estimatedHours: '24–48',
+      approvedAt: org.approvedAt ?? null,
+    });
   });
 
   // ─── Driver Signup ────────────────────────────────────────────────────────

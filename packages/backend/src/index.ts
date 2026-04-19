@@ -742,6 +742,17 @@ try {
   console.error('P-DEL29 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-ONB46/47/48: BAA click-wrap consent + drip cancellation + NPPES payload persistence
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS baa_version varchar(20) DEFAULT 'v1.0'`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS baa_accepted_by_ip varchar(45)`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pending_drip_email_ids text`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS npi_payload jsonb`);
+  console.log('P-ONB46/47/48 baa_version, baa_accepted_by_ip, pending_drip_email_ids, npi_payload columns ensured');
+} catch (err) {
+  console.error('P-ONB46/47/48 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

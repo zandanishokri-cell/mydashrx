@@ -14,6 +14,9 @@ type PendingOrg = {
     npiNumber?: string | null; npiVerified?: boolean | null; npiVerifiedAt?: string | null; // P-ADM16
     riskScore?: number | null; trustTier?: string | null; // P-ADM22
     baaAcceptedAt?: string | null; baaAcceptedByUserId?: string | null; // P-ONB37
+    baaVersion?: string | null; // P-ONB46
+    // P-ONB48: NPPES full payload for admin review
+    npiPayload?: { basic?: { organization_name?: string }; addresses?: { address_1?: string; city?: string; state?: string }[]; taxonomies?: { desc?: string }[] } | null;
     // P-ADM37: assigned reviewer
     assignedReviewerId?: string | null; assignedAt?: string | null;
     assignee?: { name: string; email: string } | null;
@@ -330,6 +333,24 @@ function DetailDrawer({
                     </span>
                   )}
                 </div>
+              </div>
+            )}
+            {/* P-ONB48: NPPES full payload — pharmacy legal name, address, taxonomy */}
+            {org.npiPayload && (
+              <div className="mt-2 border border-gray-100 rounded-lg px-3 py-2 bg-blue-50/40 space-y-0.5">
+                <p className="text-xs font-semibold text-gray-500 mb-1">NPPES Registry Data</p>
+                {org.npiPayload.basic?.organization_name && (
+                  <p className="text-xs text-gray-700"><span className="font-medium text-gray-500">Legal name:</span> {org.npiPayload.basic.organization_name}</p>
+                )}
+                {org.npiPayload.addresses?.[0] && (
+                  <p className="text-xs text-gray-700"><span className="font-medium text-gray-500">Address:</span> {org.npiPayload.addresses[0].address_1}, {org.npiPayload.addresses[0].city}, {org.npiPayload.addresses[0].state}</p>
+                )}
+                {org.npiPayload.taxonomies?.[0]?.desc && (
+                  <p className="text-xs text-gray-700"><span className="font-medium text-gray-500">Type:</span> {org.npiPayload.taxonomies[0].desc}</p>
+                )}
+                {org.npiVerifiedAt && (
+                  <p className="text-xs text-gray-400 mt-1">Verified {new Date(org.npiVerifiedAt).toLocaleDateString()}</p>
+                )}
               </div>
             )}
           </div>
@@ -1145,6 +1166,16 @@ export default function ApprovalsPage() {
                         'bg-gray-100 text-gray-500'
                       }`} title={`Risk score: ${org.riskScore}/100`}>
                         {org.trustTier === 'auto_approve' ? '✓ Auto' : org.trustTier === 'block' ? '✗ Block' : `${org.riskScore}`}
+                      </span>
+                    )}
+                    {/* P-ONB46: BAA status badge in list row */}
+                    {org.baaAcceptedAt ? (
+                      <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-green-50 text-green-700 border border-green-200" title={`BAA ${org.baaVersion ?? 'v1.0'} signed`}>
+                        BAA ✓
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-red-50 text-red-600 border border-red-200" title="No BAA on file — HIPAA risk">
+                        NO BAA
                       </span>
                     )}
                   </div>

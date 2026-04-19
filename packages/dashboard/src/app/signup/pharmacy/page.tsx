@@ -88,6 +88,9 @@ export default function PharmacySignupPage() {
   const [approvalTier, setApprovalTier] = useState<'auto_approve' | 'manual'>('manual');
   // P-CNV25: rescue banner — shown once per session after 75s if email entered but not submitted
   const [showRescueBanner, setShowRescueBanner] = useState(false);
+  // P-ONB46: BAA click-wrap consent
+  const [baaChecked, setBaaChecked] = useState(false);
+  const [baaError, setBaaError] = useState('');
 
   useEffect(() => {
     try {
@@ -171,10 +174,12 @@ export default function PharmacySignupPage() {
   };
 
   const submit = async () => {
+    // P-ONB46: gate on BAA acceptance
+    if (!baaChecked) { setBaaError('You must agree to the Business Associate Agreement to continue.'); return; }
     setLoading(true);
     setError('');
     try {
-      const body: Record<string, string> = { ...form };
+      const body: Record<string, unknown> = { ...form, baaAccepted: true };
       if (npiNumber) body.npiNumber = npiNumber;
       if (orgSize) body.orgSize = orgSize;
       const resp = await api.post('/signup/pharmacy', body) as { tier?: string };
@@ -405,6 +410,27 @@ export default function PharmacySignupPage() {
             >
               <span className="font-medium text-gray-700">{form.orgName}</span>
               {form.orgPhone && <> · {form.orgPhone}</>}
+            </div>
+
+            {/* P-ONB46: BAA click-wrap consent — required before submission (HIPAA §164.308(b)(1)) */}
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={baaChecked}
+                  onChange={e => { setBaaChecked(e.target.checked); if (e.target.checked) setBaaError(''); }}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#0F4C81] focus:ring-[#0F4C81]"
+                  aria-describedby={baaError ? 'baa-error' : undefined}
+                />
+                <span className="text-xs text-gray-600 leading-relaxed">
+                  I agree to the{' '}
+                  <a href="/legal/baa" target="_blank" rel="noopener noreferrer" className="text-[#0F4C81] underline underline-offset-2">Business Associate Agreement</a>
+                  {' '}and{' '}
+                  <a href="/legal/terms" target="_blank" rel="noopener noreferrer" className="text-[#0F4C81] underline underline-offset-2">Terms of Service</a>
+                  {' '}on behalf of <strong>{form.orgName || 'my pharmacy'}</strong>.
+                </span>
+              </label>
+              {baaError && <p id="baa-error" className="mt-1.5 text-xs text-red-500" role="alert">{baaError}</p>}
             </div>
 
             {/* P-CNV11: actionable error display with sign-in/support links on 409 */}

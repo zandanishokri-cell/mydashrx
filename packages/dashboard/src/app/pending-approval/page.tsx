@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 
@@ -44,12 +45,27 @@ function ProgressRing({ done, total }: { done: number; total: number }) {
   );
 }
 
+// P-ONB49: queue status response shape
+interface SignupStatus { status: string; queuePosition: number; estimatedHours: string; approvedAt?: string | null; }
+
 export default function PendingApprovalPage() {
+  const router = useRouter();
   const [checked, setChecked] = useState<Set<string>>(new Set(['submitted']));
   const [prepChecked, setPrepChecked] = useState<Set<string>>(new Set());
   const [mounted, setMounted] = useState(false);
   const [showBookmarkHelp, setShowBookmarkHelp] = useState(false);
   const [orgStatus, setOrgStatus] = useState<{ status: string; reason?: string; orgSize?: string } | null>(null);
+  // P-ONB49: queue position + auto-redirect
+  const [signupStatus, setSignupStatus] = useState<SignupStatus | null>(null);
+
+  // P-ONB49: poll /signup/status every 60s, auto-redirect on approval
+  const pollStatus = async () => {
+    try {
+      const data = await api.get<SignupStatus>('/signup/status');
+      setSignupStatus(data);
+      if (data.status === 'approved') router.replace('/dashboard');
+    } catch { /* fail-open — polling is best-effort */ }
+  };
 
   useEffect(() => {
     const user = getUser();
@@ -65,7 +81,11 @@ export default function PendingApprovalPage() {
     api.get<{ status: string; reason?: string }>('/auth/org-status')
       .then(setOrgStatus)
       .catch(() => {});
-  }, []);
+    // P-ONB49: start polling
+    pollStatus();
+    const pollId = setInterval(pollStatus, 60_000);
+    return () => clearInterval(pollId);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (id: string) => {
     if (id === 'submitted') return;
@@ -300,6 +320,21 @@ export default function PendingApprovalPage() {
             </a>
           </div>
         </div>
+
+        {/* P-ONB49: queue position + estimated time */}
+        {signupStatus && signupStatus.status === 'pending' && (
+          <div className="border-t border-gray-100 pt-4 mb-4 text-center space-y-1">
+            <p className="text-xs text-gray-500">
+              Estimated review time: <strong className="text-gray-700">{signupStatus.estimatedHours} hours</strong>
+            </p>
+            {signupStatus.queuePosition > 0 && (
+              <p className="text-xs text-gray-500">
+                You&apos;re application <strong className="text-gray-700">#{signupStatus.queuePosition}</strong> in queue
+              </p>
+            )}
+            <p className="text-xs text-gray-400">This page refreshes automatically — you&apos;ll be redirected the moment you&apos;re approved.</p>
+          </div>
+        )}
 
         <div className="text-center space-y-1">
           <p className="text-xs text-gray-400">You'll receive a confirmation email when your account is activated.</p>

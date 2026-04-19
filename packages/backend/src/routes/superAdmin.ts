@@ -7,6 +7,7 @@ import { requireRole } from '../middleware/requireRole.js';
 import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
 import { invalidateOrgRole, invalidateOrg, listTemplates, upsertTemplate, seedOrgDefaults } from '../lib/rbacCache.js';
 import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
+import { cancelPendingDrip } from '../lib/onboardingDrip.js';
 
 // P-ADM39: in-memory SSE client registry for approval queue live updates
 const approvalSseClients = new Set<FastifyReply>();
@@ -379,6 +380,9 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     await db.update(organizations).set({ pendingApproval: false, approvedAt: new Date() }).where(eq(organizations.id, orgId));
     await db.update(users).set({ pendingApproval: false }).where(and(eq(users.orgId, orgId), isNull(users.deletedAt)));
 
+    // P-ONB47: cancel pending drip emails — org is approved, no more nurture needed
+    cancelPendingDrip(orgId).catch((e: unknown) => { console.error('[P-ONB47] cancelPendingDrip on approve failed:', e); });
+
     // P-ADM26: send welcome email via shared helper
     const [admin] = await db.select({ email: users.email, name: users.name })
       .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
@@ -426,6 +430,9 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     await db.update(organizations)
       .set({ pendingApproval: false, rejectedAt: new Date(), rejectionReason: reason ?? null, rejectionNote: note ?? null })
       .where(eq(organizations.id, orgId));
+
+    // P-ONB47: cancel pending drip emails on rejection
+    cancelPendingDrip(orgId).catch((e: unknown) => { console.error('[P-ONB47] cancelPendingDrip on reject failed:', e); });
 
     const [admin] = await db.select({ email: users.email, name: users.name })
       .from(users).where(eq(users.orgId, orgId)).limit(1);

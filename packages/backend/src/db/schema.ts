@@ -133,6 +133,13 @@ export const organizations = pgTable('organizations', {
   hipaaAckSuppressedUntil: timestamp('hipaa_ack_suppressed_until'),
   // P-COMP15: chain membership — multi-location pharmacy chain
   chainId: uuid('chain_id').references((): AnyPgColumn => chains.id),
+  // P-ONB46: BAA click-wrap consent — HIPAA §164.308(b)(1) requires documented BAA before ePHI flows
+  baaVersion: varchar('baa_version', { length: 20 }).default('v1.0'),
+  baaAcceptedByIp: varchar('baa_accepted_by_ip', { length: 45 }),
+  // P-ONB47: pending-approval drip email IDs — JSON array of Resend email IDs for cancellation
+  pendingDripEmailIds: text('pending_drip_email_ids'),
+  // P-ONB48: full NPPES API response at time of signup — admin review + audit trail
+  npiPayload: jsonb('npi_payload'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });
