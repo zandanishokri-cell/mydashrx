@@ -219,6 +219,11 @@ export default function ApprovalsPage() {
   const [undoToast, setUndoToast] = useState<{ orgIds: string[]; count: number } | null>(null);
   // P-ADM16: Slideout detail panel
   const [selectedOrg, setSelectedOrg] = useState<PendingOrg | null>(null);
+  // P-ADM29: Approval ops analytics stats
+  const [approvalStats, setApprovalStats] = useState<{
+    pending: number; approvedLast7d: number; rejectedLast7d: number;
+    pendingOver24h: number; avgHoursToApproval: number | null;
+  } | null>(null);
 
   useEffect(() => {
     if (!user || user.role !== 'super_admin') router.replace('/dashboard');
@@ -239,6 +244,10 @@ export default function ApprovalsPage() {
       .finally(() => setLoading(false));
     api.get<AuditEntry[]>('/admin/audit-log')
       .then(setAuditLog)
+      .catch(() => {});
+    // P-ADM29: load approval health stats from existing /admin/stats
+    api.get<{ approvalHealth?: { pending: number; approvedLast7d: number; rejectedLast7d: number; pendingOver24h: number; avgHoursToApproval: number | null } }>('/admin/stats')
+      .then(s => { if (s.approvalHealth) setApprovalStats(s.approvalHealth); })
       .catch(() => {});
   };
 
@@ -334,6 +343,30 @@ export default function ApprovalsPage() {
           <p className="text-sm text-gray-500 mt-0.5">New pharmacy accounts awaiting review</p>
         </div>
       </div>
+
+      {/* P-ADM29: Approval ops analytics card */}
+      {approvalStats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+            <p className="text-xs text-gray-400 mb-1">Pending</p>
+            <p className="text-2xl font-bold text-gray-900">{approvalStats.pending}</p>
+          </div>
+          <div className={`border rounded-xl px-4 py-3 ${approvalStats.pendingOver24h > 0 ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100'}`}>
+            <p className="text-xs text-gray-400 mb-1">Over 24h</p>
+            <p className={`text-2xl font-bold ${approvalStats.pendingOver24h > 0 ? 'text-red-700' : 'text-gray-900'}`}>{approvalStats.pendingOver24h}</p>
+          </div>
+          <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+            <p className="text-xs text-gray-400 mb-1">Approved (7d)</p>
+            <p className="text-2xl font-bold text-green-700">{approvalStats.approvedLast7d}</p>
+          </div>
+          <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+            <p className="text-xs text-gray-400 mb-1">Avg Approval</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {approvalStats.avgHoursToApproval != null ? `${approvalStats.avgHoursToApproval}h` : '—'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-100 text-red-700 text-sm px-4 py-3 rounded-lg mb-4 flex justify-between">
