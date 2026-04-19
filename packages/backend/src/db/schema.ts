@@ -204,6 +204,9 @@ export const stops = pgTable(
     requiresRefrigeration: boolean('requires_refrigeration').notNull().default(false),
     controlledSubstance: boolean('controlled_substance').notNull().default(false),
     codAmount: integer('cod_amount'),
+    codCollected: boolean('cod_collected').notNull().default(false), // P-COMP8: co-pay collected flag
+    codMethod: text('cod_method'),                                   // 'cash' | 'card' | 'waived'
+    codCollectedAt: timestamp('cod_collected_at'),
     requiresSignature: boolean('requires_signature').notNull().default(true),
     requiresPhoto: boolean('requires_photo').notNull().default(false),
     requiresAgeVerification: boolean('requires_age_verification').notNull().default(false),

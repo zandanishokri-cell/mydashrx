@@ -515,6 +515,43 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
 
     return { ok: true, returnedAt: updated.returnedAt };
   });
+
+  // P-COMP8: POST /me/stops/:stopId/cod-collected — record co-pay collection at POD
+  app.post('/me/stops/:stopId/cod-collected', { preHandler: requireRole('driver') }, async (req, reply) => {
+    const jwtUser = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(jwtUser);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
+    const { stopId } = req.params as { stopId: string };
+    const { method } = req.body as { method?: string };
+
+    const VALID_METHODS = ['cash', 'card', 'waived'] as const;
+    if (!method || !VALID_METHODS.includes(method as typeof VALID_METHODS[number])) {
+      return reply.code(400).send({ error: `method must be one of: ${VALID_METHODS.join(', ')}` });
+    }
+
+    const [stop] = await db
+      .select({ id: stops.id, orgId: stops.orgId, codAmount: stops.codAmount, routeId: stops.routeId, codCollected: stops.codCollected })
+      .from(stops)
+      .where(and(eq(stops.id, stopId), eq(stops.orgId, jwtUser.orgId), isNull(stops.deletedAt)))
+      .limit(1);
+
+    if (!stop) return reply.code(404).send({ error: 'Stop not found' });
+    if (!stop.codAmount) return reply.code(400).send({ error: 'This stop has no co-pay amount' });
+    if (stop.codCollected) return reply.code(409).send({ error: 'Co-pay already recorded for this stop' });
+
+    if (stop.routeId) {
+      const [route] = await db.select({ driverId: routes.driverId }).from(routes)
+        .where(eq(routes.id, stop.routeId)).limit(1);
+      if (route?.driverId && route.driverId !== driverId) return reply.code(403).send({ error: 'Not your route' });
+    }
+
+    const [updated] = await db.update(stops)
+      .set({ codCollected: true, codMethod: method, codCollectedAt: new Date() })
+      .where(eq(stops.id, stopId))
+      .returning({ id: stops.id, codCollected: stops.codCollected, codMethod: stops.codMethod, codCollectedAt: stops.codCollectedAt });
+
+    return { ok: true, codMethod: updated.codMethod, codCollectedAt: updated.codCollectedAt };
+  });
 };
 
 async function logCsAudit(stopId: string, driverId: string) {
