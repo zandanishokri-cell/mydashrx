@@ -3,7 +3,8 @@ import { db } from '../db/connection.js';
 import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
-import { sendStopNotification } from '../services/notifications.js';
+import { sendStopNotification, sendTwilioSms } from '../services/notifications.js';
+import { sendCopayPaymentLink } from '../services/paymentLink.js';
 import { fireTrigger } from '../services/automation.js';
 import { uploadBuffer } from '../services/storage.js';
 import type { StopStatus } from '@mydash-rx/shared';
@@ -241,9 +242,12 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       status: StopStatus; failureReason?: string; failureNote?: string;
     };
 
-    // Verify driver owns this stop's route
-    const [stop] = await db.select({ id: stops.id, routeId: stops.routeId })
-      .from(stops).where(eq(stops.id, stopId)).limit(1);
+    // Verify driver owns this stop's route (fetch full stop for copay check)
+    const [stop] = await db.select({
+      id: stops.id, routeId: stops.routeId, orgId: stops.orgId,
+      codAmount: stops.codAmount, paymentLinkSentAt: stops.paymentLinkSentAt,
+      recipientName: stops.recipientName, recipientPhone: stops.recipientPhone, address: stops.address,
+    }).from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
 
     const [route] = await db.select({ driverId: routes.driverId })
@@ -258,6 +262,16 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
 
     const [updated] = await db.update(stops).set(updates).where(eq(stops.id, stopId)).returning();
     sendStopNotification(updated, status).catch(console.error);
+
+    // P-COMP11: Send pre-delivery Stripe copay SMS when driver is en_route + copay > 0 (not yet sent)
+    if (status === 'en_route' && (stop.codAmount ?? 0) > 0 && !stop.paymentLinkSentAt && stop.recipientPhone) {
+      sendCopayPaymentLink(
+        { id: stop.id, codAmount: stop.codAmount!, recipientName: stop.recipientName,
+          recipientPhone: stop.recipientPhone, address: stop.address, orgId: stop.orgId },
+        sendTwilioSms,
+      ).catch(console.error);
+    }
+
     return updated;
   });
 

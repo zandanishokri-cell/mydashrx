@@ -109,6 +109,12 @@ export async function sendStopNotification(
   }
 }
 
+/** Generic SMS sender — used by services that don't need templating (e.g. copay links) */
+export async function sendTwilioSms(to: string, body: string): Promise<void> {
+  const msg = await getClient().messages.create({ body, from: process.env.TWILIO_FROM_NUMBER!, to });
+  console.log(JSON.stringify({ event: 'sms_sent', to, sid: msg.sid }));
+}
+
 export async function sendDriverArrivalEmail(stop: {
   id: string;
   orgId: string;

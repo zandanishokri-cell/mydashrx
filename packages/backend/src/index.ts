@@ -66,6 +66,7 @@ import { dashboardRoutes } from './routes/dashboard.js';
 import { notificationRoutes } from './routes/notifications.js';
 import { userSettingsRoutes } from './routes/userSettings.js';
 import { twilioWebhookRoutes } from './routes/twilioWebhook.js';
+import { stripeWebhookRoutes } from './routes/stripeWebhook.js';
 import { phiFilterHook } from './middleware/phiFilter.js';
 import { phiAuditHook } from './middleware/phiAuditHook.js';
 import { sendDailyReport } from './services/dailyReport.js';
@@ -156,6 +157,17 @@ try {
   console.log('P-CNV17/18 activation columns ensured');
 } catch (err) {
   console.error('P-CNV17/18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-COMP11: idempotent DDL for Stripe copay payment link columns on stops
+try {
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS payment_link_token text`);
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS payment_link_sent_at timestamptz`);
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS payment_completed_at timestamptz`);
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS stripe_payment_intent_id text`);
+  console.log('P-COMP11 copay payment link columns ensured');
+} catch (err) {
+  console.error('P-COMP11 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
 // P-SEC32b: warn if MAGIC_LINK_SECRET falls back to JWT_SECRET (secret reuse)
@@ -315,6 +327,8 @@ await app.register(notificationRoutes, { prefix: '/api/v1/orgs/:orgId/notificati
 await app.register(userSettingsRoutes, { prefix: '/api/v1/orgs/:orgId' });
 // P-SEC30: Twilio webhook signature verification — protect delivery record integrity
 await app.register(twilioWebhookRoutes, { prefix: '/api/v1/twilio' });
+// P-COMP11: Stripe copay payment webhook
+await app.register(stripeWebhookRoutes, { prefix: '/api/v1/stripe' });
 
 // Public: list depots for pharmacy registration
 app.get('/api/v1/public/depots', async () => {

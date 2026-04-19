@@ -1076,8 +1076,9 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
   // GET /admin/audit-chain-verify — P-SEC33: verify hash chain integrity of audit logs
   // Super admin only. Returns broken chain count — 0 means tamper-free. HIPAA §164.312(b).
   app.get('/audit-chain-verify', { preHandler: auth }, async (req, reply) => {
-    const jwtUser = (req as any).jwtUser;
-    if (jwtUser.role !== 'super_admin') return reply.code(403).send({ error: 'Forbidden' });
+    const actor = req.user as { sub: string; email: string; role: string };
+    // requireRole('super_admin') preHandler already validated role — belt-and-suspenders check
+    if (actor.role !== 'super_admin') return reply.code(403).send({ error: 'Forbidden' });
 
     const computeHash = (id: string, orgId: string, action: string, createdAt: Date | string, prevHash: string) =>
       createHash('sha256').update(String(id) + String(orgId) + String(action) + String(createdAt) + String(prevHash)).digest('hex');
@@ -1105,10 +1106,10 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     await db.insert(adminAuditLogs).values({
-      actorId: jwtUser.sub,
-      actorEmail: jwtUser.email,
+      actorId: actor.sub,
+      actorEmail: actor.email,
       action: 'audit_chain_verify',
-      targetId: jwtUser.sub,
+      targetId: actor.sub,
       targetName: 'audit_logs + admin_audit_logs',
       metadata: { auditLogsBroken: alBroken, adminAuditLogsBroken: aalBroken, totalRows: alRows.length + aalRows.length },
     } as any);

@@ -222,8 +222,13 @@ export const stops = pgTable(
     controlledSubstance: boolean('controlled_substance').notNull().default(false),
     codAmount: integer('cod_amount'),
     codCollected: boolean('cod_collected').notNull().default(false), // P-COMP8: co-pay collected flag
-    codMethod: text('cod_method'),                                   // 'cash' | 'card' | 'waived'
+    codMethod: text('cod_method'),                                   // 'cash' | 'card' | 'waived' | 'card_online'
     codCollectedAt: timestamp('cod_collected_at'),
+    // P-COMP11: Stripe pre-delivery copay payment link
+    paymentLinkToken: text('payment_link_token'),        // Stripe Payment Link ID (plink_xxx)
+    paymentLinkSentAt: timestamp('payment_link_sent_at'),
+    paymentCompletedAt: timestamp('payment_completed_at'),
+    stripePaymentIntentId: text('stripe_payment_intent_id'),
     requiresSignature: boolean('requires_signature').notNull().default(true),
     requiresPhoto: boolean('requires_photo').notNull().default(false),
     requiresAgeVerification: boolean('requires_age_verification').notNull().default(false),
