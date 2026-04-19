@@ -183,10 +183,10 @@ try {
     BEGIN
       SELECT row_hash INTO prev FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 1;
       NEW.prev_hash := COALESCE(prev, 'genesis');
-      NEW.row_hash  := encode(digest(
-        COALESCE(NEW.id::text,'') || COALESCE(NEW.org_id::text,'') ||
+      NEW.row_hash  := encode(sha256(
+        (COALESCE(NEW.id::text,'') || COALESCE(NEW.org_id::text,'') ||
         COALESCE(NEW.action,'') || COALESCE(NEW.created_at::text,'') ||
-        NEW.prev_hash, 'sha256'), 'hex');
+        NEW.prev_hash)::bytea), 'hex');
       RETURN NEW;
     END;
     $$ LANGUAGE plpgsql
@@ -206,10 +206,10 @@ try {
     BEGIN
       SELECT row_hash INTO prev FROM admin_audit_logs ORDER BY created_at DESC, id DESC LIMIT 1;
       NEW.prev_hash := COALESCE(prev, 'genesis');
-      NEW.row_hash  := encode(digest(
-        COALESCE(NEW.id::text,'') || COALESCE(NEW.actor_id::text,'') ||
+      NEW.row_hash  := encode(sha256(
+        (COALESCE(NEW.id::text,'') || COALESCE(NEW.actor_id::text,'') ||
         COALESCE(NEW.action,'') || COALESCE(NEW.created_at::text,'') ||
-        NEW.prev_hash, 'sha256'), 'hex');
+        NEW.prev_hash)::bytea), 'hex');
       RETURN NEW;
     END;
     $$ LANGUAGE plpgsql
