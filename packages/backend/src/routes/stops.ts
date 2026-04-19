@@ -212,12 +212,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       deliveryNotes: body.deliveryNotes,
     }).returning();
 
-    // P-CNV17: set activatedAt on first stop ever created by this org (idempotent)
-    db.update(organizations)
-      .set({ activatedAt: new Date() })
-      .where(and(eq(organizations.id, userOrgId), isNull(organizations.activatedAt)))
-      .catch(console.error);
-
+    // P-ONB37: activatedAt now set on first route dispatch (routes.ts) — not on stop creation
     return reply.code(201).send(stop);
   });
 

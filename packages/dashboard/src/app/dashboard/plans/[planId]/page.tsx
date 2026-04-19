@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { AddStopModal } from '@/components/AddStopModal';
+import { StepCompleteModal } from '@/components/StepCompleteModal';
 import { StopDetailModal } from '@/components/StopDetailModal';
 import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle, CheckCircle2, CheckSquare, Square, Map, ChevronUp, ChevronDown } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
@@ -58,6 +59,8 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [windowViolations, setWindowViolations] = useState<{ stopId: string; address: string; windowEnd: string; estimatedArrival: string }[]>([]);
 
   const [showAddStop, setShowAddStop] = useState<string | null>(null);
+  // P-ONB39: first stop micro-celebration
+  const [showStopCelebration, setShowStopCelebration] = useState(false);
   const [showAddRoute, setShowAddRoute] = useState(false);
   const [addingDriverId, setAddingDriverId] = useState('');
   const [addingRoute, setAddingRoute] = useState(false);
@@ -636,12 +639,19 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
         </Modal>
       )}
 
+      {/* P-ONB39: first stop micro-celebration */}
+      {showStopCelebration && <StepCompleteModal step="stop" onClose={() => setShowStopCelebration(false)} />}
       {showAddStop && (
         <AddStopModal
           routeId={showAddStop}
           orgId={user!.orgId}
           onClose={() => setShowAddStop(null)}
-          onSaved={() => { setShowAddStop(null); loadPlan(); }}
+          onSaved={() => {
+            setShowAddStop(null);
+            // Show celebration if this is the first stop ever added across all routes
+            if (totalStops === 0) setShowStopCelebration(true);
+            loadPlan();
+          }}
         />
       )}
 

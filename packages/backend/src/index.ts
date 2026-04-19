@@ -184,6 +184,14 @@ try {
   console.error('P-ONB37 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-ONB42: onboarding banner dismissed server-side for cross-device sync
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS onboarding_banner_dismissed_at timestamptz`);
+  console.log('P-ONB42 onboarding_banner_dismissed_at column ensured');
+} catch (err) {
+  console.error('P-ONB42 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-COMP11: idempotent DDL for Stripe copay payment link columns on stops
 try {
   await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS payment_link_token text`);

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, plans, depots, drivers, proofOfDeliveries } from '../db/schema.js';
+import { stops, routes, plans, depots, drivers, proofOfDeliveries, organizations } from '../db/schema.js';
 import { eq, and, isNull, desc, count, gt } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { requireDeliveryWrite } from '../middleware/requireOrgRole.js';
@@ -205,17 +205,20 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /pharmacy/onboarding-status — checklist for setup banner
+  // P-ONB40/P-ONB42: also returns approvedAt, routesCreated, dismissedAt for nudge bar + cross-device dismiss
   app.get('/onboarding-status', {
     preHandler: requireRole('pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const user = req.user as { orgId: string };
     const orgId = user.orgId;
 
-    const [depotCount, driverCount, planCount, completedStopCount] = await Promise.all([
+    const [depotCount, driverCount, planCount, completedStopCount, orgRow] = await Promise.all([
       db.select({ n: count() }).from(depots).where(and(eq(depots.orgId, orgId), isNull(depots.deletedAt))),
       db.select({ n: count() }).from(drivers).where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt))),
       db.select({ n: count() }).from(plans).where(and(eq(plans.orgId, orgId), isNull(plans.deletedAt))),
       db.select({ n: count() }).from(stops).where(and(eq(stops.orgId, orgId), eq(stops.status, 'completed'), isNull(stops.deletedAt))),
+      db.select({ approvedAt: organizations.approvedAt, onboardingBannerDismissedAt: organizations.onboardingBannerDismissedAt, firstDispatchAt: organizations.firstDispatchAt })
+        .from(organizations).where(eq(organizations.id, orgId)).limit(1),
     ]);
 
     return reply.send({
@@ -223,6 +226,10 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
       hasDriver: (driverCount[0]?.n ?? 0) > 0,
       hasPlan: (planCount[0]?.n ?? 0) > 0,
       hasCompletedStop: (completedStopCount[0]?.n ?? 0) > 0,
+      // P-ONB40: routesCreated = whether firstDispatchAt is set (first route ever dispatched)
+      routesCreated: orgRow[0]?.firstDispatchAt ? 1 : 0,
+      approvedAt: orgRow[0]?.approvedAt ?? null,
+      dismissedAt: orgRow[0]?.onboardingBannerDismissedAt ?? null,
     });
   });
 };

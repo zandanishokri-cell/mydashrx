@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { FormField, SelectField } from '@/components/ui/FormField';
 import { ArrowLeft } from 'lucide-react';
 import { localDateStr } from '@/lib/dateUtils';
+import { StepCompleteModal } from '@/components/StepCompleteModal';
 
 interface Depot { id: string; name: string; address: string; }
 
@@ -18,12 +19,18 @@ export default function NewPlanPage() {
   const [date, setDate] = useState(() => localDateStr());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [celebrateNewPlan, setCelebrateNewPlan] = useState<string | null>(null); // plan id after first creation
+  const [planCount, setPlanCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!user) return;
     api.get<Depot[]>(`/orgs/${user.orgId}/depots`)
       .then((d) => { setDepots(d); if (d.length > 0) setDepotId(d[0].id); })
       .catch(() => setError('Failed to load depots'));
+    // P-ONB39: track existing plan count to detect first plan creation
+    api.get<{ plans: unknown[]; total?: number }>(`/orgs/${user.orgId}/plans?limit=1`)
+      .then(r => setPlanCount(Array.isArray(r) ? (r as unknown[]).length : ((r as { total?: number }).total ?? 0)))
+      .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async (e: React.FormEvent) => {
@@ -33,13 +40,28 @@ export default function NewPlanPage() {
     setError('');
     try {
       const plan = await api.post<{ id: string }>(`/orgs/${user.orgId}/plans`, { depotId, date });
-      router.refresh();
-      router.replace(`/dashboard/plans/${plan.id}`);
+      // P-ONB39: show celebration if this is the first route plan created
+      if (planCount === 0) {
+        setCelebrateNewPlan(plan.id);
+      } else {
+        router.refresh();
+        router.replace(`/dashboard/plans/${plan.id}`);
+      }
     } catch {
       setError('Failed to create plan');
       setSaving(false);
     }
   };
+
+  // P-ONB39: navigate away after celebration dismisses
+  if (celebrateNewPlan) {
+    return (
+      <StepCompleteModal
+        step="route"
+        onClose={() => { router.refresh(); router.replace(`/dashboard/plans/${celebrateNewPlan}`); }}
+      />
+    );
+  }
 
   return (
     <div className="p-6 max-w-lg">

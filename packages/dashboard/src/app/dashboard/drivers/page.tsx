@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { FormField, SelectField } from '@/components/ui/FormField';
 import { Truck, Plus, Search, Pencil, Trash2, Download, Users, AlertTriangle } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { StepCompleteModal } from '@/components/StepCompleteModal';
 
 interface Driver {
   id: string; orgId: string; name: string; email: string; phone: string;
@@ -48,6 +49,8 @@ export default function DriversPage() {
   const [deleting, setDeleting] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [user] = useState(getUser);
+  // P-ONB39: first-driver micro-celebration
+  const [showStepModal, setShowStepModal] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -366,8 +369,15 @@ export default function DriversPage() {
         </div>
       )}
 
+      {/* P-ONB39: first-driver micro-celebration */}
+      {showStepModal && <StepCompleteModal step="driver" onClose={() => setShowStepModal(false)} />}
       {showAdd && (
-        <AddDriverModal orgId={user!.orgId} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />
+        <AddDriverModal orgId={user!.orgId} onClose={() => setShowAdd(false)} onSaved={() => {
+          setShowAdd(false);
+          // Show celebration only if this was the first driver (list was empty before)
+          if (drivers.length === 0) setShowStepModal(true);
+          load();
+        }} />
       )}
       {editDriver && (
         <EditDriverModal driver={editDriver} orgId={user!.orgId} onClose={() => setEditDriver(null)} onSaved={() => { setEditDriver(null); load(); }} />

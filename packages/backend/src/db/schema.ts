@@ -104,6 +104,8 @@ export const organizations = pgTable('organizations', {
   baaAcceptedByUserId: uuid('baa_accepted_by_user_id'),
   baaIpAddress: text('baa_ip_address'),
   baaUserAgent: text('baa_user_agent'),
+  // P-ONB42: banner dismissed server-side so cross-device dismiss prevents false Day-3/7 nudges
+  onboardingBannerDismissedAt: timestamp('onboarding_banner_dismissed_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

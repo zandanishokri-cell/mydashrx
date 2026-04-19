@@ -7,8 +7,9 @@ import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { SkeletonCard } from '@/components/ui/Skeleton';
 import { Package, Truck, CheckCircle, Calendar, RefreshCw, Plus, Map, Activity, AlertCircle, Circle } from 'lucide-react';
+import { StepCompleteModal } from '@/components/StepCompleteModal';
 
-interface OnboardingStatus { hasDepot: boolean; hasDriver: boolean; hasPlan: boolean; hasCompletedStop: boolean; }
+interface OnboardingStatus { hasDepot: boolean; hasDriver: boolean; hasPlan: boolean; hasCompletedStop: boolean; dismissedAt?: string | null; }
 
 const ONBOARDING_STEPS = [
   { key: 'hasDepot',        label: 'Add your depot',             href: '/dashboard/settings' },
@@ -17,25 +18,42 @@ const ONBOARDING_STEPS = [
   { key: 'hasCompletedStop',label: 'Complete your first delivery', href: '/dashboard/stops' },
 ] as const;
 
+const BANNER_DISMISS_KEY = (orgId: string) => `onboarding_done_${orgId}`;
+const DELIVERY_CELEBRATED_KEY = (orgId: string) => `mdrx_delivery_celebrated_${orgId}`;
+
 function OnboardingBanner({ orgId }: { orgId: string }) {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
-  const [dismissed, setDismissed] = useState(() =>
-    typeof window !== 'undefined' && localStorage.getItem(`onboarding_done_${orgId}`) === '1'
-  );
+  const [dismissed, setDismissed] = useState(false);
+  // P-ONB39: first delivery micro-celebration
+  const [showDeliveryCelebration, setShowDeliveryCelebration] = useState(false);
 
   useEffect(() => {
-    if (dismissed) return;
+    // P-ONB42: check server dismiss state on mount — cross-device sync
     api.get<OnboardingStatus>('/pharmacy/onboarding-status')
       .then(s => {
-        if (s.hasDepot && s.hasDriver && s.hasPlan && s.hasCompletedStop) {
-          localStorage.setItem(`onboarding_done_${orgId}`, '1');
+        // Server dismissed wins over localStorage
+        if (s.dismissedAt || localStorage.getItem(BANNER_DISMISS_KEY(orgId))) {
           setDismissed(true);
-        } else {
-          setStatus(s);
+          return;
         }
+        if (s.hasDepot && s.hasDriver && s.hasPlan && s.hasCompletedStop) {
+          localStorage.setItem(BANNER_DISMISS_KEY(orgId), '1');
+          setDismissed(true);
+          return;
+        }
+        // P-ONB39: detect first delivery completion
+        if (s.hasCompletedStop && !localStorage.getItem(DELIVERY_CELEBRATED_KEY(orgId))) {
+          localStorage.setItem(DELIVERY_CELEBRATED_KEY(orgId), '1');
+          setShowDeliveryCelebration(true);
+        }
+        setStatus(s);
       })
       .catch(() => {});
-  }, [orgId, dismissed]);
+  }, [orgId]);
+
+  if (showDeliveryCelebration) {
+    return <StepCompleteModal step="delivery" onClose={() => setShowDeliveryCelebration(false)} />;
+  }
 
   if (dismissed || !status) return null;
 
@@ -322,7 +340,7 @@ export default function CommandCenter() {
         <div className="flex items-center gap-2 bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm mb-4 border border-red-100">
           <AlertCircle size={14} className="shrink-0" />
           <span>{error}</span>
-          <button onClick={() => load()} className="ml-auto underline hover:no-underline text-xs shrink-0">Retry</button>
+          <button onClick={() => loadCombined()} className="ml-auto underline hover:no-underline text-xs shrink-0">Retry</button>
         </div>
       )}
 

@@ -394,7 +394,7 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send({ success: true, baaAcceptedAt: now });
   });
 
-  // PATCH /orgs/:orgId/onboarding/progress — P-CNV22: persist onboarding step server-side
+  // PATCH /orgs/:orgId/onboarding/progress — P-CNV22/P-ONB42: persist onboarding step + dismissed state
   // Prevents abandonment on browser refresh / tab close. Idempotent — only advances step, never regresses.
   app.patch('/:orgId/onboarding/progress', {
     preHandler: requireRole('pharmacy_admin', 'super_admin'),
@@ -404,7 +404,18 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     if (actor.role !== 'super_admin' && actor.orgId !== orgId) {
       return reply.code(403).send({ error: 'Forbidden' });
     }
-    const { step } = req.body as { step?: number };
+    const body = req.body as { step?: number; dismissed?: boolean };
+
+    // P-ONB42: handle dismiss-only request (no step change)
+    if (body.dismissed === true) {
+      const now = new Date();
+      await db.update(organizations)
+        .set({ onboardingBannerDismissedAt: now })
+        .where(eq(organizations.id, orgId));
+      return reply.send({ dismissed: true, dismissedAt: now });
+    }
+
+    const { step } = body;
     if (typeof step !== 'number' || step < 1 || step > 5) {
       return reply.code(400).send({ error: 'step must be an integer 1–5' });
     }

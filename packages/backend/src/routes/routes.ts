@@ -62,10 +62,12 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
       .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
 
-    // P-ONB38: set firstDispatchAt on first route dispatch for this org (idempotent)
+    // P-ONB38/P-ONB37: set firstDispatchAt + activatedAt on first route dispatch (idempotent)
+    // activatedAt was previously set on first stop created — now corrected to first dispatch
     if (status === 'active') {
+      const now = new Date();
       db.update(organizations)
-        .set({ firstDispatchAt: new Date() })
+        .set({ firstDispatchAt: now, activatedAt: now })
         .where(and(eq(organizations.id, userOrgId), isNull(organizations.firstDispatchAt)))
         .catch(console.error);
     }
