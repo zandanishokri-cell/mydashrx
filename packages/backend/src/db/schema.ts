@@ -569,3 +569,16 @@ export const refreshTokens = pgTable('refresh_tokens', {
   familyIdx: index('rt_family_idx').on(t.familyId),
   userStatusIdx: index('rt_user_status_idx').on(t.userId, t.status),
 }));
+
+
+// P-CNV14: Signup intent capture for abandonment email recovery
+export const signupIntents = pgTable('signup_intents', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgName: text('org_name'),
+  adminEmail: text('admin_email').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  recoveredAt: timestamp('recovered_at'), // set when abandonment email sent
+  unsubscribedAt: timestamp('unsubscribed_at'), // CAN-SPAM compliance
+}, (t) => ({
+  emailIdx: index('si_email_idx').on(t.adminEmail),
+}));

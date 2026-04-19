@@ -69,7 +69,8 @@ import { phiAuditHook } from './middleware/phiAuditHook.js';
 import { sendDailyReport } from './services/dailyReport.js';
 import { runAutoApproval } from './lib/autoApproval.js';
 import { db, client } from './db/connection.js';
-import { organizations, magicLinkTokens } from './db/schema.js';
+import { organizations, magicLinkTokens, signupIntents, users } from './db/schema.js';
+import { sendAbandonmentEmail } from './lib/emailHelpers.js';
 import { isNull, isNotNull, and, or, lt, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 
@@ -87,6 +88,24 @@ try {
   console.log('P-SES18 device_name column ensured');
 } catch (err) {
   console.error('P-SES18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-CNV14: idempotent DDL for signup_intents table
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS signup_intents (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_name text,
+      admin_email text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      recovered_at timestamptz,
+      unsubscribed_at timestamptz
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS si_email_idx ON signup_intents(admin_email)`);
+  console.log('P-CNV14 signup_intents table ensured');
+} catch (err) {
+  console.error('P-CNV14 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
 const app = Fastify({ logger: true, trustProxy: true });
@@ -209,6 +228,40 @@ try {
 // P-ADM25: Auto-approval sweep — every 5 min, handles trustTier='auto_approve'/'block'
 setInterval(() => { runAutoApproval().catch(console.error); }, 5 * 60 * 1000);
 runAutoApproval().catch(console.error);
+
+// P-CNV14: Abandonment email sweep — every 30 min
+// Finds signup intents older than 2hr with no matching user, sends recovery email once
+const runAbandonmentSweep = async () => {
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const staleIntents = await db.select()
+    .from(signupIntents)
+    .where(and(
+      isNull(signupIntents.recoveredAt),
+      isNull(signupIntents.unsubscribedAt),
+      lt(signupIntents.createdAt, twoHoursAgo),
+    ));
+
+  let sent = 0;
+  for (const intent of staleIntents) {
+    // Check no user signed up with this email since intent was captured
+    const [user] = await db.select({ id: users.id }).from(users)
+      .where(sql`LOWER(email) = LOWER(${intent.adminEmail})`).limit(1);
+    if (user) {
+      // User signed up — mark recovered without sending email
+      await db.update(signupIntents).set({ recoveredAt: new Date() })
+        .where(sql`id = ${intent.id}`);
+      continue;
+    }
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+    const unsubUrl = `${process.env.BACKEND_URL ?? 'https://mydashrx-backend.onrender.com'}/api/v1/signup/pharmacy-intent/unsubscribe?email=${encodeURIComponent(intent.adminEmail)}`;
+    sendAbandonmentEmail(intent.adminEmail, intent.orgName ?? undefined, unsubUrl);
+    await db.update(signupIntents).set({ recoveredAt: new Date() })
+      .where(sql`id = ${intent.id}`);
+    sent++;
+  }
+  if (sent > 0) console.log(`[AbandonmentSweep] Sent ${sent} recovery email(s)`);
+};
+setInterval(() => { runAbandonmentSweep().catch(console.error); }, 30 * 60 * 1000);
 
 // Startup config warnings — log which optional features are unconfigured
 const optionalEnvs: [string, string][] = [

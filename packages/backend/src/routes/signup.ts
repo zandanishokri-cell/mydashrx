@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
 import { z } from 'zod';
 import { db } from '../db/connection.js';
-import { organizations, users, drivers, staffInvitations } from '../db/schema.js';
+import { organizations, users, drivers, staffInvitations, signupIntents } from '../db/schema.js';
 import { eq, and, isNull, gt, sql } from 'drizzle-orm';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
@@ -206,6 +206,39 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     // Never surface 'block' — treat as 'manual' to avoid tipping off bad actors
     const displayTier = trustTier === 'auto_approve' ? 'auto_approve' : 'manual';
     return reply.code(201).send({ message: 'Application submitted. You will hear from us within 2–4 business hours.', tier: displayTier });
+  });
+
+  // ─── P-CNV14: Abandonment Intent Capture ─────────────────────────────────
+  // Fire-and-forget from frontend on email blur in Step 2
+  // No auth required — unauthenticated endpoint, email is the only PII
+  app.post('/pharmacy-intent', { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (req, reply) => {
+    const { adminEmail, orgName } = req.body as { adminEmail?: string; orgName?: string };
+    if (!adminEmail || !z.string().email().safeParse(adminEmail).success) {
+      return reply.code(400).send({ error: 'Valid email required' });
+    }
+    // Idempotent — skip if email already has a live signup or a recent intent
+    const existing = await findUserByEmail(adminEmail);
+    if (existing) return reply.code(200).send({ recorded: false, reason: 'user_exists' });
+
+    const [recentIntent] = await db.select({ id: signupIntents.id })
+      .from(signupIntents)
+      .where(eq(signupIntents.adminEmail, adminEmail))
+      .limit(1);
+    if (recentIntent) return reply.code(200).send({ recorded: false, reason: 'already_captured' });
+
+    await db.insert(signupIntents).values({ adminEmail, orgName: orgName ?? null });
+    return reply.code(201).send({ recorded: true });
+  });
+
+  // ─── P-CNV14: Unsubscribe from abandonment emails ────────────────────────
+  app.get('/pharmacy-intent/unsubscribe', async (req, reply) => {
+    const { email } = req.query as { email?: string };
+    if (email) {
+      await db.update(signupIntents)
+        .set({ unsubscribedAt: new Date() })
+        .where(eq(signupIntents.adminEmail, email));
+    }
+    return reply.type('text/html').send('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2>You\'ve been unsubscribed.</h2><p>You won\'t receive any more emails from MyDashRx signup reminders.</p></body></html>');
   });
 
   // ─── Driver Signup ────────────────────────────────────────────────────────

@@ -83,3 +83,37 @@ export async function sendRejectionWithReapplyEmail(
     }),
   }).catch((e: unknown) => { console.error('[Resend] rejection email failed:', e); });
 }
+
+/** P-CNV14: Abandonment recovery email — sent to pharmacy admins who started signup but didn't complete */
+export async function sendAbandonmentEmail(adminEmail: string, orgName: string | undefined, unsubscribeUrl: string): Promise<void> {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  const dash = dashUrl();
+  const pharmacyName = orgName ? `<strong>${orgName}</strong>` : 'your pharmacy';
+  fetch(RESEND, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+    body: JSON.stringify({
+      from: sender(),
+      to: adminEmail,
+      subject: 'Complete your MyDashRx application — takes 2 min',
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+          <img src="${dash}/logo.png" alt="MyDashRx" style="height:32px;margin-bottom:24px" onerror="this.style.display='none'" />
+          <h2 style="color:#0F4C81;margin:0 0 8px;font-size:20px">Still thinking about it?</h2>
+          <p style="color:#374151;margin:0 0 16px;font-size:15px">We noticed you started an application for ${pharmacyName} but didn't finish. It only takes 2 more minutes.</p>
+          <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:16px 20px;margin-bottom:24px">
+            <p style="margin:0 0 6px;font-size:14px;font-weight:600;color:#0369a1">What you get</p>
+            <ul style="margin:0;padding-left:16px;font-size:13px;color:#0c4a6e;line-height:1.8">
+              <li>Route optimization for your delivery drivers</li>
+              <li>HIPAA-compliant patient tracking + proof of delivery</li>
+              <li>Approval in under 2 hours — no sales call required</li>
+            </ul>
+          </div>
+          <a href="${dash}/signup/pharmacy" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;margin-bottom:16px">Complete my application →</a>
+          <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Questions? Reply to this email or contact <a href="mailto:support@mydashrx.com" style="color:#0F4C81">support@mydashrx.com</a></p>
+          <p style="color:#d1d5db;font-size:11px;margin:12px 0 0"><a href="${unsubscribeUrl}" style="color:#d1d5db">Unsubscribe</a></p>
+        </div>`,
+    }),
+  }).catch((e: unknown) => { console.error('[Resend] abandonment email failed:', e); });
+}

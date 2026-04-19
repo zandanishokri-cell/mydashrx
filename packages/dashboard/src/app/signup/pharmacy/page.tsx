@@ -261,7 +261,18 @@ export default function PharmacySignupPage() {
                 type="email"
                 value={form.adminEmail}
                 onChange={e => { set('adminEmail')(e); if (emailError) setEmailError(validateEmail(e.target.value)); }}
-                onBlur={e => setEmailError(validateEmail(e.target.value))}
+                onBlur={e => {
+                  setEmailError(validateEmail(e.target.value));
+                  // P-CNV14: fire-and-forget intent capture for abandonment recovery
+                  const val = e.target.value;
+                  if (!validateEmail(val) && val) {
+                    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com'}/api/v1/signup/pharmacy-intent`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ adminEmail: val, orgName: form.orgName }),
+                    }).catch(() => {}); // totally fire-and-forget, silent fail
+                  }
+                }}
                 placeholder="jane@yourpharmacy.com"
                 className={`w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 ${emailError ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-200'}`}
               />
