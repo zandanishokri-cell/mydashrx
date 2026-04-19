@@ -328,12 +328,15 @@ export default function RecurringPage() {
 
   return (
     <div className="p-6">
-      {/* Toast */}
-      {genToast && (
-        <div className="fixed bottom-4 right-4 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
-          <RefreshCw size={13} className="text-[#00B8A9]" /> {genToast}
-        </div>
-      )}
+      {/* P-A11Y18: always-in-DOM live region — must exist before text inserted for SR announcement */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={`fixed bottom-4 right-4 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 transition-opacity ${genToast ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      >
+        <RefreshCw size={13} className="text-[#00B8A9]" /> {genToast}
+      </div>
       {toggleError && (
         <div className="fixed bottom-4 left-4 z-50 bg-red-600 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
           <AlertCircle size={13} /> {toggleError}

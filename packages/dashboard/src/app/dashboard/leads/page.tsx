@@ -242,24 +242,29 @@ export default function LeadsPage() {
         </div>
       )}
 
-      {/* Pagination */}
+      {/* P-A11Y19: accessible pagination */}
       {data && data.pages > 1 && (
-        <div className="flex items-center justify-between">
+        <nav aria-label="Leads pagination" className="flex items-center justify-between">
           <p className="text-xs text-gray-500">
             Showing {((data.page - 1) * data.limit) + 1}–{Math.min(data.page * data.limit, data.total)} of {data.total}
           </p>
           <div className="flex items-center gap-1">
+            <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+              {`Page ${page} of ${data.pages}`}
+            </div>
             <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}
+              aria-label="Previous page"
               className="p-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
               <ChevronLeft size={14} />
             </button>
-            <span className="text-xs text-gray-600 px-2">{page} / {data.pages}</span>
+            <span className="text-xs text-gray-600 px-2" aria-hidden="true">{page} / {data.pages}</span>
             <button disabled={page >= data.pages} onClick={() => setPage(p => p + 1)}
+              aria-label="Next page"
               className="p-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
               <ChevronRight size={14} />
             </button>
           </div>
-        </div>
+        </nav>
       )}
     </div>
   );

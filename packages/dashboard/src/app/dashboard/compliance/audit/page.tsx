@@ -221,16 +221,20 @@ export default function AuditPage() {
               </table>
             </div>
 
-            {/* Pagination */}
+            {/* P-A11Y19: accessible pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
+              <nav aria-label="Audit log pagination" className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
                 <span className="text-xs text-gray-500">
                   {data.total.toLocaleString()} total events · page {data.page} of {totalPages}
                 </span>
                 <div className="flex items-center gap-1">
+                  <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+                    {`Page ${page} of ${totalPages}`}
+                  </div>
                   <button
                     disabled={page === 1}
                     onClick={() => setPage(p => p - 1)}
+                    aria-label="Previous page"
                     className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 transition-colors"
                   >
                     <ChevronLeft size={14} />
@@ -238,12 +242,13 @@ export default function AuditPage() {
                   <button
                     disabled={page >= totalPages}
                     onClick={() => setPage(p => p + 1)}
+                    aria-label="Next page"
                     className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 transition-colors"
                   >
                     <ChevRight size={14} />
                   </button>
                 </div>
-              </div>
+              </nav>
             )}
           </>
         )}

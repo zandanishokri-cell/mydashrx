@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { SignupTrustBlock } from '@/components/SignupTrustBlock';
+import { useFieldError } from '@/lib/useFieldError';
 
 type Step = 1 | 2;
 
@@ -51,6 +52,8 @@ export default function PharmacySignupPage() {
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState(emptyForm);
   const [emailError, setEmailError] = useState('');
+  // P-A11Y20: accessible field error
+  const emailFE = useFieldError(emailError);
   const [draftSaved, setDraftSaved] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false); // P-CNV10
   const [loading, setLoading] = useState(false);
@@ -274,9 +277,11 @@ export default function PharmacySignupPage() {
                   }
                 }}
                 placeholder="jane@yourpharmacy.com"
+                {...emailFE.inputProps}
                 className={`w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 ${emailError ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-200'}`}
               />
-              {emailError && <p className="text-red-500 text-xs mt-1">{emailError}</p>}
+              {/* P-A11Y20: always-in-DOM error region — opacity-0 not display:none so SR fires on insert */}
+              <p {...emailFE.errorProps}>{emailError}</p>
             </div>
 
             {/* Mini-summary of Step 1 for confidence before submit */}

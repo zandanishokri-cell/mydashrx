@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { useFirstVisit } from '@/hooks/useFirstVisit';
+import { useFieldError } from '@/lib/useFieldError';
 import {
   Building2, Users, Warehouse, Bell, Check, X, Copy,
   Plus, Trash2, Pencil, Loader2, ChevronDown, AlertCircle, ShieldCheck, FileText,
@@ -235,6 +236,8 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
   const [invite, setInvite] = useState({ name: '', email: '', role: 'dispatcher' as Role, depotIds: [] as string[] });
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState('');
+  // P-A11Y20: accessible invite error
+  const inviteFE = useFieldError(inviteError);
   const [inviteDepots, setInviteDepots] = useState<Depot[]>([]);
   const [editingRoleFor, setEditingRoleFor] = useState<string | null>(null);
   const [editRoleValue, setEditRoleValue] = useState<Role>('dispatcher');
@@ -434,6 +437,7 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
                 <input type="email" value={invite.email} onChange={e => setInvite(p => ({ ...p, email: e.target.value }))}
+                  {...inviteFE.inputProps}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
                   placeholder="jane@pharmacy.com" />
               </div>
@@ -476,7 +480,10 @@ function TeamTab({ orgId, currentUserId }: { orgId: string; currentUserId: strin
                   )}
                 </div>
               )}
-              {inviteError && <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} />{inviteError}</p>}
+              {/* P-A11Y20: always-in-DOM error region for screen reader announcement */}
+              <p {...inviteFE.errorProps} className={`text-xs flex items-center gap-1 transition-opacity ${inviteError ? 'text-red-500 opacity-100' : 'opacity-0 pointer-events-none select-none'}`}>
+                {inviteError && <AlertCircle size={12} />}{inviteError}
+              </p>
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => { setShowInvite(false); setInviteError(''); }}

@@ -581,16 +581,30 @@ function StopsContent() {
               </tbody>
             </table>
 
-            {/* Pagination */}
+            {/* P-A11Y19: accessible pagination — nav landmark, labeled buttons, live region */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-white">
+              <nav aria-label="Stops pagination" className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-white">
                 <span className="text-xs text-gray-500">{total} stops total</span>
                 <div className="flex items-center gap-1">
-                  <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 hover:bg-gray-50">←</button>
-                  <span className="px-3 py-1 text-xs text-gray-600">{page} / {totalPages}</span>
-                  <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)} className="px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 hover:bg-gray-50">→</button>
+                  {/* always-in-DOM page-change announcement region */}
+                  <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+                    {`Page ${page} of ${totalPages}`}
+                  </div>
+                  <button
+                    disabled={page === 1}
+                    onClick={() => setPage(p => p - 1)}
+                    aria-label="Previous page"
+                    className="px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 hover:bg-gray-50"
+                  >←</button>
+                  <span className="px-3 py-1 text-xs text-gray-600" aria-hidden="true">{page} / {totalPages}</span>
+                  <button
+                    disabled={page === totalPages}
+                    onClick={() => setPage(p => p + 1)}
+                    aria-label="Next page"
+                    className="px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 hover:bg-gray-50"
+                  >→</button>
                 </div>
-              </div>
+              </nav>
             )}
           </>
         )}

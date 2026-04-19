@@ -110,11 +110,15 @@ export default function PlansPage() {
 
   return (
     <div className="p-6">
-      {optimizeToast && (
-        <div className="fixed bottom-4 right-4 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
-          <Zap size={14} className="text-[#00B8A9]" /> {optimizeToast}
-        </div>
-      )}
+      {/* P-A11Y18: always-in-DOM live region — must exist before text inserted for SR announcement */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={`fixed bottom-4 right-4 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 transition-opacity ${optimizeToast ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      >
+        <Zap size={14} className="text-[#00B8A9]" /> {optimizeToast}
+      </div>
       {loadError && (
         <div className="flex items-center justify-between gap-3 px-4 py-3 mb-5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
           <span className="flex items-center gap-2"><AlertCircle size={14} />Failed to load routes. Please try again.</span>

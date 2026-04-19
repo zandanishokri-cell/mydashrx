@@ -948,21 +948,24 @@ export default function ApprovalsPage() {
         </div>
       )}
 
-      {/* P-ADM13: Undo toast after batch approve */}
-      {undoToast && (
-        <div className="fixed bottom-20 right-6 z-50 bg-gray-900 text-white text-sm rounded-xl px-4 py-3 shadow-lg flex items-center gap-3">
-          <span>Approved {undoToast.count} pharmacies</span>
-          <button
-            onClick={() => {
-              if (approveUndoTimer) clearTimeout(approveUndoTimer);
-              setUndoToast(null);
-            }}
-            className="text-gray-300 hover:text-white text-xs border border-gray-600 rounded px-2 py-0.5"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+      {/* P-ADM13 + P-A11Y18: always-in-DOM live region for undo toast */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={`fixed bottom-20 right-6 z-50 bg-gray-900 text-white text-sm rounded-xl px-4 py-3 shadow-lg flex items-center gap-3 transition-opacity ${undoToast ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      >
+        <span>{undoToast ? `Approved ${undoToast.count} pharmacies` : ''}</span>
+        <button
+          onClick={() => {
+            if (approveUndoTimer) clearTimeout(approveUndoTimer);
+            setUndoToast(null);
+          }}
+          className="text-gray-300 hover:text-white text-xs border border-gray-600 rounded px-2 py-0.5"
+        >
+          Dismiss
+        </button>
+      </div>
 
       {/* P-ADM2: Sticky bulk action bar */}
       {selected.size > 0 && (

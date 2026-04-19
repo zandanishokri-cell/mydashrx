@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { FormField, SelectField } from '@/components/ui/FormField';
 import { CheckCircle2, Building2, Users, Sparkles, ArrowRight } from 'lucide-react';
 import { BAAModal } from '@/components/BAAModal';
+import { useFieldError } from '@/lib/useFieldError';
 
 const STEPS = ['Welcome', 'Add Depot', 'Add Driver', 'Setup Complete'];
 
@@ -147,6 +148,8 @@ function StepDepot({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: () 
   const [form, setForm] = useState({ name: '', address: '', phone: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // P-A11Y20: accessible form error
+  const depotFE = useFieldError(error);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
   const submit = async (e: React.FormEvent) => {
@@ -199,7 +202,8 @@ function StepDepot({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: () 
           onChange={e => set('phone', e.target.value)}
           placeholder="+1 313 555 0100"
         />
-        {error && <p className="text-red-500 text-sm">{error}</p>}
+        {/* P-A11Y20: always-in-DOM error region */}
+        <p {...depotFE.errorProps} className={`text-sm transition-opacity ${error ? 'text-red-500 opacity-100' : 'opacity-0 pointer-events-none select-none'}`}>{error}</p>
         <Button type="submit" loading={saving} className="w-full mt-2">
           Save Depot <ArrowRight size={15} />
         </Button>
@@ -224,6 +228,8 @@ function StepDriver({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: ()
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // P-A11Y20: accessible form error
+  const driverFE = useFieldError(error);
   // P-ONB27: CSV bulk invite state
   const [csvText, setCsvText] = useState('');
   const [csvResult, setCsvResult] = useState<{ email: string; status: string }[] | null>(null);
@@ -296,7 +302,8 @@ function StepDriver({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: ()
             <input type="checkbox" checked={form.drugCapable} onChange={e => set('drugCapable', e.target.checked)} className="rounded border-gray-300" />
             <span className="text-sm text-gray-700">Rx / Drug Capable</span>
           </label>
-          {error && <p className="text-red-500 text-sm">{error}</p>}
+          {/* P-A11Y20: always-in-DOM error region */}
+          <p {...driverFE.errorProps} className={`text-sm transition-opacity ${error ? 'text-red-500 opacity-100' : 'opacity-0 pointer-events-none select-none'}`}>{error}</p>
           <Button type="submit" loading={saving} className="w-full mt-2">
             Add Driver <ArrowRight size={15} />
           </Button>
@@ -326,7 +333,8 @@ function StepDriver({ orgId, onSuccess, onSkip }: { orgId: string; onSuccess: ()
               ))}
             </div>
           )}
-          {error && <p className="text-red-500 text-sm">{error}</p>}
+          {/* P-A11Y20: always-in-DOM error region (shared driverFE errorId) */}
+          <p {...driverFE.errorProps} className={`text-sm transition-opacity ${error ? 'text-red-500 opacity-100' : 'opacity-0 pointer-events-none select-none'}`}>{error}</p>
           <Button type="button" loading={saving} onClick={submitCsv} className="w-full">
             Send Invite Emails <ArrowRight size={15} />
           </Button>
