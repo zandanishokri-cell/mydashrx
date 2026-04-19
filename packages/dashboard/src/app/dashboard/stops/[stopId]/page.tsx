@@ -14,7 +14,7 @@ const LeafletMap = dynamic(() => import('@/components/ui/LeafletMap'), {
 import {
   ArrowLeft, Phone, Mail, MapPin, Package, Thermometer, AlertTriangle,
   PenLine, Clock, CheckCircle2, XCircle, Truck, User, FileCheck,
-  Flag, RotateCcw, FileEdit, ChevronRight, AlertCircle, X, MessageSquare,
+  Flag, RotateCcw, FileEdit, ChevronRight, AlertCircle, X, MessageSquare, StickyNote, Send, Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -71,6 +71,14 @@ interface NotificationLog {
   recipient: string;
   status: string;
   sentAt: string;
+}
+
+interface StopNote {
+  id: string;
+  body: string;
+  authorName: string;
+  visibleToDriver: boolean;
+  createdAt: string;
 }
 
 const TIMELINE_ICONS: Record<string, React.ElementType> = {
@@ -132,6 +140,19 @@ function StopDetailContent({ stopId }: { stopId: string }) {
   const [assignLoading, setAssignLoading] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState('');
+  // P-DISP1: dispatcher notes
+  const [dispNotes, setDispNotes] = useState<StopNote[]>([]);
+  const [dispNoteBody, setDispNoteBody] = useState('');
+  const [dispNoteVisible, setDispNoteVisible] = useState(true);
+  const [addingNote, setAddingNote] = useState(false);
+  const [noteError, setNoteError] = useState('');
+
+  const loadDispNotes = useCallback(async () => {
+    if (!user) return;
+    api.get<StopNote[]>(`/orgs/${user.orgId}/stops/${stopId}/notes`)
+      .then(notes => setDispNotes(notes ?? []))
+      .catch(() => {});
+  }, [stopId, user]);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -148,7 +169,27 @@ function StopDetailContent({ stopId }: { stopId: string }) {
     }
   }, [stopId, user]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); loadDispNotes(); }, [load, loadDispNotes]);
+
+  const addDispNote = async () => {
+    if (!user || !dispNoteBody.trim()) return;
+    setAddingNote(true); setNoteError('');
+    try {
+      const note = await api.post<StopNote>(`/orgs/${user.orgId}/stops/${stopId}/notes`, {
+        body: dispNoteBody.trim(), visibleToDriver: dispNoteVisible,
+      });
+      setDispNotes(n => [note, ...n]);
+      setDispNoteBody('');
+    } catch { setNoteError('Failed to add note'); }
+    finally { setAddingNote(false); }
+  };
+
+  const deleteDispNote = async (noteId: string) => {
+    if (!user) return;
+    await api.del(`/orgs/${user.orgId}/stops/${stopId}/notes/${noteId}`)
+      .then(() => setDispNotes(n => n.filter(x => x.id !== noteId)))
+      .catch(() => {});
+  };
 
   const saveNotes = async () => {
     if (!stop || !user || !stop.routeId) return;
@@ -540,6 +581,73 @@ function StopDetailContent({ stopId }: { stopId: string }) {
                 View POD
               </button>
             )}
+          </section>
+        )}
+
+        {/* P-DISP1: Dispatcher Notes — eliminates out-of-band PHI on Signal/SMS */}
+        {user && ['dispatcher', 'pharmacy_admin', 'super_admin', 'pharmacist'].includes(user.role) && (
+          <section className="bg-amber-50 rounded-2xl border border-amber-100 p-5">
+            <h2 className="text-sm font-semibold text-amber-800 uppercase tracking-wide flex items-center gap-2 mb-4">
+              <StickyNote size={14} className="text-amber-600" />
+              Dispatcher Notes
+              {dispNotes.length > 0 && (
+                <span className="ml-auto bg-amber-200 text-amber-800 text-xs font-bold px-2 py-0.5 rounded-full">{dispNotes.length}</span>
+              )}
+            </h2>
+            {/* Existing notes */}
+            {dispNotes.length > 0 && (
+              <div className="space-y-2 mb-4">
+                {dispNotes.map(n => (
+                  <div key={n.id} className="bg-white rounded-xl border border-amber-100 px-3 py-2.5 flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-800">{n.body}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs text-gray-400">{n.authorName} · {new Date(n.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                        {n.visibleToDriver && (
+                          <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full">Driver visible</span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => deleteDispNote(n.id)}
+                      className="p-1 text-gray-300 hover:text-red-400 transition-colors shrink-0"
+                      title="Delete note"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Add note form */}
+            <div className="space-y-2">
+              <textarea
+                value={dispNoteBody}
+                onChange={e => setDispNoteBody(e.target.value)}
+                placeholder="Add a note for this stop (patient instructions, access codes, etc.)…"
+                rows={2}
+                className="w-full border border-amber-200 bg-white rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-200 placeholder-gray-300"
+              />
+              <div className="flex items-center justify-between gap-3">
+                <label className="flex items-center gap-1.5 text-xs text-amber-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={dispNoteVisible}
+                    onChange={e => setDispNoteVisible(e.target.checked)}
+                    className="accent-amber-500"
+                  />
+                  Visible to driver
+                </label>
+                <button
+                  onClick={addDispNote}
+                  disabled={addingNote || !dispNoteBody.trim()}
+                  className="flex items-center gap-1.5 text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg disabled:opacity-40 hover:bg-amber-700 transition-colors"
+                >
+                  <Send size={11} /> {addingNote ? 'Adding…' : 'Add Note'}
+                </button>
+              </div>
+              {noteError && <p className="text-xs text-red-500">{noteError}</p>}
+            </div>
           </section>
         )}
 

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import crypto from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, drivers, adminAuditLogs, depots, refreshTokens } from '../db/schema.js';
+import { organizations, users, drivers, adminAuditLogs, depots, refreshTokens, stops, stopNotes } from '../db/schema.js';
 import { eq, isNull, and, sql, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import bcrypt from 'bcryptjs';
@@ -440,5 +440,127 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       .from(organizations).where(eq(organizations.id, orgId)).limit(1);
     if (!org) return reply.code(404).send({ error: 'Not found' });
     return { onboardingStep: org.onboardingStep ?? 1, onboardingCompletedAt: org.onboardingCompletedAt };
+  });
+
+  // ── P-DISP1: Per-stop dispatcher notes ─────────────────────────────────────────
+  // POST /orgs/:orgId/stops/:stopId/notes — create dispatcher note on a stop
+  // Eliminates out-of-band Signal/SMS carrying patient PHI. HIPAA audit on every create.
+  app.post('/:orgId/stops/:stopId/notes', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'pharmacist', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, stopId } = req.params as { orgId: string; stopId: string };
+    const actor = req.user as { sub: string; orgId: string; role: string; email: string; name?: string };
+    if (actor.role !== 'super_admin' && actor.orgId !== orgId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    const { body, visibleToDriver = true } = req.body as { body?: string; visibleToDriver?: boolean };
+    if (!body?.trim()) return reply.code(400).send({ error: 'body is required' });
+
+    // Verify stop belongs to org
+    const [stop] = await db.select({ id: stops.id, recipientName: stops.recipientName })
+      .from(stops).where(and(eq(stops.id, stopId), eq(stops.orgId, orgId), isNull(stops.deletedAt))).limit(1);
+    if (!stop) return reply.code(404).send({ error: 'Stop not found' });
+
+    // Fetch author name for display
+    const [author] = await db.select({ name: users.name }).from(users).where(eq(users.id, actor.sub)).limit(1);
+    const authorName = author?.name ?? actor.email ?? 'Unknown';
+
+    const [note] = await db.insert(stopNotes).values({
+      stopId, orgId, authorId: actor.sub, authorName, body: body.trim(),
+      visibleToDriver: Boolean(visibleToDriver),
+    }).returning();
+
+    // HIPAA audit log — PHI access on stop note creation
+    db.insert(adminAuditLogs).values({
+      actorId: actor.sub, actorEmail: actor.email,
+      action: 'stop_note_created',
+      targetId: stopId, targetName: stop.recipientName ?? stopId,
+      metadata: { noteId: note.id, orgId, visibleToDriver, bodyLength: body.trim().length },
+    }).catch((e: unknown) => { console.error('[AuditLog] stop_note_created failed:', e); });
+
+    return reply.code(201).send(note);
+  });
+
+  // GET /orgs/:orgId/stops/:stopId/notes — list notes on a stop
+  // Dispatchers/admins see all notes. Drivers see only visibleToDriver=true notes.
+  app.get('/:orgId/stops/:stopId/notes', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'pharmacist', 'driver', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, stopId } = req.params as { orgId: string; stopId: string };
+    const actor = req.user as { sub: string; orgId: string; role: string };
+    if (actor.role !== 'super_admin' && actor.orgId !== orgId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+
+    // Verify stop belongs to org
+    const [stop] = await db.select({ id: stops.id }).from(stops)
+      .where(and(eq(stops.id, stopId), eq(stops.orgId, orgId), isNull(stops.deletedAt))).limit(1);
+    if (!stop) return reply.code(404).send({ error: 'Stop not found' });
+
+    const rows = await db.select()
+      .from(stopNotes)
+      .where(and(
+        eq(stopNotes.stopId, stopId),
+        eq(stopNotes.orgId, orgId),
+        isNull(stopNotes.deletedAt),
+        // Drivers only see notes flagged visible
+        ...(actor.role === 'driver' ? [eq(stopNotes.visibleToDriver, true)] : []),
+      ));
+
+    return rows;
+  });
+
+  // DELETE /orgs/:orgId/stops/:stopId/notes/:noteId — soft-delete a note (author or admin only)
+  app.delete('/:orgId/stops/:stopId/notes/:noteId', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, stopId, noteId } = req.params as { orgId: string; stopId: string; noteId: string };
+    const actor = req.user as { sub: string; orgId: string; role: string };
+    if (actor.role !== 'super_admin' && actor.orgId !== orgId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    const [note] = await db.select({ id: stopNotes.id, authorId: stopNotes.authorId })
+      .from(stopNotes).where(and(eq(stopNotes.id, noteId), eq(stopNotes.stopId, stopId), isNull(stopNotes.deletedAt))).limit(1);
+    if (!note) return reply.code(404).send({ error: 'Note not found' });
+    // Author or admin can delete
+    if (actor.role !== 'super_admin' && actor.role !== 'pharmacy_admin' && note.authorId !== actor.sub) {
+      return reply.code(403).send({ error: 'Can only delete your own notes' });
+    }
+    await db.update(stopNotes).set({ deletedAt: new Date() }).where(eq(stopNotes.id, noteId));
+    return reply.code(204).send();
+  });
+
+  // GET /orgs/:orgId/baa/status — P-COMP11: BAA acceptance status for compliance tab
+  app.get('/:orgId/baa/status', {
+    preHandler: requireRole('pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const actor = req.user as { orgId: string; role: string };
+    if (actor.role !== 'super_admin' && actor.orgId !== orgId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    const [org] = await db.select({
+      baaAcceptedAt: organizations.baaAcceptedAt,
+      baaAcceptedByUserId: organizations.baaAcceptedByUserId,
+      baaIpAddress: organizations.baaIpAddress,
+      hipaaBaaStatus: organizations.hipaaBaaStatus,
+    }).from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Not found' });
+
+    const accepted = !!org.baaAcceptedAt;
+    // Fetch signer name if we have a userId
+    let signerName: string | null = null;
+    if (org.baaAcceptedByUserId) {
+      const [u] = await db.select({ name: users.name, email: users.email })
+        .from(users).where(eq(users.id, org.baaAcceptedByUserId)).limit(1);
+      signerName = u?.name ?? u?.email ?? null;
+    }
+    return {
+      accepted,
+      baaAcceptedAt: org.baaAcceptedAt ?? null,
+      signerName,
+      ipAddress: org.baaIpAddress ?? null,
+      hipaaBaaStatus: org.hipaaBaaStatus,
+    };
   });
 };

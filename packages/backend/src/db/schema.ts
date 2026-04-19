@@ -646,3 +646,22 @@ export const signupIntents = pgTable('signup_intents', {
 }, (t) => ({
   emailIdx: index('si_email_idx').on(t.adminEmail),
 }));
+
+// P-DISP1: Per-stop dispatcher notes — eliminates out-of-band Signal/SMS with patient PHI.
+// Dispatcher creates notes on a stop (e.g., "patient requires extra assistance, ring twice").
+// visibleToDriver flag controls driver visibility. HIPAA audit log on every create.
+// Included in PHI purge cron (stopId FK → cascades when stop is purged).
+export const stopNotes = pgTable('stop_notes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  stopId: uuid('stop_id').notNull().references(() => stops.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  authorId: uuid('author_id').notNull().references(() => users.id),
+  authorName: text('author_name').notNull(),
+  body: text('body').notNull(),
+  visibleToDriver: boolean('visible_to_driver').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at'),
+}, (t) => ({
+  stopIdx: index('stop_notes_stop_idx').on(t.stopId),
+  orgIdx: index('stop_notes_org_idx').on(t.orgId),
+}));

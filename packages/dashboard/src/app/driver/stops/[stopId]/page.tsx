@@ -2,12 +2,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { api } from '@/lib/api';
-import { getAccessToken } from '@/lib/auth';
+import { getAccessToken, getUser } from '@/lib/auth';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { enqueueAction } from '@/lib/offline-queue';
 import { PodCaptureModal } from '@/components/PodCaptureModal';
 import { BarcodeScanner } from '@/components/BarcodeScanner';
-import { ArrowLeft, Phone, MapPin, Package, Camera, CheckCircle2, XCircle, Clock, AlertTriangle, Thermometer, PenLine, Upload, ScanBarcode, WifiOff, RefreshCw, Loader2 } from 'lucide-react';
+import { ArrowLeft, Phone, MapPin, Package, Camera, CheckCircle2, XCircle, Clock, AlertTriangle, Thermometer, PenLine, Upload, ScanBarcode, WifiOff, RefreshCw, Loader2, StickyNote } from 'lucide-react';
 
 interface Stop {
   id: string; routeId: string; recipientName: string; address: string;
@@ -48,6 +48,8 @@ export default function StopDetailPage() {
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { isOnline, pendingCount, syncing, syncQueue, refreshCount } = useOfflineSync();
+  // P-DISP1: dispatcher notes visible to driver
+  const [dispNotes, setDispNotes] = useState<Array<{ id: string; body: string; authorName: string; createdAt: string }>>([]);
 
   useEffect(() => {
     api.get<Stop>(`/driver/me/stops/${stopId}`)
@@ -59,6 +61,14 @@ export default function StopDetailPage() {
     api.get<{ photos: Array<{ url: string }> }>(`/driver/me/stops/${stopId}/pod`)
       .then(pod => { if (pod.photos?.length) setPhotoUrl(pod.photos[pod.photos.length - 1].url); })
       .catch(() => null);
+
+    // P-DISP1: load dispatcher notes visible to this driver
+    const user = getUser();
+    if (user?.orgId) {
+      api.get<Array<{ id: string; body: string; authorName: string; createdAt: string }>>(
+        `/orgs/${user.orgId}/stops/${stopId}/notes`
+      ).then(notes => setDispNotes(notes ?? [])).catch(() => {});
+    }
   }, [stopId]);
 
   const handleBarcodeScan = async (value: string) => {
@@ -276,6 +286,21 @@ export default function StopDetailPage() {
             </div>
           )}
         </div>
+
+        {/* P-DISP1: Dispatcher notes visible to driver */}
+        {dispNotes.length > 0 && (
+          <div className="space-y-2">
+            {dispNotes.map(n => (
+              <div key={n.id} className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-start gap-3">
+                <StickyNote size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm text-amber-900 font-medium">{n.body}</p>
+                  <p className="text-xs text-amber-600 mt-1">From {n.authorName}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Barcode scan */}
         {!isDone && (

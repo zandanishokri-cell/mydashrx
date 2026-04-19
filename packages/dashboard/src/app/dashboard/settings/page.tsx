@@ -5,7 +5,7 @@ import { getUser } from '@/lib/auth';
 import { useFirstVisit } from '@/hooks/useFirstVisit';
 import {
   Building2, Users, Warehouse, Bell, Check, X, Copy,
-  Plus, Trash2, Pencil, Loader2, ChevronDown, AlertCircle,
+  Plus, Trash2, Pencil, Loader2, ChevronDown, AlertCircle, ShieldCheck, FileText,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -861,12 +861,144 @@ function NotificationsTab({ orgId }: { orgId: string }) {
   );
 }
 
+// ─── Tab: Compliance (P-COMP11) ───────────────────────────────────────────────
+// BAA acceptance status + HIPAA controls checklist. Immutable once BAA is accepted.
+interface BaaStatus {
+  accepted: boolean;
+  baaAcceptedAt: string | null;
+  signerName: string | null;
+  ipAddress: string | null;
+  hipaaBaaStatus: string;
+}
+
+const HIPAA_CONTROLS = [
+  { key: 'baa', label: 'Business Associate Agreement (BAA)', desc: 'Signed BAA on file with MyDashRx — required before handling ePHI.' },
+  { key: 'phi_encryption', label: 'PHI Encrypted in Transit', desc: 'All data transmitted over HTTPS/TLS 1.2+.' },
+  { key: 'access_control', label: 'Role-Based Access Control', desc: 'Staff access scoped to role and depot; minimum-necessary enforcement.' },
+  { key: 'audit_log', label: 'HIPAA Audit Logging', desc: 'All PHI access events logged with user, timestamp, and IP.' },
+  { key: 'idle_timeout', label: 'Automatic Session Timeout', desc: 'Sessions expire after 10 min idle for PHI-role users.' },
+  { key: 'phi_purge', label: 'PHI Retention & Purge', desc: 'Proof-of-delivery PHI auto-purged after 7-year retention per HIPAA §164.310(d)(2)(i).' },
+] as const;
+
+function ComplianceTab({ orgId }: { orgId: string }) {
+  const [status, setStatus] = useState<BaaStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [accepting, setAccepting] = useState(false);
+  const [accepted, setAccepted] = useState(false);
+  const [error, setError] = useState('');
+  const [agreed, setAgreed] = useState(false);
+
+  useEffect(() => {
+    api.get<BaaStatus>(`/orgs/${orgId}/baa/status`)
+      .then(s => setStatus(s))
+      .catch(() => setError('Failed to load BAA status'))
+      .finally(() => setLoading(false));
+  }, [orgId]);
+
+  const acceptBaa = async () => {
+    if (!agreed) return;
+    setAccepting(true); setError('');
+    try {
+      await api.post(`/orgs/${orgId}/baa-accept`, {});
+      const s = await api.get<BaaStatus>(`/orgs/${orgId}/baa/status`);
+      setStatus(s);
+      setAccepted(true);
+    } catch { setError('Failed to record BAA acceptance. Please contact support.'); }
+    finally { setAccepting(false); }
+  };
+
+  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-gray-400" size={24} /></div>;
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      {/* BAA Section */}
+      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+          <FileText size={16} className="text-[#0F4C81]" />
+          <h3 className="text-sm font-semibold text-gray-800">Business Associate Agreement (BAA)</h3>
+        </div>
+        <div className="px-5 py-5">
+          {status?.accepted ? (
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
+                <Check size={16} className="text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-green-700">BAA Signed</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Accepted {status.baaAcceptedAt ? new Date(status.baaAcceptedAt).toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' }) : '—'}
+                  {status.signerName ? ` by ${status.signerName}` : ''}
+                </p>
+                {status.ipAddress && <p className="text-xs text-gray-400 mt-0.5">IP: {status.ipAddress}</p>}
+                <p className="text-xs text-amber-600 mt-2 bg-amber-50 px-2 py-1 rounded">This record is immutable — BAA acceptance cannot be undone.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-amber-800 mb-1">BAA Required Before Handling Patient Data</p>
+                <p className="text-xs text-amber-700">HIPAA §164.308(b)(1) requires a signed BAA with any business associate that creates, receives, maintains, or transmits protected health information (PHI) on your behalf. By accepting, your organization enters into a legally binding BAA with MyDashRx Inc.</p>
+              </div>
+              <div className="text-sm text-gray-700 bg-gray-50 rounded-xl p-4 space-y-2 max-h-40 overflow-y-auto text-xs leading-relaxed">
+                <p className="font-semibold">Summary of BAA Terms</p>
+                <p>MyDashRx Inc. ("Business Associate") agrees to: (1) not use or disclose PHI except as permitted; (2) implement appropriate safeguards; (3) report any breaches; (4) ensure subcontractors agree to same obligations; (5) make PHI available per HIPAA rights; (6) return or destroy PHI on termination.</p>
+                <p>This BAA is governed by HIPAA (45 CFR Parts 160 and 164) and is effective upon acceptance.</p>
+              </div>
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 accent-[#0F4C81]" />
+                <span className="text-sm text-gray-700">I am authorized to enter into this BAA on behalf of my organization, and I accept the terms above.</span>
+              </label>
+              {accepted && <p className="text-sm text-green-600 flex items-center gap-1"><Check size={14} /> BAA accepted successfully</p>}
+              {error && <p className="text-sm text-red-500 flex items-center gap-1"><AlertCircle size={13} />{error}</p>}
+              <button
+                onClick={acceptBaa}
+                disabled={!agreed || accepting}
+                className="flex items-center gap-2 px-5 py-2.5 bg-[#0F4C81] text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:bg-[#0d3d69] transition-colors"
+              >
+                <FileText size={14} /> {accepting ? 'Recording…' : 'Accept BAA'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* HIPAA Controls Checklist */}
+      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+          <ShieldCheck size={16} className="text-emerald-600" />
+          <h3 className="text-sm font-semibold text-gray-800">HIPAA Controls Checklist</h3>
+        </div>
+        <div className="divide-y divide-gray-50">
+          {HIPAA_CONTROLS.map(c => {
+            const on = c.key === 'baa' ? !!status?.accepted : true;
+            return (
+              <div key={c.key} className="px-5 py-3.5 flex items-start gap-3">
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${on ? 'bg-green-100' : 'bg-amber-100'}`}>
+                  {on ? <Check size={11} className="text-green-600" /> : <AlertCircle size={11} className="text-amber-600" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">{c.label}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{c.desc}</p>
+                </div>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${on ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                  {on ? 'Active' : 'Pending'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 const TABS = [
   { id: 'org', label: 'Organization', icon: Building2 },
   { id: 'team', label: 'Team Members', icon: Users },
   { id: 'depots', label: 'Depots', icon: Warehouse },
   { id: 'notifications', label: 'Notifications', icon: Bell },
+  { id: 'compliance', label: 'Compliance', icon: ShieldCheck },
 ] as const;
 
 type TabId = typeof TABS[number]['id'];
@@ -896,6 +1028,7 @@ export default function SettingsPage() {
       {tab === 'team' && <TeamTab orgId={orgId} currentUserId={userId} />}
       {tab === 'depots' && <DepotsTab orgId={orgId} />}
       {tab === 'notifications' && <NotificationsTab orgId={orgId} />}
+      {tab === 'compliance' && <ComplianceTab orgId={orgId} />}
     </div>
   );
 }

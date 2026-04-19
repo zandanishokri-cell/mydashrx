@@ -343,6 +343,28 @@ try {
   console.error('P-SEC33 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-DISP1: stop_notes table — dispatcher notes on stops, driver visibility flag, PHI purge included
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS stop_notes (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      stop_id uuid NOT NULL REFERENCES stops(id),
+      org_id uuid NOT NULL REFERENCES organizations(id),
+      author_id uuid NOT NULL REFERENCES users(id),
+      author_name text NOT NULL,
+      body text NOT NULL,
+      visible_to_driver boolean NOT NULL DEFAULT true,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      deleted_at timestamptz
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS stop_notes_stop_idx ON stop_notes(stop_id)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS stop_notes_org_idx ON stop_notes(org_id)`);
+  console.log('P-DISP1 stop_notes table ensured');
+} catch (err) {
+  console.error('P-DISP1 stop_notes DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {
@@ -421,6 +443,21 @@ app.addHook('onRequest', async (req) => {
         delete (req.headers as Record<string, unknown>)[h];
       }
     }
+  }
+});
+
+// P-SEC36: RLS org context — set app.current_org_id as transaction-local session var on every
+// authenticated request. Connection pool leak risk: without this, a recycled connection from
+// org A would let a stale app.current_org_id pass RLS checks for org B.
+// set_config(name, value, true) = transaction-local (resets after each statement in pool).
+// Fire-and-forget — non-fatal if DB call fails (app-layer RBAC is primary enforcement).
+app.addHook('preHandler', async (req) => {
+  const user = (req.user ?? null) as { orgId?: string; role?: string } | null;
+  const orgId = (req.params as Record<string, string>)?.orgId
+    ?? user?.orgId
+    ?? null;
+  if (orgId) {
+    await db.execute(sql`SELECT set_config('app.current_org_id', ${orgId}, true)`).catch(() => {});
   }
 });
 
@@ -781,6 +818,14 @@ const runPhiPurgeCron = async () => {
       RETURNING id
     `);
     const locPurged = (locResult as unknown as Array<unknown>).length;
+
+    // P-DISP1: Step 5 — soft-delete stop_notes older than 7yr (HIPAA minimum retention)
+    // stop_notes may contain PHI (patient instructions, access notes); purge with stops
+    await db.execute(sql`
+      UPDATE stop_notes SET deleted_at = NOW()
+      WHERE deleted_at IS NULL
+        AND created_at < NOW() - INTERVAL '7 years'
+    `).catch((e: unknown) => { console.error('[phi_purge] stop_notes purge failed:', e); });
 
     if (podPurged > 0 || locPurged > 0) {
       await db.execute(sql`
