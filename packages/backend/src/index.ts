@@ -394,6 +394,18 @@ try {
   console.error('P-DISP1 stop_notes DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-TRACK1: author_role column on stop_notes — distinguishes patient notes from dispatcher/driver notes
+// Used in PHI purge cron to include patient-authored notes. authorId uses nil UUID for patient notes.
+try {
+  await db.execute(sql`ALTER TABLE stop_notes ADD COLUMN IF NOT EXISTS author_role text NOT NULL DEFAULT 'dispatcher'`);
+  // Allow nil UUID for patient notes (no user account) — drop FK constraint on author_id
+  // The FK was created without a name so we use a safe ALTER approach: make it nullable
+  await db.execute(sql`ALTER TABLE stop_notes ALTER COLUMN author_id DROP NOT NULL`);
+  console.log('P-TRACK1 stop_notes.author_role column ensured');
+} catch (err) {
+  console.error('P-TRACK1 stop_notes DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-DRV3: idempotency_key column on stops — deduplicates offline queue retries
 try {
   await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS idempotency_key text`);
@@ -930,12 +942,95 @@ setInterval(runTokenCleanup, 6 * 60 * 60 * 1000);
 
 // Daily report scheduler — fires every hour, sends between 7-8 AM UTC
 setInterval(async () => {
-  if (new Date().getHours() !== 7) return;
+  const now = new Date();
+  if (now.getUTCHours() !== 7) return;
   const allOrgs = await db.select().from(organizations).where(isNull(organizations.deletedAt));
   for (const org of allOrgs) {
     sendDailyReport(org.id).catch(console.error);
   }
+  // P-DRV4: Weekly driver performance email — Monday 7AM UTC
+  if (now.getUTCDay() === 1) {
+    sendWeeklyDriverDigests().catch(console.error);
+  }
 }, 60 * 60 * 1000);
+
+// P-DRV4: sendWeeklyDriverDigests — sends each driver their weekly completion/on-time stats
+async function sendWeeklyDriverDigests(): Promise<void> {
+  if (!process.env.RESEND_API_KEY) return;
+  const { drivers: driversTable } = await import('./db/schema.js');
+  const { routes: routesTable, stops: stopsTable } = await import('./db/schema.js');
+
+  const allDriverUsers = await db.select({
+    id: users.id, email: users.email, name: users.name, orgId: users.orgId,
+  }).from(users).where(and(isNull(users.deletedAt), eq(users.role, 'driver')));
+
+  const from7d = new Date(Date.now() - 7 * 86400000);
+
+  for (const dUser of allDriverUsers) {
+    try {
+      // Resolve driverId from email+orgId
+      const [driverRec] = await db.execute(sql`
+        SELECT id FROM drivers WHERE email = ${dUser.email} AND org_id = ${dUser.orgId}::uuid AND deleted_at IS NULL LIMIT 1
+      `) as unknown as Array<{ id: string }>;
+      if (!driverRec) continue;
+
+      const [statsRow] = await db.execute(sql`
+        SELECT
+          count(*) FILTER (WHERE s.status IN ('completed','failed','rescheduled'))::int AS terminal,
+          count(*) FILTER (WHERE s.status = 'completed')::int AS completed,
+          count(*) FILTER (WHERE s.status = 'completed' AND s.window_end IS NOT NULL AND s.completed_at IS NOT NULL AND s.completed_at <= s.window_end)::int AS on_time,
+          count(*) FILTER (WHERE s.window_end IS NOT NULL AND s.completed_at IS NOT NULL)::int AS windowed
+        FROM stops s
+        JOIN routes r ON r.id = s.route_id
+        WHERE r.driver_id = ${driverRec.id}::uuid
+          AND s.deleted_at IS NULL
+          AND s.created_at >= ${from7d.toISOString()}::timestamptz
+      `) as unknown as Array<{ terminal: number; completed: number; on_time: number; windowed: number }>;
+      if (!statsRow || statsRow.terminal === 0) continue;
+
+      const cr = Math.round((statsRow.completed / statsRow.terminal) * 100);
+      const otr = statsRow.windowed > 0 ? Math.round((statsRow.on_time / statsRow.windowed) * 100) : null;
+
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: `MyDashRx <reports@${process.env.SENDER_DOMAIN ?? 'cartana.life'}>`,
+          to: dUser.email,
+          reply_to: 'support@mydashrx.com',
+          subject: `Your weekly delivery stats — ${cr}% completion`,
+          html: `<!DOCTYPE html><html><body style="font-family:system-ui;background:#f7f8fc;padding:20px;">
+<div style="background:white;border-radius:12px;padding:24px;max-width:480px;margin:0 auto;border:1px solid #e5e7eb;">
+  <div style="color:#0F4C81;font-size:20px;font-weight:700;margin-bottom:16px;">MyDashRx</div>
+  <h2 style="margin:0 0 8px;font-size:18px;">Weekly Performance — ${dUser.name}</h2>
+  <p style="color:#6b7280;font-size:14px;margin-bottom:20px;">Last 7 days</p>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+    <div style="background:#f9fafb;border-radius:8px;padding:16px;text-align:center;">
+      <div style="font-size:28px;font-weight:700;color:${cr>=90?'#059669':cr>=80?'#d97706':'#dc2626'}">${cr}%</div>
+      <div style="font-size:12px;color:#6b7280;">Completion Rate</div>
+    </div>
+    ${otr!=null?`<div style="background:#f9fafb;border-radius:8px;padding:16px;text-align:center;"><div style="font-size:28px;font-weight:700;color:${otr>=90?'#059669':'#d97706'}">${otr}%</div><div style="font-size:12px;color:#6b7280;">On-Time Rate</div></div>`:''}
+    <div style="background:#f9fafb;border-radius:8px;padding:16px;text-align:center;">
+      <div style="font-size:28px;font-weight:700;color:#111827">${statsRow.completed}</div>
+      <div style="font-size:12px;color:#6b7280;">Completed</div>
+    </div>
+    <div style="background:#f9fafb;border-radius:8px;padding:16px;text-align:center;">
+      <div style="font-size:28px;font-weight:700;color:#111827">${statsRow.terminal}</div>
+      <div style="font-size:12px;color:#6b7280;">Total Stops</div>
+    </div>
+  </div>
+  <a href="${process.env.DASHBOARD_URL ?? 'https://app.mydashrx.com'}/driver/performance" style="display:block;background:#0F4C81;color:white;text-align:center;padding:12px;border-radius:8px;text-decoration:none;margin-top:20px;font-weight:600;">View Full Stats →</a>
+</div></body></html>`,
+          track_clicks: false,
+          track_opens: false,
+          headers: { 'Feedback-ID': 'driver-weekly:mydashrx:resend:transactional' },
+        }),
+      }).catch(console.error);
+    } catch (e) {
+      console.error(`[driver-weekly-digest] error for ${dUser.email}:`, e);
+    }
+  }
+}
 
 // P-DEL9 + P-DEL13-S3: HIPAA §164.310(d)(2)(i) PHI purge cron — Sunday 2 AM UTC
 // Step 1: Fetch S3 keys from records past 6yr retention

@@ -1,9 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, drivers, plans, driverLocationHistory } from '../db/schema.js';
-import { eq, and, isNull, inArray } from 'drizzle-orm';
+import { stops, routes, drivers, plans, driverLocationHistory, auditLogs } from '../db/schema.js';
+import { eq, and, isNull, inArray, sql } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { todayInTz } from '../utils/date.js';
+import { decryptPhi } from '../lib/phiCrypto.js';
 
 // HIPAA-safe: "Smith, J." format
 const hipaaName = (full: string) => {
@@ -23,7 +24,7 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
 
     if (!UUID_RE.test(token)) return reply.code(404).send({ error: 'Not found' });
 
-    const [stop] = await db
+    const [stopRaw] = await db
       .select({
         id: stops.id,
         routeId: stops.routeId,
@@ -37,7 +38,9 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
       .from(stops)
       .where(eq(stops.trackingToken, token as any))
       .limit(1);
-    if (!stop) return reply.code(404).send({ error: 'Not found' });
+    if (!stopRaw) return reply.code(404).send({ error: 'Not found' });
+    // P-SEC40: decrypt PHI — expose first name only
+    const stop = { ...stopRaw, recipientName: decryptPhi(stopRaw.recipientName ?? '') };
 
     const [route] = stop.routeId
       ? await db.select().from(routes).where(eq(routes.id, stop.routeId)).limit(1)
@@ -45,7 +48,7 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
 
     const driverInfo = route?.driverId
       ? await db
-          .select({ currentLat: drivers.currentLat, currentLng: drivers.currentLng, lastPingAt: drivers.lastPingAt })
+          .select({ name: drivers.name, currentLat: drivers.currentLat, currentLng: drivers.currentLng, lastPingAt: drivers.lastPingAt })
           .from(drivers)
           .where(eq(drivers.id, route.driverId as string))
           .limit(1)
@@ -67,6 +70,7 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
       stopId: stop.id,
       status: stop.status,
       recipientName: stop.recipientName.split(' ')[0], // first name only — HIPAA-safe
+      driverFirstName: driverInfo?.name?.split(' ')[0] ?? null, // HIPAA: first name only
       routeActive: route?.status === 'active',
       stopsAhead,
       estimatedArrivalAt,
@@ -78,6 +82,55 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
           ? { lat: driverInfo.currentLat, lng: driverInfo.currentLng, lastPingAt: driverInfo.lastPingAt }
           : null,
     };
+  });
+
+  // P-TRACK1: POST /track/:token/note — patient leaves delivery note (no auth required)
+  // Rate-limited to 30 req/min per IP. Stored in stop_notes with authorRole='patient', visibleToDriver=true.
+  // HIPAA: included in PHI purge cron. authorId uses system placeholder (no user account).
+  app.post('/:token/note', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { token } = req.params as { token: string };
+    if (!UUID_RE.test(token)) return reply.code(404).send({ error: 'Not found' });
+
+    const { body: noteBody } = req.body as { body?: string };
+    if (!noteBody?.trim() || noteBody.trim().length > 500) {
+      return reply.code(400).send({ error: 'Note body required (max 500 chars)' });
+    }
+
+    const [stop] = await db
+      .select({ id: stops.id, orgId: stops.orgId })
+      .from(stops)
+      .where(and(eq(stops.trackingToken, token as any), isNull(stops.deletedAt)))
+      .limit(1);
+    if (!stop) return reply.code(404).send({ error: 'Not found' });
+
+    // Insert via raw SQL — authorRole column added by P-TRACK1 DDL, authorId uses nil UUID for patient
+    await db.execute(sql`
+      INSERT INTO stop_notes (id, stop_id, org_id, author_id, author_name, body, visible_to_driver, author_role, created_at)
+      VALUES (
+        gen_random_uuid(),
+        ${stop.id}::uuid,
+        ${stop.orgId}::uuid,
+        '00000000-0000-0000-0000-000000000000'::uuid,
+        'Patient',
+        ${noteBody.trim()},
+        true,
+        'patient',
+        now()
+      )
+    `);
+
+    // HIPAA audit log
+    db.insert(auditLogs).values({
+      orgId: stop.orgId,
+      action: 'patient_delivery_note_created',
+      resource: 'stop',
+      resourceId: stop.id,
+      metadata: { hipaaRule: '164.308(a)(1)', detail: 'Patient note via public track link — PHI purge included' },
+    }).catch(() => {});
+
+    return reply.code(201).send({ ok: true });
   });
 };
 

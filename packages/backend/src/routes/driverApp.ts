@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory, auditLogs } from '../db/schema.js';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, sql } from 'drizzle-orm';
 import { getDriverRoutes } from '../db/preparedStatements.js'; // P-PERF10
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification, sendTwilioSms } from '../services/notifications.js';
@@ -622,6 +622,71 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     }).catch(console.error);
 
     return { ok: true, returnedAt: updated.returnedAt };
+  });
+
+  // P-DRV4: GET /driver/me/performance — completion rate, on-time rate, streak, tier
+  app.get('/me/performance', { preHandler: requireRole('driver') }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
+
+    const now = new Date();
+    const from30d = new Date(now.getTime() - 30 * 86400000);
+
+    // Query stops for this driver over last 30d via routes
+    const [statsRow] = await db.execute(sql`
+      SELECT
+        count(*) FILTER (WHERE s.status IN ('completed','failed','rescheduled'))::int AS terminal,
+        count(*) FILTER (WHERE s.status = 'completed')::int AS completed,
+        count(*) FILTER (WHERE s.status = 'completed' AND s.window_end IS NOT NULL AND s.completed_at IS NOT NULL AND s.completed_at <= s.window_end)::int AS on_time,
+        count(*) FILTER (WHERE s.status = 'completed' AND s.window_end IS NOT NULL AND s.completed_at IS NOT NULL)::int AS windowed,
+        avg(extract(epoch from (s.completed_at - s.arrived_at)) / 60) FILTER (WHERE s.status = 'completed' AND s.arrived_at IS NOT NULL AND s.completed_at IS NOT NULL) AS avg_minutes
+      FROM stops s
+      JOIN routes r ON r.id = s.route_id
+      WHERE r.driver_id = ${driverId}::uuid
+        AND s.deleted_at IS NULL
+        AND s.created_at >= ${from30d.toISOString()}::timestamptz
+    `) as unknown as Array<{ terminal: number; completed: number; on_time: number; windowed: number; avg_minutes: number | null }>;
+
+    const terminal = statsRow?.terminal ?? 0;
+    const completed = statsRow?.completed ?? 0;
+    const onTime = statsRow?.on_time ?? 0;
+    const windowed = statsRow?.windowed ?? 0;
+    const avgMinutes = statsRow?.avg_minutes != null ? Math.round(statsRow.avg_minutes * 10) / 10 : null;
+    const completionRate = terminal > 0 ? Math.round((completed / terminal) * 1000) / 10 : null;
+    const onTimeRate = windowed > 0 ? Math.round((onTime / windowed) * 1000) / 10 : null;
+
+    // Streak: consecutive days with 100% completion (all terminal stops completed)
+    // Query daily completion for last 60 days
+    const from60d = new Date(now.getTime() - 60 * 86400000);
+    const dailyRows = await db.execute(sql`
+      SELECT
+        DATE(s.created_at)::text AS day,
+        count(*) FILTER (WHERE s.status IN ('completed','failed','rescheduled'))::int AS terminal,
+        count(*) FILTER (WHERE s.status = 'completed')::int AS completed
+      FROM stops s
+      JOIN routes r ON r.id = s.route_id
+      WHERE r.driver_id = ${driverId}::uuid
+        AND s.deleted_at IS NULL
+        AND s.created_at >= ${from60d.toISOString()}::timestamptz
+      GROUP BY DATE(s.created_at)
+      ORDER BY day DESC
+    `) as unknown as Array<{ day: string; terminal: number; completed: number }>;
+
+    let streak = 0;
+    for (const row of dailyRows) {
+      if (row.terminal === 0) continue; // skip days with no activity
+      if (row.completed === row.terminal) { streak++; } else { break; }
+    }
+
+    // Tier: based on completion rate
+    const tier = completionRate == null ? 'bronze'
+      : completionRate > 95 ? 'platinum'
+      : completionRate >= 90 ? 'gold'
+      : completionRate >= 80 ? 'silver'
+      : 'bronze';
+
+    return { completionRate, onTimeRate, avgMinutes, streak, tier, terminal, completed };
   });
 
   // P-COMP8: POST /me/stops/:stopId/cod-collected — record co-pay collection at POD
