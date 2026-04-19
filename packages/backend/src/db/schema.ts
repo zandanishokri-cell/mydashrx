@@ -116,6 +116,13 @@ export const users = pgTable(
     lockedUntil: timestamp('locked_until'),
     tokenVersion: integer('token_version').notNull().default(0),
     lastKnownCountry: text('last_known_country'), // P-SES15: ISO country code from last login IP
+    // P-DEL11: Resend bounce tracking — suppress re-sends to hard-bounced/complained addresses
+    bounceStatus: text('bounce_status'), // 'hard' | 'soft' | 'complaint' | null
+    bouncedAt: timestamp('bounced_at'),
+    resendLastEmailId: text('resend_last_email_id'), // last resend email ID for webhook correlation
+    // P-DEL12: RFC 8058 one-click unsubscribe
+    unsubscribeToken: text('unsubscribe_token'), // HMAC-signed opaque token for unsubscribe link
+    emailOptOut: boolean('email_opt_out').notNull().default(false), // true = suppress all non-critical emails
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },
@@ -181,21 +188,30 @@ export const plans = pgTable(
   }),
 );
 
-export const routes = pgTable('routes', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  planId: uuid('plan_id')
-    .notNull()
-    .references(() => plans.id),
-  driverId: uuid('driver_id')
-    .references(() => drivers.id),
-  status: routeStatusEnum('status').notNull().default('pending'),
-  stopOrder: jsonb('stop_order').notNull().default('[]'),
-  startedAt: timestamp('started_at'),
-  completedAt: timestamp('completed_at'),
-  estimatedDuration: integer('estimated_duration'),
-  totalDistance: real('total_distance'),
-  deletedAt: timestamp('deleted_at'),
-});
+export const routes = pgTable(
+  'routes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    planId: uuid('plan_id')
+      .notNull()
+      .references(() => plans.id),
+    driverId: uuid('driver_id')
+      .references(() => drivers.id),
+    status: routeStatusEnum('status').notNull().default('pending'),
+    stopOrder: jsonb('stop_order').notNull().default('[]'),
+    startedAt: timestamp('started_at'),
+    completedAt: timestamp('completed_at'),
+    estimatedDuration: integer('estimated_duration'),
+    totalDistance: real('total_distance'),
+    deletedAt: timestamp('deleted_at'),
+  },
+  (t) => ({
+    // P-PERF5: index lookups for dashboard/summary, /today, /drivers — cut seq-scan on routes
+    planIdx: index('routes_plan_idx').on(t.planId).where(sql`deleted_at IS NULL`),
+    driverIdx: index('routes_driver_idx').on(t.driverId).where(sql`deleted_at IS NULL`),
+    statusIdx: index('routes_status_idx').on(t.status),
+  }),
+);
 
 export const stops = pgTable(
   'stops',

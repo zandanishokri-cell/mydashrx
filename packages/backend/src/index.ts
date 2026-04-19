@@ -67,6 +67,8 @@ import { notificationRoutes } from './routes/notifications.js';
 import { userSettingsRoutes } from './routes/userSettings.js';
 import { twilioWebhookRoutes } from './routes/twilioWebhook.js';
 import { stripeWebhookRoutes } from './routes/stripeWebhook.js';
+import { resendWebhookRoutes } from './routes/resendWebhook.js';
+import { unsubscribeRoutes } from './routes/unsubscribe.js';
 import { phiFilterHook } from './middleware/phiFilter.js';
 import { phiAuditHook } from './middleware/phiAuditHook.js';
 import { sendDailyReport } from './services/dailyReport.js';
@@ -168,6 +170,28 @@ try {
   console.log('P-COMP11 copay payment link columns ensured');
 } catch (err) {
   console.error('P-COMP11 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-PERF5: routes table indexes — cut seq-scan on dashboard/summary, /today, /drivers queries
+try {
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS routes_plan_idx ON routes(plan_id) WHERE deleted_at IS NULL`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS routes_driver_idx ON routes(driver_id) WHERE deleted_at IS NULL`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS routes_status_idx ON routes(status)`);
+  console.log('P-PERF5 routes performance indexes ensured');
+} catch (err) {
+  console.error('P-PERF5 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-DEL11/P-DEL12: bounce/unsubscribe columns on users — idempotent DDL
+try {
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS bounce_status text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS bounced_at timestamptz`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS resend_last_email_id text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS unsubscribe_token text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_opt_out boolean NOT NULL DEFAULT false`);
+  console.log('P-DEL11/P-DEL12 bounce/unsubscribe columns ensured');
+} catch (err) {
+  console.error('P-DEL11/DEL12 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
 // P-SEC32b: warn if MAGIC_LINK_SECRET falls back to JWT_SECRET (secret reuse)
@@ -340,6 +364,10 @@ await app.register(userSettingsRoutes, { prefix: '/api/v1/orgs/:orgId' });
 await app.register(twilioWebhookRoutes, { prefix: '/api/v1/twilio' });
 // P-COMP11: Stripe copay payment webhook
 await app.register(stripeWebhookRoutes, { prefix: '/api/v1/stripe' });
+// P-DEL11: Resend bounce webhook — Svix signature-verified
+await app.register(resendWebhookRoutes, { prefix: '/api/v1/webhooks' });
+// P-DEL12: RFC 8058 one-click unsubscribe
+await app.register(unsubscribeRoutes, { prefix: '/api/v1/unsubscribe' });
 
 // Public: list depots for pharmacy registration
 app.get('/api/v1/public/depots', async () => {

@@ -364,6 +364,34 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     } catch {
       return reply.code(401).send({ error: 'Invalid refresh token' });
     }
+    // P-SEC32d: JWT compromise detection — log when token was signed with rotated (old) key
+    // If JWT_SECRET_PREVIOUS is set, check if the token fails verification with current key
+    // (meaning it was signed by the old key — may indicate tokens from a compromised period)
+    if (process.env.JWT_SECRET_PREVIOUS && process.env.JWT_SECRET) {
+      try {
+        const { createVerify } = await import('crypto');
+        void createVerify; // just a check — use raw HMAC approach
+        const currentSecret = process.env.JWT_SECRET;
+        const [, payloadB64, sigB64] = refreshToken.split('.');
+        void payloadB64; void sigB64;
+        // Attempt verify with current key only — if it fails, token used old key
+        const { createHmac: _hmac } = await import('crypto');
+        const parts = refreshToken.split('.');
+        if (parts.length === 3) {
+          const toVerify = `${parts[0]}.${parts[1]}`;
+          const expectedSig = _hmac('sha256', currentSecret).update(toVerify).digest('base64url');
+          if (expectedSig !== parts[2]) {
+            console.warn(JSON.stringify({
+              event: 'jwt_old_key_used',
+              userId: decoded.sub,
+              ip: req.ip,
+              ts: new Date().toISOString(),
+              note: 'Token signed with JWT_SECRET_PREVIOUS — user should re-authenticate',
+            }));
+          }
+        }
+      } catch { /* non-blocking */ }
+    }
 
     // --- Stateful path: jti present = token was seeded on login ---
     if (decoded.jti) {

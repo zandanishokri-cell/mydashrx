@@ -2,6 +2,10 @@
  * Shared email helpers — centralizes Resend calls to avoid inline duplication
  * All functions are fire-and-forget (no await needed at call site)
  */
+import { db } from '../db/connection.js';
+import { users } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { buildListUnsubscribeHeaders } from '../routes/unsubscribe.js';
 
 const RESEND = 'https://api.resend.com/emails';
 
@@ -12,10 +16,30 @@ function dashUrl() {
   return process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
 }
 
+/**
+ * P-DEL11/P-DEL12: Check bounce suppression + opt-out before sending.
+ * Returns true if the address should be suppressed (hard bounce, complaint, or opt-out).
+ * Critical emails (login links, security alerts) should pass criticalOnly=true to bypass opt-out.
+ */
+export async function isSuppressed(email: string, criticalOnly = false): Promise<boolean> {
+  try {
+    const [user] = await db.select({ bounceStatus: users.bounceStatus, emailOptOut: users.emailOptOut })
+      .from(users).where(eq(users.email, email.toLowerCase().trim())).limit(1);
+    if (!user) return false;
+    // Hard bounces and complaints always suppress — email literally doesn't work
+    if (user.bounceStatus === 'hard' || user.bounceStatus === 'complaint') return true;
+    // Opt-out suppresses marketing/notification emails but NOT critical auth emails
+    if (!criticalOnly && user.emailOptOut) return true;
+    return false;
+  } catch { return false; } // fail-open: never block email on DB error
+}
+
 /** P-ADM26: Welcome email sent on org approval (manual or auto) */
 export async function sendOrgApprovalEmail(orgId: string, orgName: string, adminEmail: string, adminName: string): Promise<void> {
   const resendKey = process.env.RESEND_API_KEY;
   if (!resendKey) return;
+  // P-DEL11: suppress hard-bounced addresses
+  if (await isSuppressed(adminEmail)) { console.log(`[emailHelpers] suppressed approval email to ${adminEmail} (hard bounce/opt-out)`); return; }
   const dash = dashUrl();
   fetch(RESEND, {
     method: 'POST',
@@ -95,6 +119,8 @@ export async function sendRejectionWithReapplyEmail(
 export async function sendAbandonmentEmail(adminEmail: string, orgName: string | undefined, unsubscribeUrl: string): Promise<void> {
   const resendKey = process.env.RESEND_API_KEY;
   if (!resendKey) return;
+  // P-DEL11/DEL12: suppress bounced/opted-out addresses
+  if (await isSuppressed(adminEmail)) { console.log(`[emailHelpers] suppressed abandonment email to ${adminEmail}`); return; }
   const dash = dashUrl();
   const pharmacyName = orgName ? `<strong>${orgName}</strong>` : 'your pharmacy';
   fetch(RESEND, {
