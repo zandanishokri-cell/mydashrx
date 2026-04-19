@@ -62,6 +62,8 @@ export default function AdminPage() {
   const [funnel, setFunnel] = useState<MagicLinkFunnel | null>(null);
   // P-DEL24: latest postmaster spam rate entries from adminAuditLogs
   const [spamRates, setSpamRates] = useState<Array<{ domain: string; rate: string; severity: string; date: string }>>([]);
+  // P-DEL27: latest TLS-RPT report entry from adminAuditLogs
+  const [tlsHealth, setTlsHealth] = useState<{ failures: number; success: number; action: string; date: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ name: '', timezone: 'America/New_York', adminName: '', adminEmail: '', adminPassword: '' });
@@ -76,15 +78,30 @@ export default function AdminPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, o, f, rbacAudit] = await Promise.all([
+      const [s, o, f, rbacAudit, tlsAudit] = await Promise.all([
         api.get<Stats>('/admin/stats'),
         api.get<OrgRow[]>('/admin/orgs'),
         api.get<MagicLinkFunnel>('/admin/magic-link/funnel').catch(() => null),
         api.get<{ events: Array<{ action: string; metadata: Record<string, string>; createdAt: string }> }>(
           '/admin/audit-log?eventTypes=postmaster_spam_rate_alert,postmaster_spam_rate_ok&limit=20'
         ).catch(() => null),
+        // P-DEL27: TLS-RPT health — latest report entry
+        api.get<{ events: Array<{ action: string; metadata: Record<string, unknown>; createdAt: string }> }>(
+          '/admin/audit-log?eventTypes=tls_rpt_failure,tls_rpt_clean&limit=1'
+        ).catch(() => null),
       ]);
       setStats(s); setOrgs(o); setFunnel(f);
+      // P-DEL27: parse latest TLS-RPT report for health indicator
+      if (tlsAudit?.events?.length) {
+        const e = tlsAudit.events[0];
+        const m = e.metadata as Record<string, unknown>;
+        setTlsHealth({
+          failures: Number(m.totalFailures ?? 0),
+          success: Number(m.totalSuccessful ?? 0),
+          action: e.action,
+          date: new Date(e.createdAt).toLocaleDateString(),
+        });
+      }
       // Build latest entry per domain from audit log
       if (rbacAudit?.events) {
         const byDomain = new Map<string, { domain: string; rate: string; severity: string; date: string }>();
@@ -269,6 +286,29 @@ export default function AdminPage() {
             })}
           </div>
           <p className="text-xs text-gray-400 mt-2">Thresholds: warn ≥0.08% · critical ≥0.15% · Gmail hard block 0.30%</p>
+        </div>
+      )}
+
+      {/* P-DEL27: TLS Delivery Health card — RFC 8460 TLS-RPT report summary */}
+      {tlsHealth && (
+        <div className="px-6 py-3 border-b border-purple-100 bg-white/60 shrink-0">
+          <div className="flex items-center gap-2 mb-3">
+            <Mail size={14} className="text-purple-500" />
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">TLS Delivery Health (TLS-RPT)</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className={`rounded-lg px-4 py-3 ${tlsHealth.action === 'tls_rpt_failure' ? 'bg-red-50' : 'bg-green-50'}`}>
+              <p className="text-xs text-gray-400 mb-1">Latest Report — {tlsHealth.date}</p>
+              <p className={`text-lg font-bold ${tlsHealth.action === 'tls_rpt_failure' ? 'text-red-600' : 'text-green-600'}`}>
+                {tlsHealth.action === 'tls_rpt_failure' ? `${tlsHealth.failures} TLS failure${tlsHealth.failures !== 1 ? 's' : ''}` : 'Clean — no TLS failures'}
+              </p>
+              <p className="text-xs text-gray-400">{tlsHealth.success} successful sessions</p>
+            </div>
+            <p className="text-xs text-gray-400 max-w-xs">
+              TLS-RPT reports arrive via <code className="bg-gray-100 px-1 rounded">_smtp._tls.mydashrx.com</code> → rua= endpoint.
+              {tlsHealth.action === 'tls_rpt_failure' && ' Investigate failure details in the audit log.'}
+            </p>
+          </div>
         </div>
       )}
 

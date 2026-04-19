@@ -37,7 +37,8 @@ export function ReactivationBanner({ orgId }: { orgId: string }) {
   if (!show) return null;
 
   return (
-    <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center gap-2.5 text-amber-900 text-sm">
+    // P-A11Y28: role=status + aria-live=polite so SR announces banner when it appears (WCAG 4.1.3)
+    <div role="status" aria-live="polite" className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center gap-2.5 text-amber-900 text-sm">
       <AlertTriangle size={15} className="shrink-0 text-amber-600" />
       <span className="flex-1 text-xs md:text-sm">
         Your last delivery was over 7 days ago — ready to dispatch again?{' '}

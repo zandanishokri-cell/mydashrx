@@ -3,6 +3,17 @@
 @tailwind utilities;
 
 @layer base {
+  /* P-A11Y28: WCAG 2.4.11 — scroll-padding-top prevents fixed top bar (h-14 mobile / 0 desktop)
+     from obscuring focused elements when the browser scrolls them into view. */
+  html {
+    scroll-padding-top: 60px;
+  }
+  @media (min-width: 768px) {
+    html {
+      scroll-padding-top: 0px;
+    }
+  }
+
   /* P-A11Y16: WCAG 2.4.7 + 1.4.11 — visible focus indicator platform-wide.
      Tailwind preflight resets outline to none; this restores it for keyboard nav.
      2px solid brand blue at 2px offset passes WCAG 1.4.11 non-text contrast. */

@@ -62,6 +62,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [paletteOpen, setPaletteOpen] = useState(false);
   // P-ONB45: Setup Guide re-entry drawer (pharmacy_admin only)
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
+  // P-A11Y27: ref to command palette trigger for focus restoration
+  const paletteTriggerRef = useRef<HTMLButtonElement>(null);
+  // P-A11Y28: ref for first focusable element inside setup guide drawer
+  const setupGuideFirstRef = useRef<HTMLButtonElement>(null);
   const [pendingCount, setPendingCount] = useState(0);
   // P-RBAC31: super admin impersonation state
   const [impersonatedOrg, setImpersonatedOrg] = useState<{ orgId: string; orgName: string } | null>(null);
@@ -378,25 +382,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {user?.role === 'pharmacy_admin' && <OnboardingChecklist />}
         {children}
       </main>
-      {/* P-ONB45: Setup Guide right-side drawer — pharmacy_admin re-entry */}
+      {/* P-ONB45 / P-A11Y28: Setup Guide right-side drawer — role=dialog + aria-modal + focus-on-open */}
       {setupGuideOpen && (
         <>
           <div
             className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
+            aria-hidden="true"
             onClick={() => setSetupGuideOpen(false)}
           />
-          <div className="fixed right-0 top-0 h-full w-80 bg-white shadow-xl z-50 flex flex-col border-l border-gray-100">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Setup guide"
+            className="fixed right-0 top-0 h-full w-80 bg-white shadow-xl z-50 flex flex-col border-l border-gray-100"
+          >
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-blue-50/60">
               <div className="flex items-center gap-2">
-                <HelpCircle size={16} className="text-blue-600" />
+                <HelpCircle size={16} className="text-blue-600" aria-hidden="true" />
                 <span className="text-sm font-semibold text-gray-800">Setup Guide</span>
               </div>
               <button
+                ref={setupGuideFirstRef}
                 onClick={() => setSetupGuideOpen(false)}
                 className="p-1 rounded hover:bg-blue-100 text-gray-400 transition-colors"
                 aria-label="Close Setup Guide"
+                autoFocus
               >
-                <X size={16} />
+                <X size={16} aria-hidden="true" />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto py-2">

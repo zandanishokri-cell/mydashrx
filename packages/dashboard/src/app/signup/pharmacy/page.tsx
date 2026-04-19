@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '@/lib/api';
 import { SignupTrustBlock } from '@/components/SignupTrustBlock';
 import { useFieldError } from '@/lib/useFieldError';
@@ -21,25 +21,29 @@ const STEPS = [
 
 const DRAFT_KEY = 'pharmacy_wizard_draft';
 
-// StepIndicator shows steps 1 and 2 (step 0 is pre-form card-select, not numbered)
+// P-A11Y29: StepIndicator — aria-current=step on active indicator (WCAG 3.3.7 + 1.3.1)
 function StepIndicator({ current }: { current: Step }) {
   if (current === 0) return null;
   return (
-    <div className="flex items-center gap-2 mb-8">
+    <div className="flex items-center gap-2 mb-8" role="list" aria-label="Progress">
       {STEPS.map(({ label, time }, i) => {
         const step = (i + 1) as 1 | 2;
         const active = step === current;
         const done = step < current;
         return (
-          <div key={label} className="flex items-center gap-2">
-            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${done ? 'bg-green-500 text-white' : active ? 'bg-[#0F4C81] text-white' : 'bg-gray-100 text-gray-400'}`}>
+          <div key={label} role="listitem" className="flex items-center gap-2">
+            <div
+              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${done ? 'bg-green-500 text-white' : active ? 'bg-[#0F4C81] text-white' : 'bg-gray-100 text-gray-400'}`}
+              aria-current={active ? 'step' : undefined}
+              aria-label={done ? `${label} — completed` : active ? `${label} — current` : label}
+            >
               {done ? '✓' : step}
             </div>
             <div className="flex flex-col">
               <span className={`text-xs leading-tight ${active ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>{label}</span>
               {active && <span className="text-[10px] text-gray-400 leading-tight">{time}</span>}
             </div>
-            {i < STEPS.length - 1 && <div className="w-5 h-px bg-gray-200 mx-1" />}
+            {i < STEPS.length - 1 && <div className="w-5 h-px bg-gray-200 mx-1" aria-hidden="true" />}
           </div>
         );
       })}
@@ -76,6 +80,10 @@ export default function PharmacySignupPage() {
   // P-CNV12: NPI field state
   const [npiNumber, setNpiNumber] = useState('');
   const [npiStatus, setNpiStatus] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle');
+  // P-A11Y29: track prev NPI to skip status reset when value unchanged
+  const prevNpiRef = useRef('');
+  // P-A11Y29: always-mounted live region for step announcements (WCAG 3.3.7)
+  const [stepAnnouncement, setStepAnnouncement] = useState('');
   // P-CNV15: approval tier from backend
   const [approvalTier, setApprovalTier] = useState<'auto_approve' | 'manual'>('manual');
   // P-CNV25: rescue banner — shown once per session after 75s if email entered but not submitted
@@ -142,6 +150,14 @@ export default function PharmacySignupPage() {
 
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [key]: e.target.value }));
+
+  // P-A11Y29: announce step transitions to SR (WCAG 3.3.7 Level A — WCAG 2.2)
+  const announceStep = (nextStep: Step) => {
+    const total = STEPS.length;
+    if (nextStep === 0) { setStepAnnouncement('Step 0 of 2: Choose pharmacy size'); return; }
+    const { label } = STEPS[nextStep - 1];
+    setStepAnnouncement(`Step ${nextStep} of ${total}: ${label}`);
+  };
 
   // P-CNV12: NPPES NPI verification (fail-open — never block submission)
   const verifyNpi = async (npi: string) => {
@@ -267,6 +283,10 @@ export default function PharmacySignupPage() {
         </h1>
         <p className="text-gray-500 text-sm mb-6">Set up your pharmacy account</p>
 
+        {/* P-A11Y29: always-mounted step announcement region (WCAG 3.3.7 — WCAG 2.2) */}
+        <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+          {stepAnnouncement}
+        </div>
         <StepIndicator current={step} />
 
         {/* P-CNV24: Step 0 — role segmentation card-select */}
@@ -278,7 +298,7 @@ export default function PharmacySignupPage() {
                 <button
                   key={opt.value}
                   type="button"
-                  onClick={() => { setOrgSize(opt.value); setStep(1); }}
+                  onClick={() => { setOrgSize(opt.value); setStep(1); announceStep(1); }}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left transition-all hover:border-[#0F4C81] hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F4C81] ${orgSize === opt.value ? 'border-[#0F4C81] bg-blue-50' : 'border-gray-200 bg-white'}`}
                   aria-pressed={orgSize === opt.value}
                 >
@@ -317,7 +337,12 @@ export default function PharmacySignupPage() {
               <div className="relative">
                 <input
                   value={npiNumber}
-                  onChange={e => { setNpiNumber(e.target.value.replace(/\D/g, '').slice(0, 10)); setNpiStatus('idle'); }}
+                  onChange={e => {
+                    const next = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setNpiNumber(next);
+                    // P-A11Y29: only reset status if value actually changed (WCAG 3.3.7)
+                    if (next !== prevNpiRef.current) { setNpiStatus('idle'); prevNpiRef.current = next; }
+                  }}
                   onBlur={() => npiNumber && verifyNpi(npiNumber)}
                   placeholder="10-digit NPI number"
                   className={`w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 pr-24 ${npiStatus === 'valid' ? 'border-green-400 focus:ring-green-100' : npiStatus === 'invalid' ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-200'}`}
@@ -332,7 +357,7 @@ export default function PharmacySignupPage() {
               {npiStatus === 'invalid' && <p className="text-xs text-red-500 mt-1">NPI not found in NPPES registry — you can still submit without it</p>}
             </div>
             <button
-              onClick={() => setStep(2)}
+              onClick={() => { setStep(2); announceStep(2); }}
               disabled={!form.orgName.trim() || form.orgName.trim().length < 2}
               className="w-full bg-[#0F4C81] text-white rounded-lg py-2.5 text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-40 transition-colors mt-2"
             >
@@ -373,8 +398,11 @@ export default function PharmacySignupPage() {
               <p {...emailFE.errorProps}>{emailError}</p>
             </div>
 
-            {/* Mini-summary of Step 1 for confidence before submit */}
-            <div className="bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-500">
+            {/* P-A11Y29: Mini-summary of Step 1 — aria-label for SR (WCAG 3.3.7 redundant entry) */}
+            <div
+              className="bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-500"
+              aria-label={`Organization name: ${form.orgName}${form.orgPhone ? `, phone: ${form.orgPhone}` : ''}`}
+            >
               <span className="font-medium text-gray-700">{form.orgName}</span>
               {form.orgPhone && <> · {form.orgPhone}</>}
             </div>
@@ -394,7 +422,7 @@ export default function PharmacySignupPage() {
               </div>
             )}
             <div className="flex gap-3">
-              <button onClick={() => setStep(1)} className="flex-1 border border-gray-200 text-gray-600 rounded-lg py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors">Back</button>
+              <button onClick={() => { setStep(1); announceStep(1); }} className="flex-1 border border-gray-200 text-gray-600 rounded-lg py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors">Back</button>
               <button
                 onClick={submit}
                 disabled={loading || !form.adminName.trim() || form.adminName.trim().length < 2 || !form.adminEmail || !!validateEmail(form.adminEmail)}

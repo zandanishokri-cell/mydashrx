@@ -57,8 +57,16 @@ Value: v=STSv1; id=20260420
 ```
 Type:  TXT
 Name:  _smtp._tls.mydashrx.com
-Value: v=TLSRPTv1; rua=mailto:dmarc@mydashrx.com
+Value: v=TLSRPTv1; rua=mailto:tls-rpt@mydashrx.com
 ```
+
+**TLS-RPT ingestion setup (P-DEL27):**
+- Configure your inbound email bridge (Resend, SendGrid, or Cloudflare Email Routing) to forward email arriving at `tls-rpt@mydashrx.com` as JSON to:
+  `POST https://mydashrx-backend.onrender.com/api/v1/webhooks/tls-rpt`
+- The endpoint expects the RFC 8460 JSON report body in the POST request
+- Reports are stored to `admin_audit_logs` as `tls_rpt_failure` or `tls_rpt_clean` events
+- TLS Delivery Health card visible in Platform Admin dashboard
+- After 14 consecutive days of `tls_rpt_clean` reports: upgrade `mta-sts.txt` mode from `testing` → `enforce` (edit `packages/dashboard/public/.well-known/mta-sts.txt`)
 
 Also requires a subdomain `mta-sts.mydashrx.com` serving the static policy file at:
 `https://mta-sts.mydashrx.com/.well-known/mta-sts.txt`

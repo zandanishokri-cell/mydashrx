@@ -70,6 +70,7 @@ import { userSettingsRoutes } from './routes/userSettings.js';
 import { twilioWebhookRoutes } from './routes/twilioWebhook.js';
 import { stripeWebhookRoutes } from './routes/stripeWebhook.js';
 import { resendWebhookRoutes } from './routes/resendWebhook.js';
+import { tlsRptWebhookRoutes } from './routes/tlsRptWebhook.js'; // P-DEL27
 import { unsubscribeRoutes } from './routes/unsubscribe.js';
 import { chainRoutes } from './routes/chain.js'; // P-COMP15
 import { phiFilterHook } from './middleware/phiFilter.js';
@@ -866,6 +867,8 @@ await app.register(twilioWebhookRoutes, { prefix: '/api/v1/twilio' });
 await app.register(stripeWebhookRoutes, { prefix: '/api/v1/stripe' });
 // P-DEL11: Resend bounce webhook — Svix signature-verified
 await app.register(resendWebhookRoutes, { prefix: '/api/v1/webhooks' });
+// P-DEL27: TLS-RPT ingestion — RFC 8460 JSON report parsing
+await app.register(tlsRptWebhookRoutes, { prefix: '/api/v1/webhooks' });
 // P-DEL12: RFC 8058 one-click unsubscribe
 await app.register(unsubscribeRoutes, { prefix: '/api/v1/unsubscribe' });
 // P-COMP15: multi-location chain dashboard
