@@ -129,11 +129,13 @@ export default function AdminPage() {
           <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-14 bg-white rounded-xl border border-purple-100 animate-pulse" />)}</div>
         ) : (
           <div className="bg-white rounded-xl border border-purple-100 overflow-hidden">
+            {/* P-A11Y14: table caption + scope=col (WCAG 1.3.1 Level A) */}
             <table className="w-full text-sm">
+              <caption className="sr-only">Organizations — plan, BAA status, user count, stop volume, and actions</caption>
               <thead>
                 <tr className="bg-purple-50/60 border-b border-purple-100">
                   {['Organization', 'Plan', 'BAA Status', 'Users', 'Stops / 30d', 'Created', 'Actions'].map(h => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                    <th key={h} scope="col" className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>

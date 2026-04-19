@@ -72,6 +72,11 @@ export const podRoutes: FastifyPluginAsync = async (app) => {
       .limit(1);
     if (existing) return reply.code(409).send({ error: 'POD already captured for this stop' });
 
+    // P-DEL9: set retentionExpiresAt = capturedAt + 6yr at creation (HIPAA 164.310(d)(2)(i))
+    const capturedAt = new Date();
+    const retentionExpiresAt = new Date(capturedAt);
+    retentionExpiresAt.setFullYear(retentionExpiresAt.getFullYear() + 6);
+
     const [pod] = await db.insert(proofOfDeliveries).values({
       stopId,
       driverId,
@@ -83,12 +88,13 @@ export const podRoutes: FastifyPluginAsync = async (app) => {
       idVerified: body.idVerified ?? false,
       isControlledSubstance: body.isControlledSubstance ?? false,
       idDobConfirmed: body.idDobConfirmed ?? false,
-      signature: body.signature ? { ...body.signature, capturedAt: new Date().toISOString() } : null,
+      signature: body.signature ? { ...body.signature, capturedAt: capturedAt.toISOString() } : null,
       photos: [],
       ageVerification: body.ageVerification ?? null,
       codCollected: body.codCollected ?? null,
       driverNote: body.driverNote,
       customerNote: body.customerNote,
+      retentionExpiresAt,
     }).returning();
 
     // Mark stop completed

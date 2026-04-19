@@ -23,7 +23,8 @@ export function RouteCard({
   const { label, classes } = statusConfig[status] ?? { label: status, classes: 'bg-gray-100 text-gray-600' };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 p-4 hover:shadow-sm transition-shadow">
+    // P-A11Y13: driver-route-card enables landscape orientation padding (WCAG 1.3.4)
+    <div className="driver-route-card bg-white rounded-xl border border-gray-100 p-4 hover:shadow-sm transition-shadow">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-[#0F4C81] font-semibold text-sm">

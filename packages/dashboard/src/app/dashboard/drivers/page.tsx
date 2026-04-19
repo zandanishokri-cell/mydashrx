@@ -248,24 +248,29 @@ export default function DriversPage() {
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          {/* P-A11Y14: table caption + scope=col (WCAG 1.3.1 Level A) */}
           <table className="w-full text-sm">
+            <caption className="sr-only">Drivers — name, status, delivery stats, and vehicle</caption>
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Driver</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Last seen</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden sm:table-cell">Total stops</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">30d rate</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Vehicle</th>
-                <th className="px-4 py-2.5" />
+                <th scope="col" className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Driver</th>
+                <th scope="col" className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Last seen</th>
+                <th scope="col" className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                <th scope="col" className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden sm:table-cell">Total stops</th>
+                <th scope="col" className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">30d rate</th>
+                <th scope="col" className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Vehicle</th>
+                <th scope="col" className="px-4 py-2.5"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {filtered.map(driver => (
                 <tr
                   key={driver.id}
+                  tabIndex={0}
+                  aria-label={`Driver ${driver.name ?? 'unknown'}, status ${driver.status}`}
                   className="hover:bg-gray-50 transition-colors cursor-pointer"
                   onClick={() => router.push(`/dashboard/drivers/${driver.id}`)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/dashboard/drivers/${driver.id}`); } }}
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">

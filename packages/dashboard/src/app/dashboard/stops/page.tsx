@@ -107,6 +107,7 @@ function StopsContent() {
   const [exportError, setExportError] = useState('');
   const [sortKey, setSortKey] = useState<'urgency' | 'status' | 'date' | 'driver' | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [sortAnnounce, setSortAnnounce] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkError, setBulkError] = useState('');
@@ -118,9 +119,17 @@ function StopsContent() {
   const [reassignError, setReassignError] = useState('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // P-A11Y15: aria-sort helper — maps sortKey+sortDir to aria-sort value
+  const ariaSortFor = (col: typeof sortKey): 'ascending' | 'descending' | 'none' =>
+    sortKey === col ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none';
+
   const handleSort = (key: typeof sortKey) => {
-    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    const newDir = sortKey === key && sortDir === 'asc' ? 'desc' : 'asc';
+    if (sortKey === key) setSortDir(newDir);
     else { setSortKey(key); setSortDir('asc'); }
+    const labels: Record<string, string> = { urgency: 'Address/Urgency', driver: 'Driver', date: 'Date', status: 'Status' };
+    const dir = sortKey === key && sortDir === 'asc' ? 'descending' : 'ascending';
+    setSortAnnounce(`Sorted by ${labels[key ?? ''] ?? key} ${dir}`);
   };
 
   const URGENCY_ORDER: Record<string, number> = { overdue: 0, 'due-soon': 1, normal: 2 };
@@ -463,46 +472,53 @@ function StopsContent() {
           </div>
         ) : (
           <>
-            <table className="w-full text-sm">
+            {/* P-A11Y15: aria-live sort announcer (persistent in DOM, WCAG 4.1.3) */}
+            <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{sortAnnounce}</div>
+            {/* P-A11Y17: scroll-padding-top prevents sticky thead from obscuring keyboard-focused rows */}
+            <table className="w-full text-sm [scroll-padding-top:40px]">
+              {/* P-A11Y14: sr-only caption for screen readers (WCAG 1.3.1) */}
+              <caption className="sr-only">Delivery stops — sortable by address, driver, date, and status</caption>
               <thead className="bg-gray-50 border-b border-gray-100 sticky top-0">
                 <tr>
-                  <th className="pl-4 pr-2 py-2.5">
+                  {/* P-A11Y14: scope="col" on all header cells (WCAG 1.3.1 Level A) */}
+                  <th scope="col" className="pl-4 pr-2 py-2.5">
                     <input
                       type="checkbox"
+                      aria-label="Select all stops"
                       checked={allSelected}
                       ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
                       onChange={e => toggleAll(e.target.checked)}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
                   </th>
-                  {/* Address / Urgency sort */}
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                    <button onClick={() => handleSort('urgency')} className="flex items-center gap-1 hover:text-gray-700">
+                  {/* P-A11Y15: aria-sort on sortable columns (WCAG 4.1.2 Level A) */}
+                  <th scope="col" aria-sort={ariaSortFor('urgency')} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    <button onClick={() => handleSort('urgency')} aria-label="Sort by address and urgency" className="flex items-center gap-1 hover:text-gray-700">
                       Address
                       {sortKey === 'urgency' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronsUpDown size={11} className="opacity-40" />}
                     </button>
                   </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Recipient</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Depot</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">
-                    <button onClick={() => handleSort('driver')} className="flex items-center gap-1 hover:text-gray-700">
+                  <th scope="col" className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Recipient</th>
+                  <th scope="col" className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Depot</th>
+                  <th scope="col" aria-sort={ariaSortFor('driver')} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">
+                    <button onClick={() => handleSort('driver')} aria-label="Sort by driver" className="flex items-center gap-1 hover:text-gray-700">
                       Driver
                       {sortKey === 'driver' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronsUpDown size={11} className="opacity-40" />}
                     </button>
                   </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">
-                    <button onClick={() => handleSort('date')} className="flex items-center gap-1 hover:text-gray-700">
+                  <th scope="col" aria-sort={ariaSortFor('date')} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">
+                    <button onClick={() => handleSort('date')} aria-label="Sort by date" className="flex items-center gap-1 hover:text-gray-700">
                       Date
                       {sortKey === 'date' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronsUpDown size={11} className="opacity-40" />}
                     </button>
                   </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                    <button onClick={() => handleSort('status')} className="flex items-center gap-1 hover:text-gray-700">
+                  <th scope="col" aria-sort={ariaSortFor('status')} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    <button onClick={() => handleSort('status')} aria-label="Sort by status" className="flex items-center gap-1 hover:text-gray-700">
                       Status
                       {sortKey === 'status' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronsUpDown size={11} className="opacity-40" />}
                     </button>
                   </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden sm:table-cell">Rx</th>
+                  <th scope="col" className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden sm:table-cell">Rx</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 bg-white">
@@ -510,9 +526,13 @@ function StopsContent() {
                   const urgency = getUrgency(stop);
                   const badgeCls = URGENCY_BADGE[urgency];
                   return (
+                  // P-A11Y14: tabIndex=0 + onKeyDown for keyboard row navigation (WCAG 2.1.1)
                   <tr
                     key={stop.id}
+                    tabIndex={0}
                     onClick={() => router.push(`/dashboard/stops/${stop.id}`)}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/dashboard/stops/${stop.id}`); } }}
+                    aria-label={`Stop at ${stop.address}, status ${stop.status}`}
                     className={`cursor-pointer transition-colors ${URGENCY_ROW[urgency]} ${selectedIds.has(stop.id) ? 'bg-blue-50/70' : ''}`}
                   >
                     <td className="pl-4 pr-2 py-3" onClick={e => e.stopPropagation()}>

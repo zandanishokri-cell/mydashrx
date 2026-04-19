@@ -3,6 +3,15 @@
 @tailwind utilities;
 
 @layer base {
+  /* P-A11Y16: WCAG 2.4.7 + 1.4.11 — visible focus indicator platform-wide.
+     Tailwind preflight resets outline to none; this restores it for keyboard nav.
+     2px solid brand blue at 2px offset passes WCAG 1.4.11 non-text contrast. */
+  *:focus-visible {
+    outline: 2px solid #0F4C81;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
   :root {
     --color-primary: #0F4C81;
     /* Brand colors (backgrounds, icons, borders — not for text on white) */

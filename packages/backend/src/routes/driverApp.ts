@@ -511,12 +511,16 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(drivers.id, driverId));
 
     // Append to location history
+    // P-DEL9: retentionExpiresAt = 1yr from now (driver GPS traces = patient address proximity PHI)
+    const locRetention = new Date(now);
+    locRetention.setFullYear(locRetention.getFullYear() + 1);
     await db.insert(driverLocationHistory).values({
       driverId,
       routeId: routeId ?? null,
       lat,
       lng,
       recordedAt: now,
+      retentionExpiresAt: locRetention,
     });
 
     return { ok: true, recordedAt: now.toISOString() };

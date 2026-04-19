@@ -67,8 +67,8 @@ export default function DriverHomePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-[#0F4C81] text-white px-5 pt-12 pb-7">
+      {/* Header — P-A11Y13: driver-header + driver-safe-area for landscape orientation (WCAG 1.3.4) */}
+      <div className="driver-header driver-safe-area bg-[#0F4C81] text-white px-5 pt-12 pb-7">
         <div className="flex items-start justify-between mb-1">
           <div>
             <p className="text-blue-300 text-sm font-medium">
