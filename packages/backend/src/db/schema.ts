@@ -165,6 +165,10 @@ export const users = pgTable(
     emailOptOut: boolean('email_opt_out').notNull().default(false), // true = suppress all non-critical emails
     // P-RBAC34: last successful login timestamp — used for zombie-account detection (HIPAA §164.308(a)(3)(ii)(C))
     lastLoginAt: timestamp('last_login_at'),
+    // P-DEL26: soft bounce retry tracking — suppress after 3 consecutive soft bounces for 7 days
+    softBounceCount: integer('soft_bounce_count').notNull().default(0),
+    softBounceLastAt: timestamp('soft_bounce_last_at'),
+    softBounceSuppressedUntil: timestamp('soft_bounce_suppressed_until'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },
@@ -424,6 +428,12 @@ export const leadProspects = pgTable('lead_prospects', {
   notes: text('notes'),
   nextFollowUp: timestamp('next_follow_up'),
   lastContactedAt: timestamp('last_contacted_at'),
+  // P-DEL29: engagement-signal list hygiene
+  emailSentCount: integer('email_sent_count').notNull().default(0),
+  emailClickedCount: integer('email_clicked_count').notNull().default(0),
+  lastEmailClickedAt: timestamp('last_email_clicked_at'),
+  lastEmailSentAt: timestamp('last_email_sent_at'),
+  outreachSuppressedAt: timestamp('outreach_suppressed_at'), // set when suppressed for low engagement
   tags: jsonb('tags').notNull().default('[]'),
   sourceData: jsonb('source_data').notNull().default('{}'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -435,6 +445,25 @@ export const leadProspects = pgTable('lead_prospects', {
   // Per-org uniqueness: same pharmacy can't be imported twice by the same org,
   // but two different orgs may import the same Google Place.
   orgPlaceUniq: uniqueIndex('leads_org_place_idx').on(t.orgId, t.googlePlaceId),
+}));
+
+// P-DEL26: Soft bounce retry queue — transactional emails that soft-bounced get retried
+// at 15min→1hr→4hr→12hr delays before permanent suppression.
+export const emailRetryQueue = pgTable('email_retry_queue', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id),
+  emailType: text('email_type').notNull(), // 'magic_link' | 'approval' | 'rejection' | etc.
+  toAddress: text('to_address').notNull(),
+  subject: text('subject').notNull(),
+  htmlBody: text('html_body').notNull(),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  nextRetryAt: timestamp('next_retry_at', { withTimezone: true }).notNull(),
+  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  nextRetryIdx: index('erq_next_retry_idx').on(t.nextRetryAt),
+  toAddressIdx: index('erq_to_address_idx').on(t.toAddress),
 }));
 
 export const leadOutreachLog = pgTable('lead_outreach_log', {

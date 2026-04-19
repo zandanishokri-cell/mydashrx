@@ -112,6 +112,7 @@ Value: v=BIMI1; l=https://mydashrx.com/bimi-logo.svg; a=<CMC_CERT_URL>
 | `MAIL_SENDER_DOMAIN` | `mail.mydashrx.com` (after Resend subdomain verified) | P-DEL15 |
 | `OUTREACH_SENDER_DOMAIN` | `outreach.mydashrx.com` (after Resend subdomain verified) | P-DEL15 + P-DEL21 |
 | `RESEND_WEBHOOK_SECRET` | From Resend dashboard → Webhooks (starts with `whsec_`) | P-DEL11 bounce tracking |
+| `RESEND_OUTREACH_API_KEY` | **REQUIRED** — separate Resend API key created for outreach-only use. Create a second API key in the Resend dashboard (e.g., "mydashrx-outreach") and set here. Keeps cold outreach spam complaints isolated from auth email reputation. Without this, lead finder outreach will return 503. | P-DEL28 outreach key separation |
 | `GOOGLE_POSTMASTER_SA_JSON` | Service account JSON (raw or base64-encoded) — see setup below | P-DEL24 spam rate monitoring |
 
 ---

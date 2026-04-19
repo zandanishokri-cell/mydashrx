@@ -80,7 +80,7 @@ import { runAutoApproval } from './lib/autoApproval.js';
 import { runDkimHealthCheck } from './lib/dkimHealthCheck.js';
 import { runPostmasterMonitor } from './lib/postmasterMonitor.js';
 import { db, client } from './db/connection.js';
-import { organizations, magicLinkTokens, signupIntents, users, roleEscalations, refreshTokens, adminAuditLogs, auditLogs, emailDailyCounts } from './db/schema.js';
+import { organizations, magicLinkTokens, signupIntents, users, roleEscalations, refreshTokens, adminAuditLogs, auditLogs, emailDailyCounts, emailRetryQueue } from './db/schema.js';
 import { sendAbandonmentEmail } from './lib/emailHelpers.js';
 import { isNull, isNotNull, and, or, lt, sql, eq, desc, inArray } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
@@ -654,6 +654,45 @@ try {
   console.error('P-COMP15 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-DEL26: Soft bounce retry queue + users soft bounce tracking
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS email_retry_queue (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid REFERENCES users(id),
+      email_type text NOT NULL,
+      to_address text NOT NULL,
+      subject text NOT NULL,
+      html_body text NOT NULL,
+      attempt_count integer NOT NULL DEFAULT 0,
+      next_retry_at timestamptz NOT NULL,
+      last_attempt_at timestamptz,
+      resolved_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS erq_next_retry_idx ON email_retry_queue(next_retry_at)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS erq_to_address_idx ON email_retry_queue(to_address)`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS soft_bounce_count integer NOT NULL DEFAULT 0`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS soft_bounce_last_at timestamptz`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS soft_bounce_suppressed_until timestamptz`);
+  console.log('P-DEL26 email_retry_queue + users soft bounce columns ensured');
+} catch (err) {
+  console.error('P-DEL26 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-DEL29: Engagement-signal list hygiene columns on lead_prospects
+try {
+  await db.execute(sql`ALTER TABLE lead_prospects ADD COLUMN IF NOT EXISTS email_sent_count integer NOT NULL DEFAULT 0`);
+  await db.execute(sql`ALTER TABLE lead_prospects ADD COLUMN IF NOT EXISTS email_clicked_count integer NOT NULL DEFAULT 0`);
+  await db.execute(sql`ALTER TABLE lead_prospects ADD COLUMN IF NOT EXISTS last_email_clicked_at timestamptz`);
+  await db.execute(sql`ALTER TABLE lead_prospects ADD COLUMN IF NOT EXISTS last_email_sent_at timestamptz`);
+  await db.execute(sql`ALTER TABLE lead_prospects ADD COLUMN IF NOT EXISTS outreach_suppressed_at timestamptz`);
+  console.log('P-DEL29 lead_prospects engagement columns ensured');
+} catch (err) {
+  console.error('P-DEL29 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {
@@ -993,10 +1032,66 @@ const runActivationNudgeCron = async () => {
 };
 setInterval(() => { runActivationNudgeCron().catch(console.error); }, 60 * 60 * 1000);
 
+// P-DEL26: Soft bounce retry sweep — runs every 10 minutes
+// Queries email_retry_queue for due rows (nextRetryAt <= NOW(), resolvedAt IS NULL, attemptCount < 4)
+// Re-sends via Resend, updates attemptCount + nextRetryAt on each attempt.
+const SOFT_BOUNCE_DELAYS_MS = [15 * 60_000, 60 * 60_000, 4 * 60 * 60_000, 12 * 60 * 60_000];
+const runSoftBounceRetrySweep = async () => {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+
+  const due = await db.select().from(emailRetryQueue)
+    .where(sql`next_retry_at <= NOW() AND resolved_at IS NULL AND attempt_count < 4`);
+
+  for (const row of due) {
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+        body: JSON.stringify({
+          from: `MyDashRx <noreply@${process.env.MAIL_SENDER_DOMAIN ?? process.env.SENDER_DOMAIN ?? 'mydashrx.com'}>`,
+          to: row.toAddress,
+          subject: row.subject,
+          html: row.htmlBody,
+          track_clicks: false,
+          track_opens: false,
+          headers: { 'Feedback-ID': `retry:mydashrx:resend:${row.emailType}` },
+        }),
+      });
+
+      const newAttemptCount = (row.attemptCount ?? 0) + 1;
+
+      if (res.ok) {
+        // Sent successfully — mark resolved
+        await db.update(emailRetryQueue)
+          .set({ resolvedAt: new Date(), lastAttemptAt: new Date(), attemptCount: newAttemptCount } as any)
+          .where(sql`id = ${row.id}`);
+        console.log(JSON.stringify({ event: 'soft_bounce_retry_sent', toAddress: row.toAddress, emailType: row.emailType, attemptCount: newAttemptCount }));
+      } else {
+        // Failed — schedule next retry if attempts remain
+        const delayMs = SOFT_BOUNCE_DELAYS_MS[Math.min(newAttemptCount, SOFT_BOUNCE_DELAYS_MS.length - 1)];
+        await db.update(emailRetryQueue)
+          .set({
+            attemptCount: newAttemptCount,
+            lastAttemptAt: new Date(),
+            nextRetryAt: new Date(Date.now() + delayMs),
+            ...(newAttemptCount >= 4 ? { resolvedAt: new Date() } : {}), // exhaust — mark resolved (max attempts)
+          } as any)
+          .where(sql`id = ${row.id}`);
+      }
+    } catch (err) {
+      console.error('[soft-bounce-retry] error on row', row.id, err instanceof Error ? err.message : err);
+    }
+  }
+  if (due.length > 0) console.log(JSON.stringify({ event: 'soft_bounce_retry_sweep', processed: due.length }));
+};
+setInterval(() => { runSoftBounceRetrySweep().catch(console.error); }, 10 * 60 * 1000);
+
 // Startup config warnings — log which optional features are unconfigured
 const optionalEnvs: [string, string][] = [
   ['GOOGLE_PLACES_API_KEY', 'Lead Finder search'],
   ['RESEND_API_KEY', 'Email outreach'],
+  ['RESEND_OUTREACH_API_KEY', 'P-DEL28: Separate Resend key for cold outreach — required to protect auth email reputation'],
   ['SENDER_DOMAIN', 'Email outreach sender'],
   ['STRIPE_WEBHOOK_SECRET', 'Billing webhooks'],
   ['TWILIO_ACCOUNT_SID', 'SMS/IVR'],

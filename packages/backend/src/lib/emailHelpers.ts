@@ -31,21 +31,36 @@ function dashUrl() {
 }
 
 /**
- * P-DEL11/P-DEL12: Check bounce suppression + opt-out before sending.
- * Returns true if the address should be suppressed (hard bounce, complaint, or opt-out).
+ * P-DEL11/P-DEL12/P-DEL26: Check bounce suppression + opt-out before sending.
+ * Returns true if the address should be suppressed (hard bounce, complaint, soft-bounce window, or opt-out).
  * Critical emails (login links, security alerts) should pass criticalOnly=true to bypass opt-out.
  */
 export async function isSuppressed(email: string, criticalOnly = false): Promise<boolean> {
   try {
-    const [user] = await db.select({ bounceStatus: users.bounceStatus, emailOptOut: users.emailOptOut })
-      .from(users).where(eq(users.email, email.toLowerCase().trim())).limit(1);
+    const [user] = await db.select({
+      bounceStatus: users.bounceStatus,
+      emailOptOut: users.emailOptOut,
+      softBounceSuppressedUntil: users.softBounceSuppressedUntil,
+    }).from(users).where(eq(users.email, email.toLowerCase().trim())).limit(1);
     if (!user) return false;
     // Hard bounces and complaints always suppress — email literally doesn't work
     if (user.bounceStatus === 'hard' || user.bounceStatus === 'complaint') return true;
+    // P-DEL26: soft bounce window — suppress until cooldown expires
+    if (user.softBounceSuppressedUntil && new Date(user.softBounceSuppressedUntil) > new Date()) return true;
     // Opt-out suppresses marketing/notification emails but NOT critical auth emails
     if (!criticalOnly && user.emailOptOut) return true;
     return false;
   } catch { return false; } // fail-open: never block email on DB error
+}
+
+/**
+ * P-DEL28: Get a Resend client for outreach emails (separate API key from auth stream).
+ * Throws if RESEND_OUTREACH_API_KEY is not configured — forces explicit setup.
+ */
+export function getOutreachResendKey(): string {
+  const key = process.env.RESEND_OUTREACH_API_KEY;
+  if (!key) throw new Error('RESEND_OUTREACH_API_KEY not configured — set this in Render env to separate outreach from auth email reputation');
+  return key;
 }
 
 /** P-ADM26: Welcome email sent on org approval (manual or auto) */

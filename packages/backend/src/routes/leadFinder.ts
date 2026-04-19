@@ -4,8 +4,9 @@ import { leadProspects, leadOutreachLog, users } from '../db/schema.js';
 import { eq, and, isNull, ilike, or, sql, desc } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { generateOutreachDraft } from '../services/aiDraft.js';
-import { outreachSender } from '../lib/emailHelpers.js';
+import { outreachSender, getOutreachResendKey } from '../lib/emailHelpers.js';
 import { checkAndIncrementSend, getOutreachBounceRate } from '../lib/emailWarmup.js';
+import { checkDailyVolume } from '../lib/emailVolumeMonitor.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface GooglePlaceResult {
@@ -319,8 +320,31 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Invalid email address on file for this lead' });
     }
 
-    const resendKey = process.env.RESEND_API_KEY;
-    if (!resendKey) return reply.code(503).send({ error: 'Email service not configured' });
+    // P-DEL29: Check engagement suppression before sending
+    if (lead.outreachSuppressedAt) {
+      return reply.code(429).send({ error: `Lead suppressed for low engagement since ${lead.outreachSuppressedAt.toISOString()}` });
+    }
+
+    // P-DEL29: Suppress lead if 3+ sends with 0 clicks, last send > 90 days ago
+    const sentCount = lead.emailSentCount ?? 0;
+    const clickedCount = lead.emailClickedCount ?? 0;
+    const lastSentAt = lead.lastEmailSentAt;
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 86_400_000);
+    if (sentCount >= 3 && clickedCount === 0 && lastSentAt && lastSentAt < ninetyDaysAgo) {
+      await db.update(leadProspects)
+        .set({ outreachSuppressedAt: new Date(), updatedAt: new Date() })
+        .where(eq(leadProspects.id, leadId));
+      return reply.code(429).send({ error: 'Lead suppressed: 3+ emails sent, 0 clicks, >90 days since last contact' });
+    }
+
+    // P-DEL28: Use separate Resend key for outreach
+    let outreachKey: string;
+    try {
+      outreachKey = getOutreachResendKey();
+    } catch (err: any) {
+      app.log.warn({ msg: err?.message }, '[outreach] RESEND_OUTREACH_API_KEY not configured');
+      return reply.code(503).send({ error: err?.message ?? 'Outreach email key not configured' });
+    }
 
     // P-DEL21: warm-up cap + bounce circuit breaker — must pass before any outreach send
     try {
@@ -332,6 +356,9 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(429).send({ error: msg });
     }
 
+    // P-DEL28: Volume sensor check — log alert if approaching dedicated IP threshold
+    checkDailyVolume('outreach').catch(() => {});
+
     const payload = req.user as { sub?: string };
     const sentBy = payload?.sub ?? null;
 
@@ -342,7 +369,7 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     try {
       resendRes = await fetch('https://api.resend.com/emails', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${outreachKey}` },
         body: JSON.stringify({
           from: outreachSender().replace('MyDashRx', fromName ?? 'MyDashRx Team'),
           to: [lead.email],
@@ -373,10 +400,15 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
       status: emailStatus,
     }).returning();
 
-    // Only mark as contacted when email actually sent — failed sends are logged but don't update contact time
+    // Only mark as contacted + increment sent count when email actually sent
     if (emailStatus === 'sent') {
       await db.update(leadProspects)
-        .set({ lastContactedAt: new Date(), updatedAt: new Date() })
+        .set({
+          lastContactedAt: new Date(),
+          lastEmailSentAt: new Date(),
+          emailSentCount: sql`email_sent_count + 1`,
+          updatedAt: new Date(),
+        })
         .where(eq(leadProspects.id, leadId));
     }
 
