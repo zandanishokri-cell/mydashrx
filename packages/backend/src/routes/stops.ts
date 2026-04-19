@@ -9,6 +9,7 @@ import { fireTrigger } from '../services/automation.js';
 import { TERMINAL_STATUSES, type StopStatus } from '@mydash-rx/shared';
 import { ETA_PER_STOP_MS } from './tracking.js';
 import { filterStopsForRole } from '../lib/fieldPermissions.js';
+import { invalidateAnalytics } from '../lib/responseCache.js';
 
 export async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
   const [route] = await db.select({ completedAt: routes.completedAt, driverId: routes.driverId })
@@ -299,6 +300,9 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
 
     const [updated] = await db.update(stops).set(updates).where(and(eq(stops.id, stopId), eq(stops.orgId, userOrgId))).returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
+
+    // P-PERF4: invalidate analytics cache on status change — data is now stale
+    invalidateAnalytics(userOrgId);
 
     // Fire notifications async — don't await
     sendStopNotification(updated, status).catch(console.error);

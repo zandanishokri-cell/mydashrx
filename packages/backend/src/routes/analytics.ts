@@ -4,6 +4,7 @@ import { stops, routes, plans, depots, drivers } from '../db/schema.js';
 import { eq, and, isNull, gte, lte, sql, inArray } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { requireDepotAccess } from '../middleware/requireDepotAccess.js';
+import { analyticsCache, analyticsKey, deliveryPerfKey } from '../lib/responseCache.js';
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   // P-RBAC20: depot-scoped guard — dispatchers with depotId query param must have access to that depot
@@ -12,6 +13,11 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { depotId, from, to } = req.query as { depotId?: string; from?: string; to?: string };
+
+    // P-PERF4: LRU cache — 60s TTL; analytics queries fire 13 parallel DB calls
+    const cacheK = analyticsKey(orgId, { depotId, from, to });
+    const cached = analyticsCache.get(cacheK);
+    if (cached) return cached;
 
     // Default: last 7 days
     // Use 'T00:00:00' (no Z) so date-only strings parse as local midnight, matching toDate which also uses local time
@@ -134,7 +140,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
     const depotStatsResult = depotStats;
 
-    return {
+    const result = {
       summary: { total, completed, failed, successRate, failureRate, avgPerDriver, activeDriverCount, avgDeliveryTime, onTimeRate },
       byStatus,
       daily,
@@ -144,6 +150,8 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       topPerformers,
       weekOverWeekChange,
     };
+    analyticsCache.set(cacheK, result);
+    return result;
   });
 
   // P-COMP10: GET /delivery-performance — FADR + SLA + failure reason breakdown
@@ -153,6 +161,11 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { depotId, from, to } = req.query as { depotId?: string; from?: string; to?: string };
+
+    // P-PERF4: LRU cache — 60s TTL
+    const cacheK = deliveryPerfKey(orgId, { depotId, from, to });
+    const cached = analyticsCache.get(cacheK);
+    if (cached) return cached;
 
     const fromDate = from ? new Date(from + 'T00:00:00') : new Date(Date.now() - 30 * 86400000); // default 30d
     const toDate = to ? new Date(to + 'T23:59:59') : new Date();
@@ -274,7 +287,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         : null,
     }));
 
-    return {
+    const result = {
       period: { from: fromDate.toISOString(), to: toDate.toISOString() },
       fadr,
       failureRate,
@@ -288,5 +301,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       sla: { onTime: slaRows?.onTime ?? 0, late: slaRows?.late ?? 0, total: slaTotal, slaRate },
       driverFadr,
     };
+    analyticsCache.set(cacheK, result);
+    return result;
   });
 };

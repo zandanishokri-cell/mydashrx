@@ -4,6 +4,7 @@ import { leadProspects, leadOutreachLog, users } from '../db/schema.js';
 import { eq, and, isNull, ilike, or, sql, desc } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { generateOutreachDraft } from '../services/aiDraft.js';
+import { outreachSender } from '../lib/emailHelpers.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface GooglePlaceResult {
@@ -318,8 +319,7 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const resendKey = process.env.RESEND_API_KEY;
-    const senderDomain = process.env.SENDER_DOMAIN;
-    if (!resendKey || !senderDomain) return reply.code(503).send({ error: 'Email service not configured' });
+    if (!resendKey) return reply.code(503).send({ error: 'Email service not configured' });
 
     const payload = req.user as { sub?: string };
     const sentBy = payload?.sub ?? null;
@@ -333,7 +333,7 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
         body: JSON.stringify({
-          from: `${fromName ?? 'MyDashRx Team'} <outreach@${senderDomain}>`,
+          from: outreachSender().replace('MyDashRx', fromName ?? 'MyDashRx Team'),
           to: [lead.email],
           subject,
           html: emailBody,

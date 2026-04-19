@@ -2,7 +2,9 @@
   "name": "@mydash-rx/backend",
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=20.0.0" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
@@ -29,6 +31,7 @@
     "dotenv": "^16.4.0",
     "drizzle-orm": "^0.45.2",
     "fastify": "^4.26.0",
+    "lru-cache": "^11.3.5",
     "postgres": "^3.4.0",
     "secure-json-parse": "^2.7.0",
     "stripe": "^16.12.0",

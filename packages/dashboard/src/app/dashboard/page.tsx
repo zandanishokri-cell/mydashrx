@@ -104,74 +104,48 @@ export default function CommandCenter() {
   const [error, setError] = useState('');
   const [depotId, setDepotId] = useState('');
   const [user] = useState(getUser);
-  const summaryTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const driversTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const plansTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // P-PERF9: single combined timer (30s) replaces 3 independent timers (summaryTimer 60s + driversTimer 30s + plansTimer 60s)
+  const combinedTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadSummary = useCallback(async () => {
-    if (!user) return;
-    try {
-      const params = new URLSearchParams();
-      if (depotId) params.set('depotId', depotId);
-      const data = await api.get<DashboardSummary>(`/orgs/${user.orgId}/dashboard/summary?${params}`);
-      setSummary(data);
-      setSummaryError(false);
-    } catch {
-      setSummaryError(true);
-    } finally {
-      setSummaryLoading(false);
-    }
-  }, [user, depotId]);
-
-  useEffect(() => {
-    loadSummary();
-    summaryTimer.current = setInterval(loadSummary, 60_000);
-    return () => { if (summaryTimer.current) clearInterval(summaryTimer.current); };
-  }, [loadSummary]);
-
-  const loadDrivers = useCallback(() => {
-    if (!user) return;
-    let cancelled = false;
-    const params = new URLSearchParams();
-    if (depotId) params.set('depotId', depotId);
-    api.get<{ drivers: DriverStatus[] }>(`/orgs/${user.orgId}/dashboard/drivers?${params}`)
-      .then(res => { if (!cancelled) { setDriversList(res.drivers); setDriversLoading(false); setDriversError(false); } })
-      .catch(() => { if (!cancelled) { setDriversLoading(false); setDriversError(true); } });
-    return () => { cancelled = true; };
-  }, [user, depotId]);
-
-  useEffect(() => {
-    let cancelCurrent = loadDrivers();
-    driversTimer.current = setInterval(() => { cancelCurrent?.(); cancelCurrent = loadDrivers(); }, 30_000);
-    return () => { if (driversTimer.current) clearInterval(driversTimer.current); cancelCurrent?.(); };
-  }, [loadDrivers]);
-
-  const load = useCallback(async (isRefresh = false) => {
+  const loadCombined = useCallback(async (isRefresh = false) => {
     if (!user) return;
     if (isRefresh) setRefreshing(true);
-    else setLoading(true);
+    else if (!summary) { setLoading(true); setSummaryLoading(true); setDriversLoading(true); }
     setError('');
     try {
       const params = new URLSearchParams({ date: localDateStr() });
       if (depotId) params.set('depotId', depotId);
-      const data = await api.get<{ plans: PlanWithRoutes[] }>(`/orgs/${user.orgId}/dashboard/today?${params}`);
+      const data = await api.get<{ summary: DashboardSummary; drivers: DriverStatus[]; plans: PlanWithRoutes[] }>(
+        `/orgs/${user.orgId}/dashboard/combined?${params}`
+      );
+      setSummary(data.summary);
+      setSummaryError(false);
+      setDriversList(data.drivers);
+      setDriversError(false);
       setPlans(data.plans);
       setStops(data.plans.flatMap(p => p.routes.flatMap(r => r.stops)));
     } catch {
+      setSummaryError(true);
+      setDriversError(true);
       setError('Failed to load dashboard data');
     } finally {
       setLoading(false);
+      setSummaryLoading(false);
+      setDriversLoading(false);
       setRefreshing(false);
     }
-  }, [user, depotId]);
+  }, [user, depotId, summary]);
 
   useEffect(() => {
-    load();
-    plansTimer.current = setInterval(() => load(), 60_000);
-    return () => { if (plansTimer.current) clearInterval(plansTimer.current); };
-  }, [load]);
+    loadCombined();
+    combinedTimer.current = setInterval(() => loadCombined(), 30_000);
+    return () => { if (combinedTimer.current) clearInterval(combinedTimer.current); };
+  }, [loadCombined]);
 
-  const handleRefresh = () => { load(true); loadSummary(); loadDrivers(); };
+  const handleRefresh = () => loadCombined(true);
+  // Keep legacy loaders as no-ops for retry buttons (they now call loadCombined)
+  const loadSummary = () => loadCombined();
+  const loadDrivers = () => loadCombined();
 
   const completedStops = stops.filter(s => s.status === 'completed').length;
   const failedStops = stops.filter(s => s.status === 'failed').length;

@@ -28,6 +28,7 @@ import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword
 import { lookupCountry } from '../lib/geoLookup.js';
 import { sql } from 'drizzle-orm';
 import { createHash } from 'crypto';
+import { authSender } from '../lib/emailHelpers.js';
 
 // P-SEC11: HIPAA auth audit log — non-blocking, never fails auth flows
 async function logAuthEvent(
@@ -194,14 +195,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         // P-LCK1-EMAIL: Security alert on 3rd attempt
         if (attempts === 3) {
           const resendKey = process.env.RESEND_API_KEY;
-          const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
           const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
           if (resendKey) {
             fetch('https://api.resend.com/emails', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
               body: JSON.stringify({
-                from: `MyDashRx <security@${senderDomain}>`,
+                from: authSender().replace('noreply@', 'security@'),
                 to: user.email,
                 reply_to: 'support@mydashrx.com',
                 subject: '[MyDashRx] Unusual login activity on your account',
@@ -711,7 +711,6 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
       const magicUrl = `${dashUrl}/auth/verify?token=${token}`;
       const resendKey = process.env.RESEND_API_KEY;
-      const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
       const otpDisplay = `${otpPlain.slice(0, 3)} ${otpPlain.slice(3)}`;
 
       if (resendKey) {
@@ -720,7 +719,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
           body: JSON.stringify({
-            from: `MyDashRx <noreply@${senderDomain}>`,
+            from: authSender(),
             to: email,
             subject: 'Your MyDashRx login link (expires in 30 min)',
             headers: { 'X-Entity-Ref-ID': randomUUID(), 'Feedback-ID': 'magic-link:mydashrx:resend:auth' },

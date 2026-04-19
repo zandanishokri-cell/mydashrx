@@ -112,6 +112,110 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  // GET /orgs/:orgId/dashboard/combined — P-PERF9: single endpoint returns summary + drivers + plans
+  // Replaces 3 independent polling timers (summaryTimer 60s + driversTimer 30s + plansTimer 60s)
+  // with one 30s combined call. 66% HTTP reduction, eliminates visual jank from staggered updates.
+  app.get('/combined', {
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    const q = req.query as { depotId?: string; date?: string; fields?: string };
+    const today = q.date ?? todayInTz();
+    const includeGps = q.fields === 'map';
+
+    type StopCountRow = { status: string; cnt: number };
+    type ActiveRow = { cnt: number };
+    type DriverRow = { id: string; name: string; status: string; vehicleType: string | null; currentLat: number | null; currentLng: number | null; lastPingAt: Date | null };
+    type RouteCountRow = { driver_id: string; route_id: string; route_status: string; total_stops: number; completed_stops: number };
+    type PlanRow = { id: string; date: string; status: string; depot_id: string };
+    type JoinRow = { route_id: string; plan_id: string; driver_id: string | null; route_status: string; stop_order: unknown; estimated_duration: number | null; stop_id: string | null; stop_status: string | null; stop_route_id: string | null };
+
+    const depotSql = q.depotId ? sql`AND p.depot_id = ${q.depotId}` : sql``;
+
+    const [stopCountRows, [activeRow], allDrivers, routeCountRows, planRows, joinRows] = await Promise.all([
+      // Summary: stop counts for today
+      db.execute(sql`
+        SELECT s.status, COUNT(*)::int AS cnt
+        FROM stops s
+        JOIN routes r ON r.id = s.route_id AND r.deleted_at IS NULL
+        JOIN plans p  ON p.id = r.plan_id AND p.deleted_at IS NULL
+          AND p.org_id = ${orgId} AND p.date = ${today} ${depotSql}
+        WHERE s.org_id = ${orgId} AND s.deleted_at IS NULL
+        GROUP BY s.status
+      `) as unknown as StopCountRow[],
+      // Active drivers count
+      db.select({ cnt: sql<number>`count(*)::int` })
+        .from(drivers).where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt), eq(drivers.status, 'on_route'))),
+      // All drivers for fleet panel
+      db.select({ id: drivers.id, name: drivers.name, status: drivers.status, vehicleType: drivers.vehicleType, currentLat: drivers.currentLat, currentLng: drivers.currentLng, lastPingAt: drivers.lastPingAt })
+        .from(drivers).where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt))),
+      // Per-driver route/stop counts today
+      db.execute(sql`
+        SELECT r.driver_id, r.id AS route_id, r.status AS route_status,
+          COUNT(s.id)::int AS total_stops,
+          COUNT(s.id) FILTER (WHERE s.status = 'completed')::int AS completed_stops
+        FROM routes r
+        JOIN plans p ON p.id = r.plan_id AND p.org_id = ${orgId} AND p.deleted_at IS NULL AND p.date = ${today} ${depotSql}
+        LEFT JOIN stops s ON s.route_id = r.id AND s.deleted_at IS NULL AND s.org_id = ${orgId}
+        WHERE r.deleted_at IS NULL AND r.driver_id IS NOT NULL
+        GROUP BY r.driver_id, r.id, r.status
+      `) as unknown as RouteCountRow[],
+      // Plans for today
+      db.execute(sql`
+        SELECT id, date, status, depot_id FROM plans
+        WHERE org_id = ${orgId} AND deleted_at IS NULL AND date = ${today} ${depotSql}
+        ORDER BY created_at DESC
+      `) as unknown as PlanRow[],
+      // Routes + stops via single JOIN
+      db.execute(sql`
+        SELECT r.id AS route_id, r.plan_id, r.driver_id, r.status AS route_status,
+          r.stop_order, r.estimated_duration,
+          s.id AS stop_id, s.status AS stop_status, s.route_id AS stop_route_id
+        FROM routes r
+        LEFT JOIN stops s ON s.route_id = r.id AND s.deleted_at IS NULL AND s.org_id = ${orgId}
+        JOIN plans p ON p.id = r.plan_id AND p.org_id = ${orgId} AND p.deleted_at IS NULL AND p.date = ${today} ${depotSql}
+        WHERE r.deleted_at IS NULL
+      `) as unknown as JoinRow[],
+    ]);
+
+    // Build summary
+    let stopsToday = 0, completedToday = 0, inProgressToday = 0;
+    for (const row of stopCountRows) {
+      stopsToday += row.cnt;
+      if (row.status === 'completed') completedToday = row.cnt;
+      if (row.status === 'en_route' || row.status === 'arrived') inProgressToday += row.cnt;
+    }
+    const summary = { stopsToday, completedToday, inProgressToday, activeDrivers: activeRow?.cnt ?? 0 };
+
+    // Build drivers
+    const driverRouteMap = new Map(
+      routeCountRows.map(r => [r.driver_id, { routeId: r.route_id, routeStatus: r.route_status, totalStops: r.total_stops, completedStops: r.completed_stops }])
+    );
+    const driversOut = allDrivers.map(d => {
+      const base = { id: d.id, name: d.name, status: d.status, vehicleType: d.vehicleType, ...(driverRouteMap.get(d.id) ?? { routeId: null, routeStatus: null, totalStops: 0, completedStops: 0 }) };
+      if (includeGps) return { ...base, currentLat: d.currentLat, currentLng: d.currentLng, lastPingAt: d.lastPingAt?.toISOString() ?? null };
+      return base;
+    });
+
+    // Build plans
+    type StopSlim = { id: string; status: string; routeId: string | null };
+    type RouteWithStops = { id: string; planId: string; driverId: string | null; status: string; stopOrder: unknown; estimatedDuration: number | null; stops: StopSlim[] };
+    type PlanWithRoutes = { id: string; date: string; status: string; depotId: string; routes: RouteWithStops[] };
+
+    const routeMap = new Map<string, RouteWithStops>();
+    const planMap = new Map<string, PlanWithRoutes>(planRows.map(p => [p.id, { id: p.id, date: p.date, status: p.status, depotId: p.depot_id, routes: [] }]));
+    for (const row of joinRows) {
+      if (!routeMap.has(row.route_id)) {
+        const route: RouteWithStops = { id: row.route_id, planId: row.plan_id, driverId: row.driver_id, status: row.route_status, stopOrder: row.stop_order, estimatedDuration: row.estimated_duration, stops: [] };
+        routeMap.set(row.route_id, route);
+        planMap.get(row.plan_id)?.routes.push(route);
+      }
+      if (row.stop_id) routeMap.get(row.route_id)?.stops.push({ id: row.stop_id, status: row.stop_status!, routeId: row.stop_route_id });
+    }
+
+    return { summary, drivers: driversOut, plans: [...planMap.values()] };
+  });
+
   // GET /orgs/:orgId/dashboard/today — single aggregate: plans + routes + stops
   // P-PERF6: Single SQL JOIN replaces 3-serial-waterfall.
   app.get('/today', {

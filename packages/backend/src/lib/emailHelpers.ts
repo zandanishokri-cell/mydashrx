@@ -9,9 +9,23 @@ import { buildListUnsubscribeHeaders } from '../routes/unsubscribe.js';
 
 const RESEND = 'https://api.resend.com/emails';
 
-function sender() {
-  return `MyDashRx <noreply@${process.env.SENDER_DOMAIN ?? 'mydashrx.com'}>`;
+// P-DEL15: Sender subdomain isolation — auth, transactional, outreach on separate subdomains.
+// Falls back to SENDER_DOMAIN for backward compat during incremental DNS rollout.
+// DNS + Resend dashboard setup required: auth.mydashrx.com / mail.mydashrx.com / outreach.mydashrx.com
+export function authSender() {
+  const d = process.env.AUTH_SENDER_DOMAIN ?? process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+  return `MyDashRx <noreply@${d}>`;
 }
+export function mailSender() {
+  const d = process.env.MAIL_SENDER_DOMAIN ?? process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+  return `MyDashRx <noreply@${d}>`;
+}
+export function outreachSender() {
+  const d = process.env.OUTREACH_SENDER_DOMAIN ?? process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+  return `MyDashRx <outreach@${d}>`;
+}
+// Internal alias — transactional emails from shared helpers use mailSender
+function sender() { return mailSender(); }
 function dashUrl() {
   return process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
 }
