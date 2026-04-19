@@ -1,9 +1,25 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { createHmac, randomBytes, randomUUID } from 'crypto';
+import { promises as dnsPromises } from 'dns';
 
 const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? randomBytes(32).toString('hex');
 const signToken = (t: string) => createHmac('sha256', MAGIC_LINK_SECRET).update(t).digest('hex');
+
+// P-ML-DNSCHECK: MX record validation — fail-open (2s timeout, any error = valid)
+async function hasMxRecord(email: string): Promise<boolean> {
+  const domain = email.split('@')[1];
+  if (!domain) return false;
+  try {
+    const records = await Promise.race([
+      dnsPromises.resolveMx(domain),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('dns_timeout')), 2000)),
+    ]);
+    return Array.isArray(records) && records.length > 0;
+  } catch {
+    return true; // fail-open: valid domains on slow DNS still get email
+  }
+}
 import { db } from '../db/connection.js';
 import { users, organizations, drivers, magicLinkTokens, refreshTokens, adminAuditLogs } from '../db/schema.js';
 import { eq, and, isNull, gt, count, desc, asc, inArray } from 'drizzle-orm';
@@ -439,6 +455,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const { email } = req.body as { email?: string };
     if (!email || !z.string().email().safeParse(email).success) {
       return reply.code(400).send({ error: 'Valid email required' });
+    }
+
+    // P-ML-DNSCHECK: validate MX record exists (fail-open, generic error avoids enumeration)
+    const mxValid = await hasMxRecord(email);
+    if (!mxValid) {
+      await minResponse();
+      return reply.send({ message: 'If an account exists, a login link has been sent to that address.' });
     }
 
     const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
