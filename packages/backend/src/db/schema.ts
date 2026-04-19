@@ -106,6 +106,9 @@ export const organizations = pgTable('organizations', {
   baaUserAgent: text('baa_user_agent'),
   // P-ONB42: banner dismissed server-side so cross-device dismiss prevents false Day-3/7 nudges
   onboardingBannerDismissedAt: timestamp('onboarding_banner_dismissed_at'),
+  // P-ADM37: assigned reviewer — HIPAA §164.308(a)(3)(ii)(A) documented reviewer accountability
+  assignedReviewerId: uuid('assigned_reviewer_id').references((): AnyPgColumn => users.id),
+  assignedAt: timestamp('assigned_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

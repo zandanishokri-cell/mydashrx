@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import { getUser } from '@/lib/auth';
+import { getUser, getAccessToken } from '@/lib/auth';
 
 type PendingOrg = {
   org: {
@@ -14,6 +14,9 @@ type PendingOrg = {
     npiNumber?: string | null; npiVerified?: boolean | null; npiVerifiedAt?: string | null; // P-ADM16
     riskScore?: number | null; trustTier?: string | null; // P-ADM22
     baaAcceptedAt?: string | null; baaAcceptedByUserId?: string | null; // P-ONB37
+    // P-ADM37: assigned reviewer
+    assignedReviewerId?: string | null; assignedAt?: string | null;
+    assignee?: { name: string; email: string } | null;
   };
   admin: { id: string; name: string; email: string; createdAt: string } | null;
 };
@@ -96,6 +99,8 @@ function DetailDrawer({
   onReject,
   onClose,
   onHoldToggle,
+  onAssign,
+  currentUserId,
 }: {
   item: PendingOrg;
   acting: Record<string, 'approving' | 'rejecting'>;
@@ -103,6 +108,8 @@ function DetailDrawer({
   onReject: (id: string) => void;
   onClose: () => void;
   onHoldToggle: (orgId: string, currentHold: boolean) => void;
+  onAssign: (orgId: string) => void;
+  currentUserId: string;
 }) {
   const { org, admin } = item;
   const aging = getAgingClass(org.createdAt);
@@ -113,6 +120,7 @@ function DetailDrawer({
   const [showHoldForm, setShowHoldForm] = useState(false);
   const [holdSaving, setHoldSaving] = useState(false);
   const [notesLoaded, setNotesLoaded] = useState(false);
+  const [assignSaving, setAssignSaving] = useState(false);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -166,6 +174,15 @@ function DetailDrawer({
     finally { setHoldSaving(false); }
   };
 
+  const assignToMe = async () => {
+    setAssignSaving(true);
+    try {
+      await api.patch(`/admin/approvals/${org.id}/assign`, {});
+      onAssign(org.id);
+    } catch { /* silent */ }
+    finally { setAssignSaving(false); }
+  };
+
   return (
     <>
       {/* Backdrop */}
@@ -213,6 +230,30 @@ function DetailDrawer({
                 {org.trustTier === 'block' && ' · Block'}
               </span>
             )}
+          </div>
+
+          {/* P-ADM37: assigned reviewer section */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {org.assignee ? (
+                <>
+                  <AssigneeBadge name={org.assignee.name} email={org.assignee.email} isMine={org.assignedReviewerId === currentUserId} />
+                  <span className="text-xs text-gray-500">
+                    {org.assignedReviewerId === currentUserId ? 'Assigned to you' : `Assigned to ${org.assignee.name}`}
+                    {org.assignedAt && <span className="text-gray-400"> · {timeAgo(org.assignedAt)}</span>}
+                  </span>
+                </>
+              ) : (
+                <span className="text-xs text-gray-400">Unassigned</span>
+              )}
+            </div>
+            <button
+              onClick={assignToMe}
+              disabled={assignSaving || org.assignedReviewerId === currentUserId}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-40 transition-colors"
+            >
+              {assignSaving ? 'Assigning…' : org.assignedReviewerId === currentUserId ? '✓ Yours' : 'Assign to me'}
+            </button>
           </div>
 
           {/* Hold banner */}
@@ -409,6 +450,21 @@ function DetailDrawer({
   );
 }
 
+// P-ADM37: initials badge for assigned reviewer
+function AssigneeBadge({ name, email, isMine }: { name: string; email: string; isMine: boolean }) {
+  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  return (
+    <span
+      className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold cursor-default ${
+        isMine ? 'ring-2 ring-amber-400 bg-amber-100 text-amber-800' : 'bg-gray-200 text-gray-700'
+      }`}
+      title={`Assigned to ${name} (${email})`}
+    >
+      {initials}
+    </span>
+  );
+}
+
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between py-1.5 border-b border-gray-50 last:border-0">
@@ -437,13 +493,82 @@ export default function ApprovalsPage() {
   const [confirmingBatchApprove, setConfirmingBatchApprove] = useState(false);
   const [approveUndoTimer, setApproveUndoTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [undoToast, setUndoToast] = useState<{ orgIds: string[]; count: number } | null>(null);
+  // P-ADM36: CSV export state
+  const [csvExporting, setCsvExporting] = useState(false);
   // P-ADM16: Slideout detail panel
   const [selectedOrg, setSelectedOrg] = useState<PendingOrg | null>(null);
   // P-ADM35: filter + sort controls (client-side, no server round-trip)
-  const [search, setSearch] = useState('');
-  const [filterHold, setFilterHold] = useState<'all' | 'on_hold' | 'not_hold'>('all');
-  const [filterBaa, setFilterBaa] = useState<'all' | 'missing' | 'signed'>('all');
-  const [sortBy, setSortBy] = useState<'oldest' | 'newest' | 'score_asc' | 'score_desc'>('oldest');
+  // P-ADM38: localStorage persistence for view presets
+  type SavedView = {
+    search: string;
+    filterHold: 'all' | 'on_hold' | 'not_hold';
+    filterBaa: 'all' | 'missing' | 'signed';
+    sortBy: 'oldest' | 'newest' | 'score_asc' | 'score_desc';
+  };
+  const LS_KEY = 'mdrx_approval_queue_view';
+  const DEFAULTS: SavedView = { search: '', filterHold: 'all', filterBaa: 'all', sortBy: 'oldest' };
+
+  const loadSavedView = (): SavedView => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return DEFAULTS;
+      return { ...DEFAULTS, ...JSON.parse(raw) } as SavedView;
+    } catch { return DEFAULTS; }
+  };
+
+  const [search, setSearch] = useState(() => loadSavedView().search);
+  const [filterHold, setFilterHold] = useState<'all' | 'on_hold' | 'not_hold'>(() => loadSavedView().filterHold);
+  const [filterBaa, setFilterBaa] = useState<'all' | 'missing' | 'signed'>(() => loadSavedView().filterBaa);
+  const [sortBy, setSortBy] = useState<'oldest' | 'newest' | 'score_asc' | 'score_desc'>(() => loadSavedView().sortBy);
+  // P-ADM37: assigned filter
+  const [filterAssigned, setFilterAssigned] = useState<'all' | 'mine' | 'unassigned'>('all');
+  const [savedView, setSavedView] = useState<SavedView | null>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      return raw ? ({ ...DEFAULTS, ...JSON.parse(raw) } as SavedView) : null;
+    } catch { return null; }
+  });
+
+  const isViewCustomized = savedView
+    ? (search !== savedView.search || filterHold !== savedView.filterHold || filterBaa !== savedView.filterBaa || sortBy !== savedView.sortBy)
+    : (search !== DEFAULTS.search || filterHold !== DEFAULTS.filterHold || filterBaa !== DEFAULTS.filterBaa || sortBy !== DEFAULTS.sortBy);
+
+  const saveView = () => {
+    const view = { search, filterHold, filterBaa, sortBy };
+    localStorage.setItem(LS_KEY, JSON.stringify(view));
+    setSavedView(view);
+  };
+
+  const resetView = () => {
+    localStorage.removeItem(LS_KEY);
+    setSavedView(null);
+    setSearch(DEFAULTS.search);
+    setFilterHold(DEFAULTS.filterHold);
+    setFilterBaa(DEFAULTS.filterBaa);
+    setSortBy(DEFAULTS.sortBy);
+  };
+
+  // P-ADM37: handle assign — optimistically update local state then reload
+  const handleAssign = useCallback((orgId: string) => {
+    const me = user!;
+    setPending(prev => prev.map(item =>
+      item.org.id === orgId
+        ? { ...item, org: { ...item.org, assignedReviewerId: me.id, assignedAt: new Date().toISOString(), assignee: { name: me.name ?? me.email, email: me.email } } }
+        : item
+    ));
+    setSelectedOrg(prev =>
+      prev?.org.id === orgId
+        ? { ...prev, org: { ...prev.org, assignedReviewerId: me.id, assignedAt: new Date().toISOString(), assignee: { name: me.name ?? me.email, email: me.email } } }
+        : prev
+    );
+    setTimeout(() => {
+      api.get<PendingOrg[]>('/admin/approvals').then(data => {
+        const sorted = [...data].sort((a, b) => new Date(a.org.createdAt).getTime() - new Date(b.org.createdAt).getTime());
+        setPending(sorted);
+        setSelectedOrg(cur => cur ? sorted.find(r => r.org.id === cur.org.id) ?? null : null);
+      }).catch(() => {});
+    }, 600);
+  }, [user]);
 
   // P-ADM20: handle hold toggle — update local state optimistically, reload in background
   const handleHoldToggle = useCallback((orgId: string, wasOnHold: boolean) => {
@@ -584,6 +709,27 @@ export default function ApprovalsPage() {
   const toggleSelect = (orgId: string) =>
     setSelected(s => { const n = new Set(s); n.has(orgId) ? n.delete(orgId) : n.add(orgId); return n; });
 
+  // P-ADM36: blob-download CSV export (HIPAA §164.308(a)(1)(ii)(D) audit evidence)
+  const exportCsv = async () => {
+    setCsvExporting(true);
+    try {
+      const token = getAccessToken() ?? '';
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com/api/v1';
+      const res = await fetch(`${backendUrl}/admin/approvals/export?format=csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `approval-decisions-${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { setError('CSV export failed'); }
+    finally { setCsvExporting(false); }
+  };
+
   // P-ADM35: computed filtered+sorted list
   const filteredPending = pending
     .filter(({ org, admin }) => {
@@ -595,6 +741,9 @@ export default function ApprovalsPage() {
       if (filterHold === 'not_hold' && org.onHold) return false;
       if (filterBaa === 'missing' && org.baaAcceptedAt) return false;
       if (filterBaa === 'signed' && !org.baaAcceptedAt) return false;
+      // P-ADM37: assigned filter
+      if (filterAssigned === 'mine' && org.assignedReviewerId !== user?.id) return false;
+      if (filterAssigned === 'unassigned' && org.assignedReviewerId) return false;
       return true;
     })
     .sort((a, b) => {
@@ -611,6 +760,18 @@ export default function ApprovalsPage() {
           <h1 className="text-xl font-bold text-gray-900">Pending Approvals</h1>
           <p className="text-sm text-gray-500 mt-0.5">New pharmacy accounts awaiting review</p>
         </div>
+        {/* P-ADM36: Export CSV for HIPAA audit evidence */}
+        <button
+          onClick={exportCsv}
+          disabled={csvExporting}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          title="Export approval decisions as CSV (HIPAA §164.308(a)(1)(ii)(D))"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          {csvExporting ? 'Exporting…' : 'Export CSV'}
+        </button>
       </div>
 
       {/* P-ADM29: Approval ops analytics card */}
@@ -667,10 +828,29 @@ export default function ApprovalsPage() {
             <option value="score_desc">Risk: high first</option>
             <option value="score_asc">Risk: low first</option>
           </select>
-          {(search || filterHold !== 'all' || filterBaa !== 'all' || sortBy !== 'oldest') && (
-            <button onClick={() => { setSearch(''); setFilterHold('all'); setFilterBaa('all'); setSortBy('oldest'); }}
+          {/* P-ADM37: assigned reviewer filter */}
+          <select value={filterAssigned} onChange={e => setFilterAssigned(e.target.value as typeof filterAssigned)}
+            className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30">
+            <option value="all">All reviewers</option>
+            <option value="mine">Assigned to me</option>
+            <option value="unassigned">Unassigned</option>
+          </select>
+          {/* P-ADM38: view preset controls */}
+          {isViewCustomized && (
+            <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+              View customized
+            </span>
+          )}
+          <button onClick={saveView}
+            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 transition-colors"
+            title="Save current filters as default view">
+            Save as default
+          </button>
+          {(savedView || search || filterHold !== 'all' || filterBaa !== 'all' || sortBy !== 'oldest') && (
+            <button onClick={resetView}
               className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded border border-gray-200">
-              Clear filters
+              Reset
             </button>
           )}
           {filteredPending.length !== pending.length && (
@@ -782,6 +962,14 @@ export default function ApprovalsPage() {
                   <div className="mt-1"><SlaCountdown createdAt={org.createdAt} /></div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  {/* P-ADM37: assigned reviewer initials badge */}
+                  {org.assignee && (
+                    <AssigneeBadge
+                      name={org.assignee.name}
+                      email={org.assignee.email}
+                      isMine={org.assignedReviewerId === user?.id}
+                    />
+                  )}
                   <button
                     onClick={(e) => { e.stopPropagation(); approve(org.id); }}
                     disabled={!!acting[org.id]}
@@ -812,6 +1000,8 @@ export default function ApprovalsPage() {
           onReject={openRejectModal}
           onClose={() => setSelectedOrg(null)}
           onHoldToggle={handleHoldToggle}
+          onAssign={handleAssign}
+          currentUserId={user.id}
         />
       )}
 

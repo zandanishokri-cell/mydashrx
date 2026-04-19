@@ -262,8 +262,21 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const adminMap = new Map(adminRows.map(a => [a.orgId, a]));
     const noteMap = new Map(noteRows.map(n => [n.orgId, n.cnt]));
 
+    // P-ADM37: resolve assignee initials for list row badge
+    const assigneeIds = [...new Set(pendingOrgs.map(o => o.assignedReviewerId).filter(Boolean))] as string[];
+    const assigneeMap = new Map<string, { name: string; email: string }>();
+    if (assigneeIds.length) {
+      const assignees = await db.select({ id: users.id, name: users.name, email: users.email })
+        .from(users).where(inArray(users.id, assigneeIds));
+      assignees.forEach(a => assigneeMap.set(a.id, { name: a.name, email: a.email }));
+    }
+
     return pendingOrgs.map(org => ({
-      org: { ...org, noteCount: noteMap.get(org.id) ?? 0 },
+      org: {
+        ...org,
+        noteCount: noteMap.get(org.id) ?? 0,
+        assignee: org.assignedReviewerId ? (assigneeMap.get(org.assignedReviewerId) ?? null) : null,
+      },
       admin: adminMap.get(org.id) ?? null,
     }));
   });
@@ -562,6 +575,117 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     if (note.adminId !== actor.sub) return reply.code(403).send({ error: 'Can only delete your own notes' });
     await db.delete(approvalNotes).where(eq(approvalNotes.id, noteId));
     return { success: true };
+  });
+
+  // PATCH /admin/approvals/:orgId/assign — P-ADM37: self-assign as reviewer, notify via email
+  app.patch('/approvals/:orgId/assign', { preHandler: auth }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const actor = req.user as { sub: string; email: string; name?: string };
+
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+
+    await db.update(organizations)
+      .set({ assignedReviewerId: actor.sub, assignedAt: new Date() })
+      .where(eq(organizations.id, orgId));
+
+    // Audit log — HIPAA §164.308(a)(3)(ii)(A)
+    await logAuditAction(actor.sub, actor.email, 'reviewer_assigned', orgId, org.name, {
+      assignedTo: actor.sub, assignedEmail: actor.email,
+    });
+
+    // Fire-and-forget: send notification email to assignee with HMAC approve link (P-ADM11 pattern)
+    const secret = process.env.MAGIC_LINK_SECRET ?? 'fallback-secret';
+    const exp = Math.floor(Date.now() / 1000) + 48 * 3600;
+    const payload = `${orgId}:${exp}`;
+    const sig = createHmac('sha256', secret).update(payload).digest('hex');
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+    const approveLink = `${dashUrl}/admin/approve?orgId=${orgId}&exp=${exp}&sig=${sig}`;
+    const reviewLink = `${dashUrl}/admin/approvals`;
+
+    fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ''}` },
+      body: JSON.stringify({
+        from: process.env.SENDER_DOMAIN ? `MyDashRx <noreply@${process.env.SENDER_DOMAIN}>` : 'MyDashRx <noreply@cartana.life>',
+        to: [actor.email],
+        subject: `[Assigned] ${org.name} — review request`,
+        html: `<p>You have been assigned as reviewer for <strong>${org.name}</strong>.</p>
+               <p><a href="${reviewLink}">Review queue →</a></p>
+               <p><a href="${approveLink}">One-click approve (48hr link) →</a></p>
+               <p style="color:#666;font-size:12px;">This link is single-use and expires in 48 hours.</p>`,
+        headers: { 'Feedback-ID': 'stream:mydashrx:resend:admin-assign' },
+        tags: [{ name: 'event', value: 'reviewer_assigned' }],
+      }),
+    }).catch(e => console.error('[P-ADM37] notify email failed:', e));
+
+    return { success: true, assignedReviewerId: actor.sub, assignedAt: new Date() };
+  });
+
+  // GET /admin/approvals/export — P-ADM36: HIPAA §164.308(a)(1)(ii)(D) approval decisions CSV
+  app.get('/approvals/export', { preHandler: auth }, async (req, reply) => {
+    const { format } = req.query as { format?: string };
+    const actor = req.user as { sub: string; email: string };
+
+    // Join orgs + their admin user + most recent audit action (approve/reject)
+    const rows = await db.execute(sql`
+      SELECT
+        o.id                    AS org_id,
+        o.name                  AS org_name,
+        u.email                 AS admin_email,
+        o.npi_number,
+        o.npi_verified,
+        o.risk_score,
+        o.trust_tier,
+        o.billing_plan,
+        o.approved_at,
+        o.rejected_at,
+        o.rejection_reason,
+        o.auto_approved_at,
+        o.reapplied_at,
+        o.created_at            AS applied_at,
+        a.action                AS decision_action,
+        a.actor_email           AS actor_email,
+        a.created_at            AS decided_at,
+        a.metadata              AS decision_metadata
+      FROM organizations o
+      LEFT JOIN users u ON u.org_id = o.id AND u.role = 'pharmacy_admin' AND u.deleted_at IS NULL
+      LEFT JOIN LATERAL (
+        SELECT action, actor_email, created_at, metadata
+        FROM admin_audit_logs
+        WHERE target_id = o.id AND action IN ('approve_org', 'reject_org', 'auto_approved')
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) a ON true
+      WHERE o.deleted_at IS NULL
+        AND (o.approved_at IS NOT NULL OR o.rejected_at IS NOT NULL OR o.pending_approval = true)
+      ORDER BY o.created_at DESC
+      LIMIT 2000
+    `);
+
+    const rowArr = rows as unknown as Record<string, unknown>[];
+
+    // Audit-log the export itself (HIPAA §164.308(a)(1)(ii)(D))
+    await logAuditAction(actor.sub, actor.email, 'approvals_export', actor.sub, actor.email, {
+      format: format ?? 'json', rowCount: rowArr.length,
+    });
+
+    if (format === 'csv') {
+      const cols = [
+        'org_id', 'org_name', 'admin_email', 'npi_number', 'npi_verified',
+        'risk_score', 'trust_tier', 'billing_plan',
+        'decision_action', 'actor_email', 'decided_at', 'rejection_reason',
+        'applied_at', 'auto_approved_at',
+      ];
+      const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const csvHeader = cols.join(',') + '\n';
+      const csvBody = rowArr.map(r => cols.map(c => escape(r[c])).join(',')).join('\n');
+      reply.header('Content-Type', 'text/csv');
+      reply.header('Content-Disposition', `attachment; filename="approval-decisions-${new Date().toISOString().slice(0,10)}.csv"`);
+      return reply.send(csvHeader + csvBody);
+    }
+
+    return rowArr;
   });
 
   // GET /admin/audit-log — filterable audit trail (HIPAA §164.312(b))

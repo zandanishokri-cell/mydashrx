@@ -390,6 +390,15 @@ try {
   console.error('P-DISP3 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-ADM37: assigned_reviewer_id + assigned_at on organizations — HIPAA §164.308(a)(3)(ii)(A)
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS assigned_reviewer_id uuid REFERENCES users(id)`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS assigned_at timestamptz`);
+  console.log('P-ADM37 assigned_reviewer_id + assigned_at columns ensured');
+} catch (err) {
+  console.error('P-ADM37 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-ML18: WebAuthn passkeys tables — NIST SP 800-63B rev4 AAL2, HIPAA §164.312(d)
 try {
   await db.execute(sql`
