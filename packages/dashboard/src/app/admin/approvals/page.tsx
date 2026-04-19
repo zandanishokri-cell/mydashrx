@@ -5,9 +5,17 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 
 type PendingOrg = {
-  org: { id: string; name: string; createdAt: string; riskFlags?: string[] | null; hipaaBaaStatus?: string; billingPlan?: string; approvalReminderSentAt?: Record<string, string> | null };
+  org: {
+    id: string; name: string; createdAt: string;
+    riskFlags?: string[] | null; hipaaBaaStatus?: string; billingPlan?: string;
+    approvalReminderSentAt?: Record<string, string> | null;
+    onHold?: boolean; holdReason?: string | null; holdRequestedAt?: string | null;
+    noteCount?: number;
+  };
   admin: { id: string; name: string; email: string; createdAt: string } | null;
 };
+
+type ApprovalNote = { id: string; adminEmail: string; content: string; createdAt: string };
 
 type AuditEntry = {
   id: string; actorEmail: string; action: string;
@@ -84,15 +92,24 @@ function DetailDrawer({
   onApprove,
   onReject,
   onClose,
+  onHoldToggle,
 }: {
   item: PendingOrg;
   acting: Record<string, 'approving' | 'rejecting'>;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   onClose: () => void;
+  onHoldToggle: (orgId: string, currentHold: boolean) => void;
 }) {
   const { org, admin } = item;
   const aging = getAgingClass(org.createdAt);
+  const [notes, setNotes] = useState<ApprovalNote[]>([]);
+  const [noteInput, setNoteInput] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [holdInput, setHoldInput] = useState('');
+  const [showHoldForm, setShowHoldForm] = useState(false);
+  const [holdSaving, setHoldSaving] = useState(false);
+  const [notesLoaded, setNotesLoaded] = useState(false);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -100,15 +117,68 @@ function DetailDrawer({
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
+  useEffect(() => {
+    // Load notes when drawer opens
+    api.get<ApprovalNote[]>(`/admin/approvals/${org.id}/notes`)
+      .then(n => { setNotes(n); setNotesLoaded(true); })
+      .catch(() => setNotesLoaded(true));
+  }, [org.id]);
+
+  const addNote = async () => {
+    if (!noteInput.trim()) return;
+    setNoteSaving(true);
+    try {
+      const note = await api.post<ApprovalNote>(`/admin/approvals/${org.id}/notes`, { content: noteInput.trim() });
+      setNotes(prev => [note, ...prev]);
+      setNoteInput('');
+    } catch { /* silent */ }
+    finally { setNoteSaving(false); }
+  };
+
+  const deleteNote = async (noteId: string) => {
+    try {
+      await api.del(`/admin/approvals/${org.id}/notes/${noteId}`);
+      setNotes(prev => prev.filter(n => n.id !== noteId));
+    } catch { /* silent */ }
+  };
+
+  const submitHold = async () => {
+    if (!holdInput.trim()) return;
+    setHoldSaving(true);
+    try {
+      await api.post(`/admin/approvals/${org.id}/hold`, { holdReason: holdInput.trim() });
+      setShowHoldForm(false);
+      setHoldInput('');
+      onHoldToggle(org.id, false);
+    } catch { /* silent */ }
+    finally { setHoldSaving(false); }
+  };
+
+  const releaseHold = async () => {
+    setHoldSaving(true);
+    try {
+      await api.del(`/admin/approvals/${org.id}/hold`);
+      onHoldToggle(org.id, true);
+    } catch { /* silent */ }
+    finally { setHoldSaving(false); }
+  };
+
   return (
     <>
       {/* Backdrop */}
       <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
       {/* Drawer */}
-      <div className="fixed top-0 right-0 h-full w-[420px] bg-white shadow-2xl z-50 flex flex-col border-l border-gray-100 overflow-hidden">
+      <div className="fixed top-0 right-0 h-full w-[440px] bg-white shadow-2xl z-50 flex flex-col border-l border-gray-100 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <h2 className="font-semibold text-gray-900 text-base truncate pr-4">{org.name}</h2>
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="font-semibold text-gray-900 text-base truncate">{org.name}</h2>
+            {org.onHold && (
+              <span className="shrink-0 px-2 py-0.5 text-xs font-medium rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+                On Hold
+              </span>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100"
@@ -121,13 +191,24 @@ function DetailDrawer({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          {/* Status badge */}
+          {/* Status badges */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${aging.badge}`}>
               {aging.label}
             </span>
             <SlaCountdown createdAt={org.createdAt} />
           </div>
+
+          {/* Hold banner */}
+          {org.onHold && org.holdReason && (
+            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">Pending Information Request</p>
+              <p className="text-sm text-blue-800">{org.holdReason}</p>
+              {org.holdRequestedAt && (
+                <p className="text-xs text-blue-500 mt-1">Sent {timeAgo(org.holdRequestedAt)}</p>
+              )}
+            </div>
+          )}
 
           {/* Risk flags */}
           {org.riskFlags && org.riskFlags.length > 0 && (
@@ -163,6 +244,97 @@ function DetailDrawer({
               </>
             ) : (
               <p className="text-sm text-gray-400 italic">No admin user linked</p>
+            )}
+          </div>
+
+          {/* P-ADM20: Hold-back actions */}
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Hold Back</p>
+            {org.onHold ? (
+              <button
+                onClick={releaseHold}
+                disabled={holdSaving}
+                className="w-full px-3 py-2 text-sm font-medium text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-50 disabled:opacity-50 transition-colors"
+              >
+                {holdSaving ? 'Releasing…' : 'Release Hold — Resume Review'}
+              </button>
+            ) : showHoldForm ? (
+              <div className="space-y-2">
+                <textarea
+                  value={holdInput}
+                  onChange={e => setHoldInput(e.target.value)}
+                  placeholder="What information do you need? This will be emailed to the pharmacy admin."
+                  rows={3}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitHold}
+                    disabled={holdSaving || !holdInput.trim()}
+                    className="flex-1 px-3 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {holdSaving ? 'Sending…' : 'Request Info'}
+                  </button>
+                  <button
+                    onClick={() => { setShowHoldForm(false); setHoldInput(''); }}
+                    className="px-3 py-2 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowHoldForm(true)}
+                className="w-full px-3 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left"
+              >
+                Request more information from pharmacy
+              </button>
+            )}
+          </div>
+
+          {/* P-ADM19: Internal admin notes */}
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+              Internal Notes {notesLoaded && notes.length > 0 && <span className="normal-case font-normal">({notes.length})</span>}
+            </p>
+            <div className="flex gap-2">
+              <textarea
+                value={noteInput}
+                onChange={e => setNoteInput(e.target.value)}
+                placeholder="Add internal note (visible to admins only)…"
+                rows={2}
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-gray-200"
+              />
+              <button
+                onClick={addNote}
+                disabled={noteSaving || !noteInput.trim()}
+                className="px-3 py-2 text-sm font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-colors self-end"
+              >
+                {noteSaving ? '…' : 'Add'}
+              </button>
+            </div>
+            {notesLoaded && notes.length > 0 && (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {notes.map(n => (
+                  <div key={n.id} className="bg-gray-50 rounded-lg px-3 py-2 text-sm group relative">
+                    <p className="text-gray-800 pr-6">{n.content}</p>
+                    <p className="text-xs text-gray-400 mt-1">{n.adminEmail} · {timeAgo(n.createdAt)}</p>
+                    <button
+                      onClick={() => deleteNote(n.id)}
+                      className="absolute top-2 right-2 text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Delete note"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {notesLoaded && notes.length === 0 && (
+              <p className="text-xs text-gray-400 italic">No notes yet</p>
             )}
           </div>
         </div>
@@ -219,6 +391,30 @@ export default function ApprovalsPage() {
   const [undoToast, setUndoToast] = useState<{ orgIds: string[]; count: number } | null>(null);
   // P-ADM16: Slideout detail panel
   const [selectedOrg, setSelectedOrg] = useState<PendingOrg | null>(null);
+
+  // P-ADM20: handle hold toggle — update local state optimistically, reload in background
+  const handleHoldToggle = useCallback((orgId: string, wasOnHold: boolean) => {
+    setPending(prev => prev.map(item =>
+      item.org.id === orgId
+        ? { ...item, org: { ...item.org, onHold: !wasOnHold, holdReason: wasOnHold ? null : item.org.holdReason } }
+        : item
+    ));
+    setSelectedOrg(prev =>
+      prev?.org.id === orgId
+        ? { ...prev, org: { ...prev.org, onHold: !wasOnHold, holdReason: wasOnHold ? null : prev.org.holdReason } }
+        : prev
+    );
+    // Refresh in background after 500ms to sync server state
+    setTimeout(() => {
+      api.get<PendingOrg[]>('/admin/approvals').then(data => {
+        const sorted = [...data].sort((a, b) =>
+          new Date(a.org.createdAt).getTime() - new Date(b.org.createdAt).getTime()
+        );
+        setPending(sorted);
+        setSelectedOrg(cur => cur ? sorted.find(r => r.org.id === cur.org.id) ?? null : null);
+      }).catch(() => {});
+    }, 500);
+  }, []);
   // P-ADM29: Approval ops analytics stats
   const [approvalStats, setApprovalStats] = useState<{
     pending: number; approvedLast7d: number; rejectedLast7d: number;
@@ -418,6 +614,16 @@ export default function ApprovalsPage() {
                     <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${aging.badge}`}>
                       {aging.label}
                     </span>
+                    {org.onHold && (
+                      <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+                        On Hold
+                      </span>
+                    )}
+                    {org.noteCount != null && org.noteCount > 0 && (
+                      <span className="px-1.5 py-0.5 text-xs text-gray-400 bg-gray-100 rounded-full">
+                        {org.noteCount} note{org.noteCount !== 1 ? 's' : ''}
+                      </span>
+                    )}
                     {org.riskFlags && org.riskFlags.length > 0 && (
                       <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-orange-50 text-orange-700 border border-orange-200">
                         ⚠ {org.riskFlags.join(', ')}
@@ -461,6 +667,7 @@ export default function ApprovalsPage() {
           onApprove={approve}
           onReject={openRejectModal}
           onClose={() => setSelectedOrg(null)}
+          onHoldToggle={handleHoldToggle}
         />
       )}
 

@@ -81,6 +81,10 @@ export const organizations = pgTable('organizations', {
   npiVerified: boolean('npi_verified').default(false), // NPPES API verified
   npiVerifiedAt: timestamp('npi_verified_at'), // when NPPES confirmed NPI
   reappliedAt: timestamp('reapplied_at'), // P-ADM28: timestamp of most recent reapplication
+  // P-ADM20: hold-back state — admin can pause review to request more info
+  onHold: boolean('on_hold').notNull().default(false),
+  holdReason: text('hold_reason'),
+  holdRequestedAt: timestamp('hold_requested_at'),
   onboardingDepotAt: timestamp('onboarding_depot_at'), // P-ONB10: when depot step completed in wizard
   onboardingDriverAt: timestamp('onboarding_driver_at'), // P-ONB10: when driver step completed
   onboardingCompletedAt: timestamp('onboarding_completed_at'), // P-ONB10: when full onboarding completed
@@ -570,6 +574,16 @@ export const refreshTokens = pgTable('refresh_tokens', {
   userStatusIdx: index('rt_user_status_idx').on(t.userId, t.status),
 }));
 
+
+// P-ADM19: Internal admin notes on pending approvals
+export const approvalNotes = pgTable('approval_notes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  adminId: uuid('admin_id').notNull().references(() => users.id),
+  adminEmail: text('admin_email').notNull(),
+  content: text('content').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({ orgIdx: index('approval_notes_org_idx').on(t.orgId) }));
 
 // P-CNV14: Signup intent capture for abandonment email recovery
 export const signupIntents = pgTable('signup_intents', {

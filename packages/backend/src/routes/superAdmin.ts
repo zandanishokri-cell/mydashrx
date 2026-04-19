@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens, depots } from '../db/schema.js';
+import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens, depots, approvalNotes } from '../db/schema.js';
 import { eq, isNull, sql, gte, lte, count, and, desc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
@@ -240,7 +240,15 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         .from(users)
         .where(and(eq(users.orgId, org.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)))
         .limit(1);
-      return { org, admin: admin ?? null };
+      const noteCount = await db.select({ cnt: sql<number>`count(*)::int` })
+        .from(approvalNotes).where(eq(approvalNotes.orgId, org.id));
+      return {
+        org: {
+          ...org,
+          noteCount: noteCount[0]?.cnt ?? 0,
+        },
+        admin: admin ?? null,
+      };
     }));
 
     return results;
@@ -403,6 +411,93 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     ));
 
     return { success: true, processed: orgIds.length };
+  });
+
+  // POST /admin/approvals/:orgId/hold — P-ADM20: put org on hold, request more info
+  app.post('/approvals/:orgId/hold', { preHandler: auth }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { holdReason } = (req.body as { holdReason?: string }) ?? {};
+    if (!holdReason?.trim()) return reply.code(400).send({ error: 'holdReason required' });
+
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+
+    await db.update(organizations)
+      .set({ onHold: true, holdReason: holdReason.trim(), holdRequestedAt: new Date() })
+      .where(eq(organizations.id, orgId));
+
+    // Email pharmacy admin to request more info
+    const [admin] = await db.select({ email: users.email, name: users.name })
+      .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
+    const resendKey = process.env.RESEND_API_KEY;
+    const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+    if (admin && resendKey) {
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+        body: JSON.stringify({
+          from: `MyDashRx <noreply@${senderDomain}>`,
+          to: admin.email,
+          subject: `[MyDashRx] Additional information needed for ${org.name}`,
+          html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+            <h2 style="color:#374151;margin:0 0 8px">Additional information needed</h2>
+            <p style="color:#374151;font-size:15px">Hi ${admin.name}, we're reviewing your application for <strong>${org.name}</strong> and need a bit more information before we can proceed.</p>
+            <div style="background:#fef9ec;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:16px 0">
+              <p style="color:#78350f;font-size:14px;margin:0"><strong>What we need:</strong><br>${holdReason}</p>
+            </div>
+            <p style="color:#374151;font-size:15px">Please reply to this email with the requested information and we'll complete your review within 24 hours.</p>
+            <p style="color:#6b7280;font-size:13px;margin-top:16px">Application ref: ${orgId}</p>
+          </div>`,
+        }),
+      }).catch((e: unknown) => { console.error('[ADM20] hold email failed:', e); });
+    }
+
+    const actor = req.user as { sub: string; email: string };
+    await logAuditAction(actor.sub, actor.email, 'put_on_hold', orgId, org.name, { holdReason });
+    return { success: true, orgId };
+  });
+
+  // DELETE /admin/approvals/:orgId/hold — P-ADM20: release hold
+  app.delete('/approvals/:orgId/hold', { preHandler: auth }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+    await db.update(organizations).set({ onHold: false, holdReason: null, holdRequestedAt: null }).where(eq(organizations.id, orgId));
+    const actor = req.user as { sub: string; email: string };
+    await logAuditAction(actor.sub, actor.email, 'release_hold', orgId, org.name);
+    return { success: true };
+  });
+
+  // GET /admin/approvals/:orgId/notes — P-ADM19: list internal notes
+  app.get('/approvals/:orgId/notes', { preHandler: auth }, async (req) => {
+    const { orgId } = req.params as { orgId: string };
+    return db.select().from(approvalNotes)
+      .where(eq(approvalNotes.orgId, orgId))
+      .orderBy(desc(approvalNotes.createdAt));
+  });
+
+  // POST /admin/approvals/:orgId/notes — P-ADM19: add internal note
+  app.post('/approvals/:orgId/notes', { preHandler: auth }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { content } = (req.body as { content?: string }) ?? {};
+    if (!content?.trim()) return reply.code(400).send({ error: 'content required' });
+    const actor = req.user as { sub: string; email: string };
+    const [note] = await db.insert(approvalNotes).values({
+      orgId, adminId: actor.sub, adminEmail: actor.email, content: content.trim(),
+    }).returning();
+    return note;
+  });
+
+  // DELETE /admin/approvals/:orgId/notes/:noteId — P-ADM19: delete own note
+  app.delete('/approvals/:orgId/notes/:noteId', { preHandler: auth }, async (req, reply) => {
+    const { orgId, noteId } = req.params as { orgId: string; noteId: string };
+    const actor = req.user as { sub: string; email: string };
+    const [note] = await db.select().from(approvalNotes)
+      .where(and(eq(approvalNotes.id, noteId), eq(approvalNotes.orgId, orgId))).limit(1);
+    if (!note) return reply.code(404).send({ error: 'Note not found' });
+    if (note.adminId !== actor.sub) return reply.code(403).send({ error: 'Can only delete your own notes' });
+    await db.delete(approvalNotes).where(eq(approvalNotes.id, noteId));
+    return { success: true };
   });
 
   // GET /admin/audit-log — filterable audit trail (HIPAA §164.312(b))
