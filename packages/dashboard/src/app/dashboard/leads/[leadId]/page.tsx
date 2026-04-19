@@ -205,12 +205,14 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
 
   return (
     <div className="p-6 max-w-5xl space-y-6">
-      {/* Toast */}
-      {toast && (
-        <div className="fixed top-4 right-4 z-50 bg-gray-900 text-white px-4 py-3 rounded-xl shadow-lg text-sm font-medium">
-          {toast}
-        </div>
-      )}
+      {/* Toast — persistent role=status container (WCAG 4.1.3 AA) */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="fixed top-4 right-4 z-50 pointer-events-none">
+        {toast && (
+          <div className="bg-gray-900 text-white px-4 py-3 rounded-xl shadow-lg text-sm font-medium pointer-events-auto">
+            {toast}
+          </div>
+        )}
+      </div>
 
       {/* Header */}
       <div className="flex items-start justify-between">

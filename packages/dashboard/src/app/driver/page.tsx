@@ -102,12 +102,19 @@ export default function DriverHomePage() {
         </button>
       </div>
 
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">
-          {toast}
-        </div>
-      )}
+      {/* Toast — persistent container with role=status for screen reader announcements (WCAG 4.1.3) */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+      >
+        {toast && (
+          <div className="bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg pointer-events-auto">
+            {toast}
+          </div>
+        )}
+      </div>
 
       <div className="px-4 py-5">
         {loading ? (

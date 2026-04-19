@@ -251,9 +251,20 @@ await app.register(cors, {
   credentials: true,
 });
 
+// P-SEC32c: JWT key rotation support — JWT_SECRET is the signing key (current).
+// JWT_SECRET_PREVIOUS enables zero-downtime rotation: set JWT_SECRET_PREVIOUS=old_value,
+// JWT_SECRET=new_value, deploy — existing ATs issued with old key remain valid until expiry.
+// After all old ATs expire (max 15m), remove JWT_SECRET_PREVIOUS.
 const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-change-in-prod-only';
+const jwtSecretPrevious = process.env.JWT_SECRET_PREVIOUS;
+
+// fastify-jwt verifySecret supports array of secrets for multi-key verify
+const verifySecrets = jwtSecretPrevious
+  ? [jwtSecret, jwtSecretPrevious]
+  : jwtSecret;
+
 await app.register(jwt, {
-  secret: jwtSecret,
+  secret: { private: jwtSecret, public: verifySecrets } as Parameters<typeof jwt>[1]['secret'],
   sign: { algorithm: 'HS256' },
   verify: { algorithms: ['HS256'] },
 });
