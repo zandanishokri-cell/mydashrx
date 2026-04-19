@@ -22,7 +22,9 @@ const SMS_TEMPLATES: Record<string, (d: Record<string, string>) => string> = {
 
 // Maps stop status DB values → SMS template keys.
 // sendStopNotification is called with the raw DB status value; this resolves it to the template.
+// P-COMP9: 4 patient SMS milestones — en_route, arrived, completed, failed
 const STATUS_TO_SMS_EVENT: Record<string, string> = {
+  en_route: 'route_dispatched', // "Your prescription is out for delivery today"
   arrived: 'stop_arrived',
   completed: 'stop_completed',
   failed: 'stop_failed',
