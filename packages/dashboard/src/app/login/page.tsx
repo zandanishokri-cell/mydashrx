@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { setSession } from '@/lib/auth';
 import type { AuthTokens } from '@mydash-rx/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
+import { collectFingerprint } from '@/lib/deviceFingerprint';
 
 const IAB_RE = /FBAN|FBAV|Instagram|LinkedInApp|GSA/i;
 function useIsInAppBrowser() {
@@ -158,7 +159,10 @@ function LoginForm() {
       if (nextParam && nextParam.startsWith('/dashboard')) {
         sessionStorage.setItem('postAuthRedirect', nextParam);
       }
-      await api.post('/auth/magic-link/request', { email });
+      const fp = collectFingerprint();
+      const res = await api.post<{ message: string; requestId?: string }>('/auth/magic-link/request', { email, fp });
+      // P-ML26: store requestId for cross-device SSE polling on verify page
+      if (res?.requestId) sessionStorage.setItem('mdrx_magic_request_id', res.requestId);
       setCountdown(900);
       setCanResend(false);
       setSent(true);
@@ -173,7 +177,8 @@ function LoginForm() {
   const resendLink = async () => {
     setResending(true);
     try {
-      await api.post('/auth/magic-link/request', { email });
+      const fp = collectFingerprint();
+      await api.post('/auth/magic-link/request', { email, fp });
       setCountdown(900);
       setResendCount(c => c + 1);
       startWarmupPing(); // P-ML19: restart warmup after resend

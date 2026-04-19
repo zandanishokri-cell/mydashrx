@@ -687,9 +687,22 @@ export const magicLinkTokens = pgTable('magic_link_tokens', {
   sentAt: timestamp('sent_at', { withTimezone: true }),
   confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
+  // P-ML24: impossible travel detection — geo captured fire-and-forget at token creation
+  requestIp: text('request_ip'),
+  requestCountry: text('request_country'),
+  requestLat: real('request_lat'),
+  requestLon: real('request_lon'),
+  // P-ML25: device fingerprint binding — FNV-1a hash of UA+lang+tz+screen at request time
+  requestFingerprintHash: text('request_fingerprint_hash'),
+  // P-ML26: cross-device auth resolution — stable polling ID + 8-char claim code
+  requestId: uuid('request_id').default(sql`gen_random_uuid()`),
+  crossDeviceCode: text('cross_device_code'),
+  crossDeviceCodeExpiresAt: timestamp('cross_device_code_expires_at', { withTimezone: true }),
+  crossDeviceCompletedAt: timestamp('cross_device_completed_at', { withTimezone: true }),
 }, (t) => ({
   emailIdx: index('magic_link_email_idx').on(t.email),
   activeTokenIdx: index('mlt_active_idx').on(t.tokenHash).where(sql`used_at IS NULL AND expires_at > NOW()`),
+  requestIdIdx: index('mlt_request_id_idx').on(t.requestId),
 }));
 
 export const refreshTokens = pgTable('refresh_tokens', {

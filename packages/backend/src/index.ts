@@ -613,6 +613,23 @@ try {
   console.error('P-ML21 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-ML24/25/26: geo velocity + device fingerprint + cross-device resolution columns on magic_link_tokens
+try {
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS request_ip TEXT`);
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS request_country TEXT`);
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS request_lat REAL`);
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS request_lon REAL`);
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS request_fingerprint_hash TEXT`);
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS request_id UUID DEFAULT gen_random_uuid()`);
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS cross_device_code TEXT`);
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS cross_device_code_expires_at TIMESTAMPTZ`);
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS cross_device_completed_at TIMESTAMPTZ`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS mlt_request_id_idx ON magic_link_tokens(request_id) WHERE request_id IS NOT NULL`);
+  console.log('P-ML24/25/26 magic_link_tokens geo+fingerprint+cross-device columns ensured');
+} catch (err) {
+  console.error('P-ML24/25/26 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-PERF12: BRIN indexes — 10-50x smaller than B-tree for append-only time-series tables
 // CONCURRENTLY means no table lock; safe to run at startup against live data
 try {

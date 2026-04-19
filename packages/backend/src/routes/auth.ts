@@ -26,6 +26,7 @@ import { eq, and, isNull, gt, count, desc, asc, inArray, ne } from 'drizzle-orm'
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword, getActiveEscalation } from '../services/auth.js';
 import { lookupCountry } from '../lib/geoLookup.js';
+import { lookupIp, haversineKm } from '../lib/geoip.js';
 import { sql } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import { authSender } from '../lib/emailHelpers.js';
@@ -688,7 +689,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       if (elapsed < 200) await new Promise(r => setTimeout(r, 200 - elapsed));
     };
 
-    const { email } = req.body as { email?: string };
+    const { email, fp } = req.body as { email?: string; fp?: string };
     if (!email || !z.string().email().safeParse(email).success) {
       return reply.code(400).send({ error: 'Valid email required' });
     }
@@ -720,9 +721,28 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const otpPlain = Math.floor(100_000 + Math.random() * 900_000).toString();
     const otpCode = createHmac('sha256', MAGIC_LINK_SECRET).update(otpPlain).digest('hex');
     const expiresAt = new Date(Date.now() + 30 * 60_000);
-    await db.insert(magicLinkTokens).values({ email, tokenHash, otpCode, expiresAt });
+    const [newToken] = await db.insert(magicLinkTokens).values({ email, tokenHash, otpCode, expiresAt }).returning({ requestId: magicLinkTokens.requestId });
     // P-SEC11: log magic_link_requested (non-enumerable — always fires regardless of user existence)
     await logAuthEvent('magic_link_requested', { email, ip: req.ip });
+
+    // P-ML24: fire-and-forget geo lookup at token creation — never blocks auth flow
+    lookupIp(req.ip).then(geo => {
+      if (!geo) return;
+      db.update(magicLinkTokens)
+        .set({ requestIp: req.ip, requestCountry: geo.country, requestLat: geo.lat, requestLon: geo.lon })
+        .where(eq(magicLinkTokens.tokenHash, tokenHash))
+        .catch(() => {});
+    }).catch(() => {});
+
+    // P-ML25: store client fingerprint hash (sanitized, max 64 chars)
+    if (fp && typeof fp === 'string') {
+      db.update(magicLinkTokens)
+        .set({ requestFingerprintHash: fp.slice(0, 64) })
+        .where(eq(magicLinkTokens.tokenHash, tokenHash))
+        .catch(() => {});
+    }
+
+    const requestId = newToken?.requestId ?? null;
 
     const user = await findUserByEmail(email);
     if (user && !user.deletedAt) {
@@ -800,7 +820,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     await minResponse();
-    return reply.send(ok);
+    // P-ML26: include requestId in response so client can open SSE status channel
+    return reply.send({ ...ok, ...(requestId ? { requestId } : {}) });
   });
 
   // P-ML22: Scanner detection — returns true for empty/bot UAs or sub-5s click after sentAt
@@ -862,9 +883,82 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({ valid: true, email: record.email, token });
   });
 
+  // P-ML24: impossible travel check — compare request vs confirm geo. Fail-open.
+  async function checkGeoAnomaly(record: { requestLat: number | null; requestLon: number | null; createdAt: Date }, confirmIp: string): Promise<boolean> {
+    if (!record.requestLat || !record.requestLon) return false;
+    const confirmGeo = await lookupIp(confirmIp);
+    if (!confirmGeo) return false;
+    const km = haversineKm(record.requestLat, record.requestLon, confirmGeo.lat, confirmGeo.lon);
+    const elapsedMin = (Date.now() - new Date(record.createdAt).getTime()) / 60_000;
+    return km > 500 && elapsedMin < 60;
+  }
+
+  // P-ML26: SSE endpoint — device A polls while waiting; gets push when device B confirms
+  app.get('/magic-link/status/:requestId', async (req, reply) => {
+    const { requestId } = req.params as { requestId: string };
+    reply.raw.setHeader('Content-Type', 'text/event-stream');
+    reply.raw.setHeader('Cache-Control', 'no-cache');
+    reply.raw.setHeader('Connection', 'keep-alive');
+    reply.raw.flushHeaders();
+    const send = (d: object) => { try { reply.raw.write(`data: ${JSON.stringify(d)}\n\n`); } catch { /* client disconnected */ } };
+    const deadline = Date.now() + 25_000;
+    const poll = async () => {
+      if (Date.now() > deadline) { send({ status: 'timeout' }); return reply.raw.end(); }
+      try {
+        const [rec] = await db.select({
+          crossDeviceCompletedAt: magicLinkTokens.crossDeviceCompletedAt,
+          expiresAt: magicLinkTokens.expiresAt,
+          crossDeviceCode: magicLinkTokens.crossDeviceCode,
+        }).from(magicLinkTokens).where(eq(magicLinkTokens.requestId, requestId)).limit(1);
+        if (!rec) { send({ status: 'not_found' }); return reply.raw.end(); }
+        if (rec.expiresAt < new Date()) { send({ status: 'expired' }); return reply.raw.end(); }
+        if (rec.crossDeviceCompletedAt) {
+          send({ status: 'completed_cross_device', crossDeviceCode: rec.crossDeviceCode });
+          return reply.raw.end();
+        }
+      } catch { /* non-fatal — retry */ }
+      setTimeout(poll, 3000);
+    };
+    poll();
+  });
+
+  // P-ML26: claim cross-device session — device A submits code received via SSE
+  app.post('/magic-link/claim-cross-device', {
+    config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
+  }, async (req, reply) => {
+    const { requestId, code } = req.body as { requestId?: string; code?: string };
+    if (!requestId || !code) return reply.code(400).send({ error: 'requestId and code required' });
+    const [record] = await db.select().from(magicLinkTokens)
+      .where(and(eq(magicLinkTokens.requestId, requestId), eq(magicLinkTokens.crossDeviceCode, code))).limit(1);
+    if (!record || !record.crossDeviceCode || !record.crossDeviceCodeExpiresAt || record.crossDeviceCodeExpiresAt < new Date()) {
+      return reply.code(400).send({ error: 'invalid_or_expired_code' });
+    }
+    // Single-use: clear code immediately
+    await db.update(magicLinkTokens)
+      .set({ crossDeviceCode: null, crossDeviceCodeExpiresAt: null })
+      .where(eq(magicLinkTokens.id, record.id));
+    const user = await findUserByEmail(record.email);
+    if (!user || user.deletedAt) return reply.code(404).send({ error: 'user_not_found' });
+    let driverId: string | undefined;
+    if (user.role === 'driver') {
+      const [dr] = await db.select({ id: drivers.id }).from(drivers)
+        .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt))).limit(1);
+      driverId = dr?.id;
+    }
+    const jti = randomUUID(); const familyId = randomUUID();
+    const tokens = signTokens(app, {
+      sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
+      depotIds: user.depotIds as string[], ...(driverId ? { driverId } : {}),
+    }, user.tokenVersion, { jti, familyId });
+    await seedRefreshToken(user.id, familyId, jti, req);
+    logAuthEvent('magic_link_cross_device_claim', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined }).catch(() => {});
+    setRtCookie(reply, tokens.refreshToken);
+    return reply.send({ ...tokens, user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, ...(driverId ? { driverId } : {}) } });
+  });
+
   // P-ML2: Step 2 — POST /magic-link/confirm consumes token and issues JWT
   app.post('/magic-link/confirm', async (req, reply) => {
-    const { token } = req.body as { token?: string };
+    const { token, fp: confirmFp } = req.body as { token?: string; fp?: string };
     if (!token) return reply.code(400).send({ error: 'Token required' });
 
     const tokenHash = signToken(token);
@@ -884,6 +978,69 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (record.expiresAt <= new Date()) {
       logAuthEvent('magic_link_failed', { email: record.email, ip: req.ip, metadata: { reason: 'expired', step: 'confirm' } }).catch(() => {});
       return reply.code(400).send({ error: 'This link has expired. Please request a new one.' });
+    }
+
+    // P-ML24: impossible travel detection — check before consuming token
+    const isImpossibleTravel = await checkGeoAnomaly(
+      { requestLat: record.requestLat, requestLon: record.requestLon, createdAt: record.createdAt },
+      req.ip,
+    );
+
+    // P-ML25: device fingerprint mismatch check — soft signal only (log, don't block unless combined)
+    const fpMismatch = !!(record.requestFingerprintHash && confirmFp && record.requestFingerprintHash !== confirmFp);
+    if (fpMismatch) {
+      logAuthEvent('magic_link_device_mismatch', {
+        email: record.email, ip: req.ip,
+        metadata: { requestFp: record.requestFingerprintHash?.slice(0, 8), confirmFp: confirmFp?.slice(0, 8) },
+      }).catch(() => {});
+    }
+
+    // P-ML24: geo anomaly → require step-up OTP (202 step_up_required)
+    if (isImpossibleTravel) {
+      logAuthEvent('magic_link_geo_anomaly', {
+        email: record.email, ip: req.ip,
+        metadata: { requestIp: record.requestIp, requestCountry: record.requestCountry, confirmIp: req.ip, fpMismatch },
+      }).catch(() => {});
+      // Issue 10-min step-up OTP via the existing OTP mechanism (re-use otpCode slot on a fresh token)
+      const otpPlain = Math.floor(100_000 + Math.random() * 900_000).toString();
+      const otpHash = createHmac('sha256', MAGIC_LINK_SECRET).update(otpPlain).digest('hex');
+      const stepUpToken = randomBytes(32).toString('hex');
+      const stepUpHash = signToken(stepUpToken);
+      await db.insert(magicLinkTokens).values({
+        email: record.email,
+        tokenHash: stepUpHash,
+        otpCode: otpHash,
+        expiresAt: new Date(Date.now() + 10 * 60_000),
+      });
+      // Send OTP via Resend (re-use existing email infra)
+      const resendKey = process.env.RESEND_API_KEY;
+      const otpDisplay = `${otpPlain.slice(0, 3)} ${otpPlain.slice(3)}`;
+      if (resendKey) {
+        fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+          body: JSON.stringify({
+            from: authSender().replace('noreply@', 'security@'),
+            to: record.email,
+            reply_to: 'support@mydashrx.com',
+            subject: '[MyDashRx] Security check: enter this code to sign in',
+            track_clicks: false, track_opens: false,
+            headers: { 'Feedback-ID': 'geo-stepup:mydashrx:resend:auth' },
+            html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Security check — unusual sign-in location detected. Enter this code to continue.</span>
+<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+  <h2 style="color:#dc2626;margin:0 0 8px">Unusual sign-in location</h2>
+  <p style="color:#374151;font-size:15px">We detected a sign-in attempt from an unusual location. Enter this code to confirm it's you:</p>
+  <p style="font-size:36px;font-weight:700;letter-spacing:10px;color:#0F4C81;margin:24px 0;text-align:center">${otpDisplay}</p>
+  <p style="color:#6b7280;font-size:13px">This code expires in 10 minutes. If you didn't request this, contact support immediately.</p>
+</div>`,
+          }),
+        }).catch(() => {});
+      }
+      return reply.code(202).send({
+        status: 'step_up_required',
+        reason: 'geo_anomaly',
+        message: "Unusual sign-in location detected. We sent a 6-digit code to your email to confirm it's you.",
+      });
     }
 
     // P-ML21: confirmedAt set before signTokens — funnel metric for send→confirm latency
@@ -915,6 +1072,15 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     await seedRefreshToken(user.id, mlFamilyId, mlJti, req);
     // P-SEC11: log magic_link_used
     await logAuthEvent('magic_link_used', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
+
+    // P-ML26: set crossDeviceCompletedAt + 8-char claim code so device A can claim session via SSE
+    const crossDeviceCode = randomBytes(4).toString('hex');
+    db.update(magicLinkTokens).set({
+      crossDeviceCompletedAt: new Date(),
+      crossDeviceCode,
+      crossDeviceCodeExpiresAt: new Date(Date.now() + 5 * 60_000),
+    }).where(eq(magicLinkTokens.id, record.id)).catch(() => {});
+
     // P-SEC28: set RT as httpOnly cookie
     setRtCookie(reply, tokens.refreshToken);
     return reply.send({

@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { setSession, resolveNext } from '@/lib/auth';
 import type { AuthTokens } from '@mydash-rx/shared';
 import { PasskeyEnrollModal } from '@/components/PasskeyEnrollModal';
+import { collectFingerprint } from '@/lib/deviceFingerprint';
 
 const LINK_EXPIRY_SECS = 15 * 60;
 
@@ -37,6 +38,15 @@ function VerifyContent() {
   // P-ML18: passkey enrollment modal shown after verify + trust prompt
   const [showPasskeyModal, setShowPasskeyModal] = useState(false);
   const [trustDestination, setTrustDestination] = useState('');
+  // P-ML24: step-up OTP required (geo anomaly)
+  const [stepUpRequired, setStepUpRequired] = useState(false);
+  const [stepUpOtp, setStepUpOtp] = useState('');
+  const [stepUpLoading, setStepUpLoading] = useState(false);
+  const [stepUpError, setStepUpError] = useState('');
+  // P-ML26: cross-device auth resolution
+  const [crossDeviceCode, setCrossDeviceCode] = useState('');
+  const [crossDevicePrompt, setCrossDevicePrompt] = useState(false);
+  const [crossDeviceLoading, setCrossDeviceLoading] = useState(false);
   const deviceLabel = typeof navigator !== 'undefined'
     ? (/mobile/i.test(navigator.userAgent) ? 'Mobile device' : /tablet|ipad/i.test(navigator.userAgent) ? 'Tablet' : 'Desktop / Laptop')
     : 'Unknown device';
@@ -59,6 +69,29 @@ function VerifyContent() {
   const expirySecs = secsLeft % 60;
   const expiryStr = secsLeft > 60 ? `${expiryMins}m ${expirySecs}s` : `${secsLeft}s`;
   const expiryColor = secsLeft < 30 ? 'text-red-500' : secsLeft < 120 ? 'text-amber-500' : 'text-gray-400';
+
+  // P-ML26: SSE cross-device polling — when device B confirms, device A gets notified
+  useEffect(() => {
+    const requestId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('mdrx_magic_request_id') : null;
+    if (!requestId || status === 'success' || status === 'confirming') return;
+    const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com';
+    const evtSource = new EventSource(`${API}/api/v1/auth/magic-link/status/${requestId}`);
+    evtSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data as string) as { status: string; crossDeviceCode?: string };
+        if (data.status === 'completed_cross_device' && data.crossDeviceCode) {
+          evtSource.close();
+          setCrossDeviceCode(data.crossDeviceCode);
+          setCrossDevicePrompt(true);
+        }
+        if (data.status === 'expired' || data.status === 'timeout' || data.status === 'not_found') {
+          evtSource.close();
+        }
+      } catch { /* ignore parse errors */ }
+    };
+    evtSource.onerror = () => evtSource.close();
+    return () => evtSource.close();
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // P-ML19: Page Visibility API — when user returns to this tab, re-trigger verify if not yet confirmed
   useEffect(() => {
@@ -143,12 +176,34 @@ function VerifyContent() {
 
   function handleConfirm() {
     setStatus('confirming');
-    api.post<AuthTokens>('/auth/magic-link/confirm', { token })
-      .then((tokens) => {
+    const fp = collectFingerprint();
+    // P-ML26: raw fetch to handle 202 (step_up_required) — api.post throws on non-2xx
+    const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com';
+    fetch(`${API}/api/v1/auth/magic-link/confirm`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, fp }),
+    })
+      .then(async (res) => {
+        // P-ML24: geo anomaly step-up required
+        if (res.status === 202) {
+          setStatus('valid'); // return to valid state so user can interact
+          setStepUpRequired(true);
+          return;
+        }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({})) as { error?: string; pendingApproval?: boolean };
+          if (data.pendingApproval) { router.replace('/pending-approval'); return; }
+          setErrorMsg(data.error ?? 'This link is invalid or has expired.');
+          setStatus('error');
+          return;
+        }
+        const tokens = await res.json() as AuthTokens;
         setSession(tokens);
         setStatus('success');
-        const u = tokens.user as any;
-        const dest = resolveNext(u.role, u.org?.pendingApproval);
+        const u = tokens.user as { role?: string; org?: { pendingApproval?: boolean }; mustChangePassword?: boolean };
+        const dest = resolveNext(u.role ?? '', u.org?.pendingApproval);
         const finalDest = u.mustChangePassword ? '/change-password' : dest;
         // P-SES22: Show trust prompt before redirecting (skip for pending approval / password change)
         if (!u.mustChangePassword && !u.org?.pendingApproval) {
@@ -158,21 +213,52 @@ function VerifyContent() {
           router.replace(finalDest);
         }
       })
-      .catch((err: Error) => {
-        const raw = err.message ?? '';
-        const match = raw.match(/\{.*\}/);
-        let msg = 'This link is invalid or has expired.';
-        if (match) {
-          try {
-            const p = JSON.parse(match[0]);
-            if (p.pendingApproval) { router.replace('/pending-approval'); return; }
-            msg = p.error ?? msg;
-          } catch { /* ignore */ }
-        }
-        setErrorMsg(msg);
+      .catch(() => {
+        setErrorMsg('This link is invalid or has expired.');
         setStatus('error');
       });
   }
+
+  // P-ML26: device A claims session after device B confirmed via SSE code
+  const handleCrossDeviceClaim = async () => {
+    const requestId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('mdrx_magic_request_id') : null;
+    if (!requestId || !crossDeviceCode) return;
+    setCrossDeviceLoading(true);
+    try {
+      const tokens = await api.post<AuthTokens>('/auth/magic-link/claim-cross-device', { requestId, code: crossDeviceCode });
+      sessionStorage.removeItem('mdrx_magic_request_id');
+      setSession(tokens);
+      setStatus('success');
+      const u = tokens.user as { role?: string; org?: { pendingApproval?: boolean }; mustChangePassword?: boolean };
+      const dest = resolveNext(u.role ?? '', u.org?.pendingApproval);
+      router.replace(u.mustChangePassword ? '/change-password' : dest);
+    } catch {
+      setCrossDevicePrompt(false);
+      setErrorMsg('The cross-device code expired or is invalid. Please request a new sign-in link.');
+      setStatus('error');
+    } finally {
+      setCrossDeviceLoading(false);
+    }
+  };
+
+  // P-ML24: submit step-up OTP after geo anomaly
+  const handleStepUpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStepUpLoading(true);
+    setStepUpError('');
+    try {
+      const tokens = await api.post<AuthTokens>('/auth/magic-link/verify-code', { email: validatedEmail, code: stepUpOtp });
+      setSession(tokens);
+      setStatus('success');
+      const u = tokens.user as { role?: string; org?: { pendingApproval?: boolean }; mustChangePassword?: boolean };
+      const dest = resolveNext(u.role ?? '', u.org?.pendingApproval);
+      router.replace(u.mustChangePassword ? '/change-password' : dest);
+    } catch {
+      setStepUpError('Invalid or expired code. Please check your email and try again.');
+    } finally {
+      setStepUpLoading(false);
+    }
+  };
 
   async function handleOtpSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -234,6 +320,78 @@ function VerifyContent() {
           Continue to sign in
         </button>
         <p className="text-xs text-gray-400 mt-3">This protected link requires manual confirmation to prevent scanner interference.</p>
+      </div>
+    );
+  }
+
+  // P-ML26: Cross-device confirmation prompt
+  if (crossDevicePrompt) {
+    return (
+      <div className="text-center">
+        <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg className="w-6 h-6 text-[#0F4C81]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <h2 className="text-base font-semibold text-gray-900 mb-2">Link opened on another device</h2>
+        <p className="text-gray-500 text-sm mb-5">Your sign-in link was clicked on another device. Did you do this? You can sign in here too.</p>
+        <div className="flex gap-3 justify-center">
+          <button
+            onClick={handleCrossDeviceClaim}
+            disabled={crossDeviceLoading}
+            className="px-5 py-2.5 bg-[#0F4C81] text-white rounded-lg text-sm font-semibold hover:bg-[#0d3d69] disabled:opacity-50"
+          >
+            {crossDeviceLoading ? 'Signing in…' : 'Yes, sign me in here'}
+          </button>
+          <button
+            onClick={() => { setCrossDevicePrompt(false); router.push('/login'); }}
+            className="px-5 py-2.5 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200"
+          >
+            No, cancel
+          </button>
+        </div>
+        <p className="text-xs text-gray-400 mt-4">This option expires in 5 minutes.</p>
+      </div>
+    );
+  }
+
+  // P-ML24: Geo anomaly step-up OTP challenge
+  if (stepUpRequired) {
+    return (
+      <div>
+        <div className="text-center mb-5">
+          <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-6 h-6 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+          </div>
+          <h2 className="text-base font-semibold text-gray-900 mb-1">Security check required</h2>
+          <p className="text-gray-500 text-sm">We detected an unusual sign-in location. Enter the 6-digit code we just sent to <span className="font-medium text-gray-700">{validatedEmail}</span> to confirm it&apos;s you.</p>
+        </div>
+        <form onSubmit={handleStepUpSubmit} className="space-y-3">
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            aria-label="6-digit security code"
+            value={stepUpOtp}
+            onChange={e => setStepUpOtp(e.target.value.replace(/[^\d\s]/g, ''))}
+            placeholder="123 456"
+            maxLength={7}
+            required
+            autoFocus
+            className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm font-mono tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-amber-300"
+          />
+          {stepUpError && <p className="text-red-500 text-sm">{stepUpError}</p>}
+          <button
+            type="submit"
+            disabled={stepUpLoading}
+            className="w-full bg-[#0F4C81] text-white rounded-lg px-5 py-3 text-sm font-semibold hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
+          >
+            {stepUpLoading ? 'Verifying…' : 'Confirm identity'}
+          </button>
+        </form>
+        <p className="text-xs text-gray-400 mt-3 text-center">Code expires in 10 minutes. Didn&apos;t get it? <a href="/login" className="text-[#0F4C81] hover:underline">Request a new link</a>.</p>
       </div>
     );
   }
