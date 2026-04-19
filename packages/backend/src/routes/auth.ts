@@ -837,6 +837,25 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
+  // P-ML9: POST /auth/magic-link/cancel — invalidate ML token without creating session
+  // Lets user on wrong device cancel a link that was clicked on shared/unintended device
+  app.post('/magic-link/cancel', { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (req, reply) => {
+    const { token } = req.body as { token?: string };
+    if (!token) return reply.code(400).send({ error: 'Token required' });
+
+    const tokenHash = signToken(token);
+    const [record] = await db.select({ id: magicLinkTokens.id, usedAt: magicLinkTokens.usedAt, expiresAt: magicLinkTokens.expiresAt, email: magicLinkTokens.email })
+      .from(magicLinkTokens).where(eq(magicLinkTokens.tokenHash, tokenHash)).limit(1);
+
+    if (!record) return reply.code(400).send({ error: 'Invalid token' });
+    if (record.usedAt) return reply.code(409).send({ error: 'This link has already been used and cannot be cancelled.' });
+    if (record.expiresAt <= new Date()) return reply.code(410).send({ error: 'This link has already expired.' });
+
+    // Mark as used (cancelled) without creating a session
+    await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
+    return reply.send({ cancelled: true, message: 'Link cancelled. Please request a new magic link from your intended device.' });
+  });
+
   // GET /auth/org-status — approval state for authenticated user (P-ADM7)
   app.get('/org-status', async (req, reply) => {
     try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }

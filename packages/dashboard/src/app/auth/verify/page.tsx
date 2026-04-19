@@ -23,6 +23,11 @@ function VerifyContent() {
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState('');
   const [secsLeft, setSecsLeft] = useState(LINK_EXPIRY_SECS);
+  // P-ML9: cancel + device context state
+  const [cancelStatus, setCancelStatus] = useState<'idle' | 'cancelling' | 'cancelled'>('idle');
+  const deviceLabel = typeof navigator !== 'undefined'
+    ? (/mobile/i.test(navigator.userAgent) ? 'Mobile device' : /tablet|ipad/i.test(navigator.userAgent) ? 'Tablet' : 'Desktop / Laptop')
+    : 'Unknown device';
 
   // Expiry countdown — runs while link is active
   useEffect(() => {
@@ -73,6 +78,17 @@ function VerifyContent() {
         setStatus('error');
       });
   }, [token]);
+
+  async function handleCancel() {
+    if (!token || cancelStatus !== 'idle') return;
+    setCancelStatus('cancelling');
+    try {
+      await api.post('/auth/magic-link/cancel', { token });
+      setCancelStatus('cancelled');
+    } catch {
+      setCancelStatus('idle'); // fail-open — don't block user
+    }
+  }
 
   function handleConfirm() {
     setStatus('confirming');
@@ -205,6 +221,23 @@ function VerifyContent() {
   }
 
   if (status === 'valid') {
+    if (cancelStatus === 'cancelled') {
+      return (
+        <div className="text-center">
+          <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-6 h-6 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h2 className="text-base font-semibold text-gray-900 mb-2">Sign-in link cancelled</h2>
+          <p className="text-gray-500 text-sm mb-4">This link has been invalidated. Please request a new magic link from your intended device.</p>
+          <a href="/login" className="w-full bg-[#0F4C81] text-white rounded-lg px-5 py-3 text-sm font-semibold hover:bg-[#0d3d69] transition-colors block">
+            Request new link
+          </a>
+        </div>
+      );
+    }
+
     return (
       <div className="text-center">
         <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -213,8 +246,15 @@ function VerifyContent() {
           </svg>
         </div>
         <h2 className="text-base font-semibold text-gray-900 mb-2">Complete your sign in</h2>
-        {validatedEmail && <p className="text-gray-500 text-sm mb-4">Signing in as <span className="font-medium text-gray-700">{validatedEmail}</span></p>}
-        <p className="text-gray-500 text-sm mb-6">Click below to securely sign in to MyDashRx.</p>
+        {validatedEmail && <p className="text-gray-500 text-sm mb-3">Signing in as <span className="font-medium text-gray-700">{validatedEmail}</span></p>}
+
+        {/* P-ML9: Device context panel — helps user detect shared-computer HIPAA risk */}
+        <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 mb-5 text-left">
+          <p className="text-xs text-gray-500 mb-1 font-medium">Signing in on</p>
+          <p className="text-sm text-gray-800 font-medium">{deviceLabel}</p>
+          <p className="text-xs text-gray-400 mt-1.5">Not the right device? <button onClick={handleCancel} disabled={cancelStatus === 'cancelling'} className="text-[#0F4C81] underline underline-offset-2 hover:text-[#0d3d69] disabled:opacity-50">{cancelStatus === 'cancelling' ? 'Cancelling…' : 'Cancel this link'}</button> and request a new one on your intended device.</p>
+        </div>
+
         <button
           onClick={handleConfirm}
           className="w-full bg-[#0F4C81] text-white rounded-lg px-5 py-3 text-sm font-semibold hover:bg-[#0d3d69] transition-colors"
