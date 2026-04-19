@@ -15,6 +15,7 @@ const pharmacySignupSchema = z.object({
   orgAddress: z.string().min(5).max(200).optional(),
   adminName: z.string().min(2).max(100),
   adminEmail: z.string().email(),
+  npiNumber: z.string().regex(/^\d{10}$/).optional(), // P-ADM27
 });
 
 const driverSignupSchema = z.object({
@@ -29,7 +30,24 @@ const acceptInviteSchema = z.object({
   name: z.string().min(2).max(100),
 });
 
-async function assessSignupRisk(orgName: string, adminEmail: string): Promise<{ flags: string[]; score: number; tier: string }> {
+/** P-ADM27: Call NPPES free API to verify NPI — fail-open with 2s timeout */
+async function verifyNpi(npi: string): Promise<'valid' | 'invalid' | 'unknown'> {
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 2000);
+    const res = await fetch(`https://npiregistry.cms.hhs.gov/api/?number=${npi}&version=2.1`, { signal: ctrl.signal });
+    clearTimeout(tid);
+    if (!res.ok) return 'unknown';
+    const data = await res.json() as { result_count?: number };
+    return (data.result_count ?? 0) > 0 ? 'valid' : 'invalid';
+  } catch { return 'unknown'; }
+}
+
+async function assessSignupRisk(
+  orgName: string,
+  adminEmail: string,
+  npiNumber?: string,
+): Promise<{ flags: string[]; score: number; tier: string; npiVerified: boolean }> {
   const flags: string[] = [];
   const domain = adminEmail.split('@')[1]?.toLowerCase() ?? '';
   if ((disposableDomains as string[]).includes(domain)) flags.push('disposable_email');
@@ -40,16 +58,25 @@ async function assessSignupRisk(orgName: string, adminEmail: string): Promise<{ 
     .limit(3);
   if (similar.length > 0) flags.push('similar_org_name');
 
+  // P-ADM27: NPI verification — +40 if invalid, -10 if verified
+  let npiVerified = false;
+  if (npiNumber) {
+    const npiStatus = await verifyNpi(npiNumber);
+    if (npiStatus === 'invalid') { flags.push('invalid_npi'); }
+    else if (npiStatus === 'valid') { npiVerified = true; }
+  }
+
   // P-ADM22: weighted risk score + trust tier routing
-  const WEIGHTS: Record<string, number> = { disposable_email: 30, similar_org_name: 25 };
-  const score = Math.min(100, flags.reduce((sum, f) => sum + (WEIGHTS[f] ?? 5), 0));
+  const WEIGHTS: Record<string, number> = { disposable_email: 30, similar_org_name: 25, invalid_npi: 40 };
+  const rawScore = flags.reduce((sum, f) => sum + (WEIGHTS[f] ?? 5), 0);
+  const score = Math.min(100, npiVerified ? Math.max(0, rawScore - 10) : rawScore);
   const hasDisposable = flags.includes('disposable_email');
   const hasSimilar = flags.includes('similar_org_name');
   const tier = (score > 70 || (hasDisposable && hasSimilar)) ? 'block'
     : (score <= 15 && !hasDisposable) ? 'auto_approve'
     : 'manual';
 
-  return { flags, score, tier };
+  return { flags, score, tier, npiVerified };
 }
 
 async function sendApplicantConfirmation(orgName: string, adminEmail: string, adminName: string) {
@@ -146,12 +173,12 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
   app.post('/pharmacy', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req, reply) => {
     const parsed = pharmacySignupSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request' });
-    const { orgName, orgPhone, orgAddress, adminName, adminEmail } = parsed.data;
+    const { orgName, orgPhone, orgAddress, adminName, adminEmail, npiNumber } = parsed.data;
 
     const existing = await findUserByEmail(adminEmail);
     if (existing) return reply.code(409).send({ error: 'An account with this email already exists.' });
 
-    const { flags: riskFlags, score: riskScore, tier: trustTier } = await assessSignupRisk(orgName, adminEmail);
+    const { flags: riskFlags, score: riskScore, tier: trustTier, npiVerified } = await assessSignupRisk(orgName, adminEmail, npiNumber);
 
     const [org] = await db.insert(organizations).values({
       name: orgName,
@@ -159,6 +186,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
       ...(riskFlags.length > 0 ? { riskFlags } : {}),
       riskScore,
       trustTier,
+      ...(npiNumber ? { npiNumber, npiVerified, ...(npiVerified ? { npiVerifiedAt: new Date() } : {}) } : {}),
     }).returning();
 
     const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
@@ -326,6 +354,61 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: [] },
     });
+  });
+
+  // ─── P-ADM28: Reapply after rejection ────────────────────────────────────
+  // POST /signup/reapply — HMAC-tokenized link from rejection email
+  // Clears rejectedAt, re-runs risk scoring, sets reappliedAt, re-queues for review
+  app.post('/reapply', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req, reply) => {
+    const { orgId, exp, sig, npiNumber } = req.body as {
+      orgId?: string; exp?: string; sig?: string; npiNumber?: string;
+    };
+    if (!orgId || !exp || !sig) return reply.code(400).send({ error: 'Missing parameters' });
+
+    const secret = process.env.MAGIC_LINK_SECRET ?? 'fallback-secret';
+    const payload = `reapply:${orgId}:${exp}`;
+    const expected = createHmac('sha256', secret).update(payload).digest('hex');
+    try {
+      const sigBuf = Buffer.from(sig, 'hex');
+      const expBuf = Buffer.from(expected, 'hex');
+      if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+        return reply.code(401).send({ error: 'Invalid or tampered reapply link' });
+      }
+    } catch { return reply.code(401).send({ error: 'Invalid signature' }); }
+    if (Math.floor(Date.now() / 1000) > parseInt(exp, 10)) {
+      return reply.code(410).send({ error: 'Reapply link expired — please contact support@mydashrx.com' });
+    }
+
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+    if (!org.rejectedAt) return reply.code(409).send({ error: 'Organization is not in rejected state' });
+
+    // Re-run risk assessment with optional new NPI
+    const [admin] = await db.select({ email: users.email, name: users.name })
+      .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
+
+    const { flags: riskFlags, score: riskScore, tier: trustTier, npiVerified } =
+      await assessSignupRisk(org.name, admin?.email ?? '', npiNumber);
+
+    await db.update(organizations).set({
+      rejectedAt: null,
+      rejectionReason: null,
+      rejectionNote: null,
+      pendingApproval: true,
+      reappliedAt: new Date(),
+      riskFlags: riskFlags.length > 0 ? riskFlags : null,
+      riskScore,
+      trustTier,
+      ...(npiNumber ? { npiNumber, npiVerified, ...(npiVerified ? { npiVerifiedAt: new Date() } : {}) } : {}),
+    }).where(eq(organizations.id, orgId));
+
+    if (admin) {
+      await db.update(users).set({ pendingApproval: true })
+        .where(and(eq(users.orgId, orgId), isNull(users.deletedAt)));
+      notifySuperAdmins(org.name, admin.email).catch(() => {});
+    }
+
+    return reply.send({ message: 'Reapplication submitted. Our team will review within 2–4 business hours.' });
   });
 
   // ─── Validate invitation token (for frontend pre-fill) ───────────────────

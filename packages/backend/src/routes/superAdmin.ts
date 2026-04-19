@@ -4,6 +4,7 @@ import { db } from '../db/connection.js';
 import { organizations, users, stops, drivers, adminAuditLogs, magicLinkTokens, refreshTokens, depots } from '../db/schema.js';
 import { eq, isNull, sql, gte, lte, count, and, desc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
+import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
 
 const PLAN_PRICES: Record<string, number> = {
   starter: 0, growth: 99, pro: 249, enterprise: 499,
@@ -254,47 +255,10 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     await db.update(organizations).set({ pendingApproval: false, approvedAt: new Date() }).where(eq(organizations.id, orgId));
     await db.update(users).set({ pendingApproval: false }).where(and(eq(users.orgId, orgId), isNull(users.deletedAt)));
 
-    // Send welcome email to pharmacy admin
+    // P-ADM26: send welcome email via shared helper
     const [admin] = await db.select({ email: users.email, name: users.name })
       .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
-
-    const resendKey = process.env.RESEND_API_KEY;
-    const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
-    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
-
-    if (admin && resendKey) {
-      fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-        body: JSON.stringify({
-          from: `MyDashRx <noreply@${senderDomain}>`,
-          to: admin.email,
-          subject: `Welcome to MyDashRx — ${org.name} is approved!`,
-          html: `
-            <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
-              <h2 style="color:#0F4C81;margin:0 0 8px">You're approved — let's get delivering!</h2>
-              <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${admin.name},</p>
-              <p style="color:#374151;margin:0 0 24px;font-size:15px"><strong>${org.name}</strong> is now live on MyDashRx. Complete these 3 steps and you'll have your first delivery route running today.</p>
-              <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:16px 20px;margin-bottom:24px">
-                <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px">
-                  <span style="background:#0F4C81;color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">1</span>
-                  <div><p style="margin:0;font-size:14px;font-weight:600;color:#0c4a6e">Add your depot</p><p style="margin:2px 0 0;font-size:13px;color:#0369a1">Your pharmacy location — used as the route start point</p></div>
-                </div>
-                <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px">
-                  <span style="background:#0F4C81;color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">2</span>
-                  <div><p style="margin:0;font-size:14px;font-weight:600;color:#0c4a6e">Add a driver</p><p style="margin:2px 0 0;font-size:13px;color:#0369a1">They'll get the app + their first route automatically</p></div>
-                </div>
-                <div style="display:flex;align-items:flex-start;gap:12px">
-                  <span style="background:#0F4C81;color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">3</span>
-                  <div><p style="margin:0;font-size:14px;font-weight:600;color:#0c4a6e">Create your first delivery plan</p><p style="margin:2px 0 0;font-size:13px;color:#0369a1">Import stops via CSV or add individually</p></div>
-                </div>
-              </div>
-              <a href="${dashUrl}/login?welcome=1" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;margin-bottom:16px">Sign in &amp; start setup →</a>
-              <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Need help? Reply to this email or book a 15-min setup call: <a href="mailto:onboarding@mydashrx.com?subject=Setup%20call%20for%20${encodeURIComponent(org.name)}" style="color:#0F4C81">onboarding@mydashrx.com</a></p>
-            </div>`,
-        }),
-      }).catch((e: unknown) => { console.error('[Resend] approval email failed:', e); });
-    }
+    if (admin) sendOrgApprovalEmail(orgId, org.name, admin.email, admin.name);
 
     const actor = req.user as { sub: string; email: string };
     await logAuditAction(actor.sub, actor.email, 'approve_org', orgId, org.name);
@@ -374,6 +338,14 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const guidance = reason ? RECOVERY_GUIDANCE[reason] : null;
 
     if (admin && resendKey) {
+      // P-ADM28: generate HMAC reapply link (48hr expiry)
+      const reapplySecret = process.env.MAGIC_LINK_SECRET ?? 'fallback-secret';
+      const reapplyExp = Math.floor(Date.now() / 1000) + 48 * 3600;
+      const reapplyPayload = `reapply:${orgId}:${reapplyExp}`;
+      const reaplySig = createHmac('sha256', reapplySecret).update(reapplyPayload).digest('hex');
+      const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+      const reapplyUrl = `${dashUrl}/reapply?orgId=${orgId}&exp=${reapplyExp}&sig=${reaplySig}`;
+
       const reasonLabel: Record<string, string> = {
         missing_license_proof: 'Missing pharmacy license documentation',
         invalid_npi: 'NPI number could not be verified',
@@ -383,6 +355,8 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         service_area: 'Outside current service area',
         other: 'See note below',
       };
+      // Show reapply CTA for fixable reasons; hide for non-fixable (duplicate, service_area)
+      const showReapply = !['duplicate_account', 'service_area'].includes(reason ?? '');
       fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
@@ -400,6 +374,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
                 ${guidance ? `<p style="color:#78350f;font-size:14px;margin:8px 0 0"><strong>${guidance.heading}</strong><br>${guidance.body}</p>` : ''}
                 ${note ? `<p style="color:#78350f;font-size:13px;margin:8px 0 0;border-top:1px solid #fde68a;padding-top:8px">Additional note: ${note}</p>` : ''}
               </div>` : ''}
+              ${showReapply ? `<a href="${reapplyUrl}" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;margin-bottom:16px">Reapply now →</a><p style="color:#9ca3af;font-size:11px;margin:0 0 16px">Reapply link expires in 48 hours.</p>` : ''}
               <p style="color:#6b7280;font-size:14px;margin:0 0 8px">Questions? Reply to this email or contact <a href="mailto:support@mydashrx.com" style="color:#0F4C81">support@mydashrx.com</a>. We respond within 2 business hours.</p>
               <p style="color:#9ca3af;font-size:12px;margin-top:24px">Application ref: ${orgId}</p>
             </div>`,
@@ -520,22 +495,9 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     await db.update(users).set({ pendingApproval: false }).where(and(eq(users.orgId, orgId), isNull(users.deletedAt)));
     const [admin] = await db.select({ email: users.email, name: users.name })
       .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
-    const resendKey = process.env.RESEND_API_KEY;
-    const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
-    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
-    if (admin && resendKey) {
-      fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-        body: JSON.stringify({
-          from: `MyDashRx <noreply@${senderDomain}>`,
-          to: admin.email,
-          subject: `Welcome to MyDashRx — ${org.name} is approved!`,
-          html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px"><h2 style="color:#0F4C81;margin:0 0 8px">You're approved — let's get delivering!</h2><p style="color:#374151;margin:0 0 24px;font-size:15px">Hi ${admin.name}, <strong>${org.name}</strong> is now live on MyDashRx.</p><a href="${dashUrl}/login?welcome=1" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;">Sign in &amp; start setup →</a></div>`,
-        }),
-      }).catch((e: unknown) => { console.error('[ADM11] welcome email failed:', e); });
-    }
+    if (admin) sendOrgApprovalEmail(orgId, org.name, admin.email, admin.name);
     await logAuditAction('email-link', 'email-approve', 'approve_org', orgId, org.name);
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
     return reply.redirect(`${dashUrl}/admin/approvals?approved=${orgId}`);
   });
 

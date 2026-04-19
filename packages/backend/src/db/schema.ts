@@ -77,6 +77,10 @@ export const organizations = pgTable('organizations', {
   riskScore: integer('risk_score'), // 0-100 composite risk score (P-ADM22)
   trustTier: text('trust_tier').default('manual'), // 'auto_approve' | 'block' | 'manual'
   autoApprovedAt: timestamp('auto_approved_at'),
+  npiNumber: text('npi_number'), // P-ADM27: 10-digit NPI captured at signup
+  npiVerified: boolean('npi_verified').default(false), // NPPES API verified
+  npiVerifiedAt: timestamp('npi_verified_at'), // when NPPES confirmed NPI
+  reappliedAt: timestamp('reapplied_at'), // P-ADM28: timestamp of most recent reapplication
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });
