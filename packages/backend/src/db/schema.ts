@@ -139,6 +139,8 @@ export const users = pgTable(
     // P-DEL12: RFC 8058 one-click unsubscribe
     unsubscribeToken: text('unsubscribe_token'), // HMAC-signed opaque token for unsubscribe link
     emailOptOut: boolean('email_opt_out').notNull().default(false), // true = suppress all non-critical emails
+    // P-RBAC34: last successful login timestamp — used for zombie-account detection (HIPAA §164.308(a)(3)(ii)(C))
+    lastLoginAt: timestamp('last_login_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },
@@ -697,6 +699,23 @@ export const webauthnChallenges = pgTable('webauthn_challenges', {
   expiresAt: timestamp('expires_at').notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (t) => ({ userIdx: index('wac_user_idx').on(t.userId) }));
+
+// P-RBAC33: JIT temporary role escalation — super_admin can elevate a user's role for max 8hr
+export const roleEscalations = pgTable('role_escalations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
+  fromRole: text('from_role').notNull(),
+  toRole: text('to_role').notNull(),
+  grantedBy: uuid('granted_by').notNull().references(() => users.id),
+  reason: text('reason').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  revokedAt: timestamp('revoked_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  userIdx: index('re_user_idx').on(t.userId),
+  expiresIdx: index('re_expires_idx').on(t.expiresAt),
+}));
 
 // P-SES22: Device trust — "Remember this device for 30 days" after magic link verify
 export const trustedDevices = pgTable('trusted_devices', {

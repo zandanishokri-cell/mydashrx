@@ -24,7 +24,7 @@ import { db } from '../db/connection.js';
 import { users, organizations, drivers, magicLinkTokens, refreshTokens, adminAuditLogs, trustedDevices } from '../db/schema.js';
 import { eq, and, isNull, gt, count, desc, asc, inArray, ne } from 'drizzle-orm';
 
-import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
+import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword, getActiveEscalation } from '../services/auth.js';
 import { lookupCountry } from '../lib/geoLookup.js';
 import { sql } from 'drizzle-orm';
 import { createHash } from 'crypto';
@@ -242,12 +242,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // P-LCK1: Reset failed attempts on successful login
-    if ((user.failedLoginAttempts ?? 0) > 0) {
-      await db.update(users)
-        .set({ failedLoginAttempts: 0, lockedUntil: null })
-        .where(eq(users.id, user.id));
-    }
+    // P-LCK1: Reset failed attempts on successful login; P-RBAC34: update lastLoginAt (HIPAA §164.308(a)(3)(ii)(C))
+    await db.update(users)
+      .set({ failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() })
+      .where(eq(users.id, user.id));
 
     // For drivers, look up their drivers table record to include driverId in JWT
     let driverId: string | undefined;
@@ -268,7 +266,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     };
     const jti = randomUUID();
     const familyId = randomUUID();
-    const tokens = signTokens(app, payload, user.tokenVersion, { jti, familyId });
+    // P-RBAC33: check for active JIT escalation to inject escalatedRole into AT
+    const escalation = await getActiveEscalation(user.id).catch(() => null);
+    const tokens = signTokens(app, payload, user.tokenVersion, { jti, familyId }, escalation);
     await seedRefreshToken(user.id, familyId, jti, req);
     // P-SEC11: log login_success
     await logAuthEvent('login_success', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
@@ -816,6 +816,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const user = await findUserByEmail(record.email);
     if (!user || user.deletedAt) return reply.code(404).send({ error: 'No account found for this email.' });
+    // P-RBAC34: update lastLoginAt on every successful magic link auth (HIPAA §164.308(a)(3)(ii)(C))
+    db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id)).catch(() => {});
     if (user.pendingApproval) return reply.code(403).send({ pendingApproval: true, error: 'Your account is pending admin approval. You will receive an email when approved.' });
 
     let driverId: string | undefined;
@@ -827,12 +829,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const mlJti = randomUUID();
     const mlFamilyId = randomUUID();
+    // P-RBAC33: check for active JIT escalation to inject escalatedRole into AT
+    const mlEscalation = await getActiveEscalation(user.id).catch(() => null);
     const tokens = signTokens(app, {
       sub: user.id, email: user.email, role: user.role, orgId: user.orgId,
       depotIds: user.depotIds as string[],
       ...(user.mustChangePassword ? { mustChangePw: true } : {}),
       ...(driverId ? { driverId } : {}),
-    }, user.tokenVersion, { jti: mlJti, familyId: mlFamilyId });
+    }, user.tokenVersion, { jti: mlJti, familyId: mlFamilyId }, mlEscalation);
     await seedRefreshToken(user.id, mlFamilyId, mlJti, req);
     // P-SEC11: log magic_link_used
     await logAuthEvent('magic_link_used', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });

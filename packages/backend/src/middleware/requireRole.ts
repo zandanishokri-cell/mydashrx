@@ -27,9 +27,11 @@ export function requireRole(...roles: Role[]) {
       reply.code(401).send({ error: 'Unauthorized' });
       return;
     }
-    const payload = req.user as { role: Role; orgId?: string; mustChangePw?: boolean };
-    if (!roles.includes(payload.role)) {
-      logDenial(req, `requireRole(${roles.join(',')})`, 'insufficient_role', payload.role);
+    // P-RBAC33: use escalatedRole from JWT if present and active (injected by signTokens on JIT escalation)
+    const payload = req.user as { role: Role; orgId?: string; mustChangePw?: boolean; escalatedRole?: string; escalationExpiresAt?: string };
+    const effectiveRole = (payload.escalatedRole ?? payload.role) as Role;
+    if (!roles.includes(effectiveRole)) {
+      logDenial(req, `requireRole(${roles.join(',')})`, 'insufficient_role', effectiveRole);
       reply.code(403).send({ error: 'Forbidden' });
       return;
     }

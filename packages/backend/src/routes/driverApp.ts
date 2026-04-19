@@ -11,6 +11,7 @@ import { uploadBuffer } from '../services/storage.js';
 import type { StopStatus } from '@mydash-rx/shared';
 import { todayInTz } from '../utils/date.js';
 import sharp from 'sharp';
+import { requireTrustedDeviceForCOD } from '../lib/abacPolicies.js'; // P-RBAC35
 
 async function resolveDriverId(
   user: { driverId?: string; email: string; orgId: string },
@@ -240,6 +241,10 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const [route] = await db.select({ driverId: routes.driverId })
       .from(routes).where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
+
+    // P-RBAC35 Policy 1: controlled substance stops require trusted device
+    const codAllowed = await requireTrustedDeviceForCOD(req, reply, stopId);
+    if (!codAllowed) return reply.sent ? undefined : reply.code(403).send({ error: 'Forbidden' });
 
     const updates: Record<string, unknown> = { status };
     if (status === 'arrived') updates.arrivedAt = new Date();

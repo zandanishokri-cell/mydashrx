@@ -1,8 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 import crypto from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, drivers, adminAuditLogs, auditLogs, depots, refreshTokens, stops, stopNotes } from '../db/schema.js';
-import { eq, isNull, and, sql, inArray } from 'drizzle-orm';
+import { organizations, users, drivers, adminAuditLogs, auditLogs, depots, refreshTokens, stops, stopNotes, roleEscalations } from '../db/schema.js';
+import { eq, isNull, and, sql, inArray, gt, desc } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import bcrypt from 'bcryptjs';
 import { checkDriverLimit } from '../utils/usageLimits.js';
@@ -218,20 +218,67 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // DELETE /orgs/:orgId/users/:userId — soft delete
+  // P-RBAC34: HIPAA §164.308(a)(3)(ii)(C) — immediately revoke all active refresh tokens on termination
   app.delete('/:orgId/users/:userId', { preHandler: requireRole('super_admin', 'pharmacy_admin') }, async (req, reply) => {
     const { orgId, userId } = req.params as { orgId: string; userId: string };
-    const requestor = req.user as { sub: string; orgId: string; role: string };
+    const requestor = req.user as { sub: string; orgId: string; email: string; role: string };
     if (requestor.role !== 'super_admin' && requestor.orgId !== orgId) {
       return reply.code(403).send({ error: 'Forbidden' });
     }
     if (requestor.sub === userId) {
       return reply.code(400).send({ error: 'Cannot remove yourself' });
     }
-    // P-SES6: Increment tokenVersion on soft-delete — immediately revokes all outstanding refresh tokens
-    await db
-      .update(users)
-      .set({ deletedAt: new Date(), tokenVersion: sql`${users.tokenVersion} + 1` })
+
+    const [targetUser] = await db.select({ id: users.id, email: users.email, role: users.role })
+      .from(users).where(and(eq(users.id, userId), eq(users.orgId, orgId))).limit(1);
+    if (!targetUser) return reply.code(404).send({ error: 'User not found' });
+
+    const now = new Date();
+
+    // P-SES6: Increment tokenVersion + soft-delete
+    await db.update(users)
+      .set({ deletedAt: now, tokenVersion: sql`${users.tokenVersion} + 1` })
       .where(and(eq(users.id, userId), eq(users.orgId, orgId)));
+
+    // P-RBAC34: Immediately revoke ALL active refresh tokens (not just via tokenVersion — belt+suspenders)
+    await db.update(refreshTokens)
+      .set({ status: 'revoked' })
+      .where(and(eq(refreshTokens.userId, userId), eq(refreshTokens.status, 'active')));
+
+    // P-RBAC34: Revoke any active JIT escalations for this user
+    await db.update(roleEscalations)
+      .set({ revokedAt: now })
+      .where(and(eq(roleEscalations.userId, userId), isNull(roleEscalations.revokedAt)));
+
+    // P-RBAC34: Audit log access_revoked (HIPAA §164.308(a)(3)(ii)(C))
+    await db.insert(adminAuditLogs).values({
+      actorId: requestor.sub,
+      actorEmail: requestor.email,
+      action: 'access_revoked',
+      targetId: userId,
+      targetName: targetUser.email,
+      metadata: { orgId, targetRole: targetUser.role, reason: 'user_terminated', revokedAt: now.toISOString() },
+    }).catch((e: unknown) => { console.error('[AuditLog] access_revoked insert failed:', e); });
+
+    // P-RBAC34: Confirmation email to terminated user (fire-and-forget)
+    const resendKey = process.env.RESEND_API_KEY;
+    const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+    if (resendKey) {
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+        body: JSON.stringify({
+          from: `MyDashRx <noreply@${senderDomain}>`,
+          to: targetUser.email,
+          reply_to: 'support@mydashrx.com',
+          subject: 'Your MyDashRx account has been deactivated',
+          track_clicks: false,
+          headers: { 'Feedback-ID': 'account-deactivated:mydashrx:resend:auth' },
+          html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your MyDashRx account access has been removed by your organization administrator.</span><div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="margin:0 0 16px">Account deactivated</h2><p>Your MyDashRx account has been deactivated by your organization. All active sessions have been ended.</p><p>If you believe this was done in error, please contact your organization administrator or email <a href="mailto:support@mydashrx.com">support@mydashrx.com</a>.</p></div>`,
+        }),
+      }).catch((e: unknown) => { console.error('[RBAC34] deactivation email failed:', e); });
+    }
+
     return reply.code(204).send();
   });
 
@@ -643,5 +690,91 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       ipAddress: org.baaIpAddress ?? null,
       hipaaBaaStatus: org.hipaaBaaStatus,
     };
+  });
+
+  // ─── P-RBAC33: JIT Temporary Role Escalation ────────────────────────────────
+
+  // POST /orgs/:orgId/users/:userId/escalate — super_admin only, max 8hr
+  app.post('/:orgId/users/:userId/escalate', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+    const { orgId, userId } = req.params as { orgId: string; userId: string };
+    const actor = req.user as { sub: string; email: string };
+    const { toRole, reason, durationHours = 4 } = req.body as { toRole: string; reason: string; durationHours?: number };
+
+    if (!toRole || !reason) return reply.code(400).send({ error: 'toRole and reason required' });
+    const VALID_ROLES = ['pharmacy_admin', 'dispatcher', 'pharmacist', 'super_admin'];
+    if (!VALID_ROLES.includes(toRole)) return reply.code(400).send({ error: 'Invalid toRole' });
+    const clampedHours = Math.min(8, Math.max(0.25, durationHours));
+
+    const [targetUser] = await db.select({ id: users.id, role: users.role, orgId: users.orgId })
+      .from(users).where(and(eq(users.id, userId), eq(users.orgId, orgId), isNull(users.deletedAt))).limit(1);
+    if (!targetUser) return reply.code(404).send({ error: 'User not found' });
+    if (targetUser.role === toRole) return reply.code(400).send({ error: 'User already has this role' });
+
+    // Revoke any prior active escalation for this user+org
+    await db.update(roleEscalations)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(roleEscalations.userId, userId), eq(roleEscalations.orgId, orgId), isNull(roleEscalations.revokedAt)));
+
+    const expiresAt = new Date(Date.now() + clampedHours * 3600_000);
+    const [escalation] = await db.insert(roleEscalations).values({
+      userId,
+      orgId,
+      fromRole: targetUser.role,
+      toRole,
+      grantedBy: actor.sub,
+      reason,
+      expiresAt,
+    }).returning();
+
+    // Audit log
+    await db.insert(adminAuditLogs).values({
+      actorId: actor.sub,
+      actorEmail: actor.email,
+      action: 'role_escalation_granted',
+      targetId: userId,
+      targetName: userId,
+      metadata: { orgId, fromRole: targetUser.role, toRole, reason, expiresAt: expiresAt.toISOString(), durationHours: clampedHours },
+    }).catch(console.error);
+
+    return { ok: true, escalation };
+  });
+
+  // DELETE /orgs/:orgId/users/:userId/escalate — revoke early
+  app.delete('/:orgId/users/:userId/escalate', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+    const { orgId, userId } = req.params as { orgId: string; userId: string };
+    const actor = req.user as { sub: string; email: string };
+
+    const [active] = await db.select({ id: roleEscalations.id, fromRole: roleEscalations.fromRole })
+      .from(roleEscalations)
+      .where(and(eq(roleEscalations.userId, userId), eq(roleEscalations.orgId, orgId), isNull(roleEscalations.revokedAt), gt(roleEscalations.expiresAt, new Date())))
+      .limit(1);
+    if (!active) return reply.code(404).send({ error: 'No active escalation found' });
+
+    await db.update(roleEscalations).set({ revokedAt: new Date() }).where(eq(roleEscalations.id, active.id));
+
+    // Revoke the user's RT family so next request forces re-auth with base role
+    await db.update(refreshTokens).set({ status: 'revoked' })
+      .where(and(eq(refreshTokens.userId, userId), eq(refreshTokens.status, 'active')));
+
+    await db.insert(adminAuditLogs).values({
+      actorId: actor.sub,
+      actorEmail: actor.email,
+      action: 'role_escalation_revoked',
+      targetId: userId,
+      targetName: userId,
+      metadata: { orgId, escalationId: active.id },
+    }).catch(console.error);
+
+    return { ok: true };
+  });
+
+  // GET /orgs/:orgId/users/:userId/escalations — escalation history
+  app.get('/:orgId/users/:userId/escalations', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+    const { orgId, userId } = req.params as { orgId: string; userId: string };
+    const rows = await db.select().from(roleEscalations)
+      .where(and(eq(roleEscalations.userId, userId), eq(roleEscalations.orgId, orgId)))
+      .orderBy(desc(roleEscalations.createdAt))
+      .limit(50);
+    return rows;
   });
 };

@@ -76,9 +76,9 @@ import { sendDailyReport } from './services/dailyReport.js';
 import { deleteFromStorage } from './services/storage.js';
 import { runAutoApproval } from './lib/autoApproval.js';
 import { db, client } from './db/connection.js';
-import { organizations, magicLinkTokens, signupIntents, users } from './db/schema.js';
+import { organizations, magicLinkTokens, signupIntents, users, roleEscalations, refreshTokens, adminAuditLogs } from './db/schema.js';
 import { sendAbandonmentEmail } from './lib/emailHelpers.js';
-import { isNull, isNotNull, and, or, lt, sql, eq } from 'drizzle-orm';
+import { isNull, isNotNull, and, or, lt, sql, eq, desc, inArray } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 
 // Run schema migrations synchronously — fast DDL, must complete before routes work
@@ -451,6 +451,37 @@ try {
   console.log('P-SES22 trusted_devices table ensured');
 } catch (err) {
   console.error('P-SES22 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-RBAC34: lastLoginAt column — zombie account detection (HIPAA §164.308(a)(3)(ii)(C))
+try {
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at timestamptz`);
+  console.log('P-RBAC34 last_login_at column ensured');
+} catch (err) {
+  console.error('P-RBAC34 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-RBAC33: role_escalations table — JIT temporary role elevation
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS role_escalations (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      org_id uuid NOT NULL REFERENCES organizations(id),
+      from_role text NOT NULL,
+      to_role text NOT NULL,
+      granted_by uuid NOT NULL REFERENCES users(id),
+      reason text NOT NULL,
+      expires_at timestamptz NOT NULL,
+      revoked_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS re_user_idx ON role_escalations(user_id)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS re_expires_idx ON role_escalations(expires_at)`);
+  console.log('P-RBAC33 role_escalations table ensured');
+} catch (err) {
+  console.error('P-RBAC33 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
 const app = Fastify({ logger: true, trustProxy: true });
@@ -993,3 +1024,92 @@ const runStuckOnboardingNudge = async () => {
   if (sent > 0) console.log(JSON.stringify({ event: 'stuck_onboarding_nudge', sent, ts: new Date().toISOString() }));
 };
 setInterval(() => { runStuckOnboardingNudge().catch(console.error); }, 60 * 60 * 1000);
+
+// P-RBAC33: Expired escalation sweep — runs every 5 minutes
+// Finds expired, non-revoked escalations + revokes their RT families to force re-auth
+const runEscalationExpirySweep = async () => {
+  const expired = await db.select({ id: roleEscalations.id, userId: roleEscalations.userId })
+    .from(roleEscalations)
+    .where(and(isNull(roleEscalations.revokedAt), lt(roleEscalations.expiresAt, new Date())));
+  if (!expired.length) return;
+
+  const now = new Date();
+  await db.update(roleEscalations).set({ revokedAt: now })
+    .where(inArray(roleEscalations.id, expired.map(e => e.id)));
+
+  const userIds = [...new Set(expired.map(e => e.userId))];
+  await db.update(refreshTokens).set({ status: 'revoked' })
+    .where(and(inArray(refreshTokens.userId, userIds), eq(refreshTokens.status, 'active')));
+
+  console.log(JSON.stringify({ event: 'escalation_expiry_sweep', expired: expired.length, ts: now.toISOString() }));
+};
+setInterval(() => { runEscalationExpirySweep().catch(console.error); }, 5 * 60 * 1000);
+
+// P-RBAC34: Zombie account detection — runs daily at 3 AM UTC
+// Flags users with lastLoginAt < 90 days ago (or never logged in + created > 90d) to org admin
+const runZombieAccountDetection = async () => {
+  if (new Date().getUTCHours() !== 3) return;
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const resendKey = process.env.RESEND_API_KEY;
+  const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+
+  const zombies = await db.select({
+    id: users.id, email: users.email, name: users.name,
+    orgId: users.orgId, role: users.role, lastLoginAt: users.lastLoginAt, createdAt: users.createdAt,
+  }).from(users).where(and(
+    isNull(users.deletedAt),
+    or(
+      and(isNotNull(users.lastLoginAt), lt(users.lastLoginAt, cutoff)),
+      and(isNull(users.lastLoginAt), lt(users.createdAt, cutoff)),
+    ),
+  ));
+
+  if (!zombies.length) return;
+
+  // Group by org
+  const byOrg = new Map<string, typeof zombies>();
+  for (const z of zombies) {
+    const list = byOrg.get(z.orgId) ?? [];
+    list.push(z);
+    byOrg.set(z.orgId, list);
+  }
+
+  let notified = 0;
+  for (const [orgId, zombieList] of byOrg) {
+    // Find org admin to notify
+    const [admin] = await db.select({ email: users.email, name: users.name })
+      .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
+    if (!admin || !resendKey) continue;
+
+    // Audit log zombie detection
+    await db.insert(adminAuditLogs).values({
+      actorId: '00000000-0000-0000-0000-000000000000',
+      actorEmail: 'system',
+      action: 'zombie_account_detected',
+      targetId: orgId,
+      targetName: orgId,
+      metadata: { count: zombieList.length, userEmails: zombieList.map(z => z.email).slice(0, 10) },
+    }).catch(console.error);
+
+    const tableRows = zombieList.slice(0, 20).map(z =>
+      `<tr><td>${z.name}</td><td>${z.email}</td><td>${z.role}</td><td>${z.lastLoginAt ? new Date(z.lastLoginAt).toLocaleDateString() : 'Never'}</td></tr>`
+    ).join('');
+
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: `MyDashRx <noreply@${senderDomain}>`,
+        to: admin.email,
+        reply_to: 'support@mydashrx.com',
+        subject: `[Action Required] ${zombieList.length} inactive account(s) in your organization`,
+        track_clicks: false,
+        headers: { 'Feedback-ID': 'zombie-accounts:mydashrx:resend:auth' },
+        html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your organization has ${zombieList.length} account(s) that haven't logged in for 90+ days.</span><div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px 24px"><h2 style="margin:0 0 16px">Inactive accounts review</h2><p>Hi ${admin.name ?? 'there'},</p><p>Your organization has <strong>${zombieList.length}</strong> account(s) that haven't logged in for 90+ days. Per HIPAA §164.308(a)(3), we recommend reviewing and removing access for inactive accounts.</p><table border="1" cellpadding="8" style="border-collapse:collapse;width:100%;margin:16px 0"><tr><th>Name</th><th>Email</th><th>Role</th><th>Last Login</th></tr>${tableRows}</table><p><a href="${process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app'}/settings?tab=team" style="background:#0F766E;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block">Review Team Access →</a></p><p style="color:#6B7280;font-size:13px">This is an automated HIPAA compliance notification. Do not auto-delete — review each account before deactivating.</p></div>`,
+      }),
+    }).catch(console.error);
+    notified++;
+  }
+  if (notified > 0) console.log(JSON.stringify({ event: 'zombie_account_detection', orgsNotified: notified, ts: new Date().toISOString() }));
+};
+setInterval(() => { runZombieAccountDetection().catch(console.error); }, 60 * 60 * 1000);

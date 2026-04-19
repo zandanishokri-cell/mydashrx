@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { requireBusinessHoursImpersonation } from '../lib/abacPolicies.js';
 
 export async function requireOrg(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   try {
@@ -19,6 +20,8 @@ export async function requireOrg(req: FastifyRequest, reply: FastifyReply): Prom
       ? impersonateHeader[0]
       : impersonateHeader;
     if (impersonatedOrgId) {
+      // P-RBAC35 Policy 2: block impersonation outside business hours
+      if (!requireBusinessHoursImpersonation(req, reply)) return;
       // Scope effective orgId to the impersonated org for downstream handlers
       (req.user as any).effectiveOrgId = impersonatedOrgId;
       (req.user as any).impersonatedOrgId = impersonatedOrgId;
