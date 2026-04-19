@@ -1,11 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import crypto from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, drivers, adminAuditLogs, depots } from '../db/schema.js';
+import { organizations, users, drivers, adminAuditLogs, depots, refreshTokens } from '../db/schema.js';
 import { eq, isNull, and, sql, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import bcrypt from 'bcryptjs';
 import { checkDriverLimit } from '../utils/usageLimits.js';
+import { sendRoleChangeEmail } from '../lib/emailHelpers.js';
 
 // P-RBAC11: Validate that all provided depotIds belong to the org — prevents cross-org depot injection
 async function validateDepotIds(orgId: string, depotIds: string[]): Promise<boolean> {
@@ -134,6 +135,13 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     const body = req.body as Partial<{ name: string; role: string; depotIds: string[] }>;
     const updates: Record<string, unknown> = {};
     if (body.name !== undefined) updates.name = body.name;
+
+    // Fetch current user state for role-change pre-checks and notifications
+    const [currentUser] = body.role !== undefined
+      ? await db.select({ role: users.role, name: users.name, email: users.email })
+          .from(users).where(and(eq(users.id, userId), eq(users.orgId, orgId), isNull(users.deletedAt))).limit(1)
+      : [undefined];
+
     if (body.role !== undefined) {
       const ASSIGNABLE_ROLES = ['pharmacy_admin', 'dispatcher', 'pharmacist', 'driver'];
       if (!ASSIGNABLE_ROLES.includes(body.role)) {
@@ -156,7 +164,7 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
         }
       }
       updates.role = body.role;
-      // P-SES6: Invalidate all outstanding refresh tokens when role changes
+      // P-SES6: Invalidate all outstanding refresh tokens when role changes (AT now fails on next use)
       updates.tokenVersion = sql`${users.tokenVersion} + 1`;
     }
     if (body.depotIds !== undefined) {
@@ -175,14 +183,35 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
       .returning({ id: users.id, orgId: users.orgId, email: users.email, name: users.name, role: users.role, depotIds: users.depotIds, createdAt: users.createdAt });
     if (!updated) return reply.code(404).send({ error: 'Not found' });
 
+    // P-RBAC30: Immediately revoke all active refresh token families on role change.
+    // tokenVersion increment blocks next AT refresh, but existing active RTs can still start
+    // a new rotation chain. Revoking by userId closes that window instantly.
+    if (body.role !== undefined) {
+      db.update(refreshTokens)
+        .set({ status: 'revoked' })
+        .where(and(eq(refreshTokens.userId, userId), eq(refreshTokens.status, 'active')))
+        .catch((e: unknown) => { console.error('[RBAC30] RT revocation failed:', e); });
+    }
+
     // HIPAA §164.312(b) — audit role/depot changes
     if (body.role !== undefined || body.depotIds !== undefined) {
-      const actor = req.user as { sub: string; email: string };
+      const actor = req.user as { sub: string; email: string; name?: string };
       const action = body.role !== undefined ? 'role_change' : 'depot_assign';
       await logRoleChange(actor.sub, actor.email, updated.id, updated.email, action, {
-        ...(body.role !== undefined ? { newRole: body.role } : {}),
+        ...(body.role !== undefined ? { oldRole: currentUser?.role, newRole: body.role } : {}),
         ...(body.depotIds !== undefined ? { newDepotIds: body.depotIds } : {}),
       });
+
+      // P-RBAC29: Notify target user of role change via email (fire-and-forget)
+      if (body.role !== undefined && currentUser) {
+        sendRoleChangeEmail(
+          updated.email,
+          updated.name,
+          actor.email,
+          currentUser.role,
+          body.role,
+        ).catch(() => {});
+      }
     }
 
     return updated;

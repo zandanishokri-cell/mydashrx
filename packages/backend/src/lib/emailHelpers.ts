@@ -115,6 +115,53 @@ export async function sendRejectionWithReapplyEmail(
   }).catch((e: unknown) => { console.error('[Resend] rejection email failed:', e); });
 }
 
+/** P-RBAC29: Role change notification — sent to target user when their role is changed by an admin */
+export async function sendRoleChangeEmail(
+  targetEmail: string,
+  targetName: string,
+  actorName: string,
+  oldRole: string,
+  newRole: string,
+): Promise<void> {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  if (await isSuppressed(targetEmail, true)) return; // critical = true: bypass opt-out, never suppress security alerts
+  const dash = dashUrl();
+  const roleLabels: Record<string, string> = {
+    pharmacy_admin: 'Pharmacy Admin',
+    dispatcher: 'Dispatcher',
+    pharmacist: 'Pharmacist',
+    driver: 'Driver',
+    super_admin: 'Super Admin',
+  };
+  const oldLabel = roleLabels[oldRole] ?? oldRole;
+  const newLabel = roleLabels[newRole] ?? newRole;
+  fetch(RESEND, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+    body: JSON.stringify({
+      from: sender(),
+      to: targetEmail,
+      subject: 'Your MyDashRx role has been updated',
+      track_clicks: false,
+      track_opens: false,
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+          <h2 style="color:#0F4C81;margin:0 0 8px">Your role has been updated</h2>
+          <p style="color:#374151;margin:0 0 8px;font-size:15px">Hi ${targetName},</p>
+          <p style="color:#374151;margin:0 0 16px;font-size:15px">Your MyDashRx access role was changed by <strong>${actorName}</strong>.</p>
+          <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:16px 20px;margin-bottom:24px">
+            <p style="margin:0 0 8px;font-size:14px;color:#374151"><span style="color:#6b7280">Previous role:</span> <strong>${oldLabel}</strong></p>
+            <p style="margin:0;font-size:14px;color:#374151"><span style="color:#6b7280">New role:</span> <strong style="color:#0F4C81">${newLabel}</strong></p>
+          </div>
+          <p style="color:#6b7280;font-size:13px;margin:0 0 16px">If you didn't expect this change, contact your pharmacy admin or reply to this email.</p>
+          <a href="${dash}/login" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600">Sign in with updated access →</a>
+          <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Questions? Contact <a href="mailto:support@mydashrx.com" style="color:#0F4C81">support@mydashrx.com</a></p>
+        </div>`,
+    }),
+  }).catch((e: unknown) => { console.error('[Resend] role change email failed:', e); });
+}
+
 /** P-CNV14: Abandonment recovery email — sent to pharmacy admins who started signup but didn't complete */
 export async function sendAbandonmentEmail(adminEmail: string, orgName: string | undefined, unsubscribeUrl: string): Promise<void> {
   const resendKey = process.env.RESEND_API_KEY;

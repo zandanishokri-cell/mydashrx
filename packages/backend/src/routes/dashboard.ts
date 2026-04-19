@@ -59,7 +59,9 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
-    const q = req.query as { depotId?: string };
+    // P-PERF7: ?fields=map includes GPS coords; omit by default (HIPAA minimum-necessary)
+    const q = req.query as { depotId?: string; fields?: string };
+    const includeGps = q.fields === 'map';
     const today = todayInTz();
 
     type DriverRow = { id: string; name: string; status: string; vehicleType: string | null; currentLat: number | null; currentLng: number | null; lastPingAt: Date | null };
@@ -98,11 +100,15 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     );
 
     return {
-      drivers: allDrivers.map(d => ({
-        ...d,
-        lastPingAt: d.lastPingAt?.toISOString() ?? null,
-        ...(driverRouteMap.get(d.id) ?? { routeId: null, routeStatus: null, totalStops: 0, completedStops: 0 }),
-      })),
+      drivers: allDrivers.map(d => {
+        const base = {
+          id: d.id, name: d.name, status: d.status, vehicleType: d.vehicleType,
+          ...(driverRouteMap.get(d.id) ?? { routeId: null, routeStatus: null, totalStops: 0, completedStops: 0 }),
+        };
+        // P-PERF7: strip GPS coords unless ?fields=map (HIPAA minimum-necessary: driver traces = PHI proximity data)
+        if (includeGps) return { ...base, currentLat: d.currentLat, currentLng: d.currentLng, lastPingAt: d.lastPingAt?.toISOString() ?? null };
+        return base;
+      }),
     };
   });
 
