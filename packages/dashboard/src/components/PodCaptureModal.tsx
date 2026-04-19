@@ -53,8 +53,12 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
   // Step: package count (in review)
   const [confirmedPackageCount, setConfirmedPackageCount] = useState(packageCount ?? 1);
 
+  // P-COMP13: refill consent + HIPAA ack — required after signature
+  const [refillConsentGiven, setRefillConsentGiven] = useState<boolean | null>(null);
+  const [hipaaAckGiven, setHipaaAckGiven] = useState<boolean | null>(null);
+
   // Build ordered step list based on stop flags
-  const steps: string[] = ['recipient', 'signature'];
+  const steps: string[] = ['recipient', 'signature', 'consent'];
   if (requiresPhoto) steps.push('photo');
   if (isCS) steps.push('id');
   if ((codAmount ?? 0) > 0) steps.push('cod');
@@ -144,6 +148,8 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
     switch (currentStepName) {
       case 'recipient': return recipientName.trim().length > 0;
       case 'signature': return hasSig || (sigWaived && sigWaiverReason !== '');
+      // P-COMP13: both consent fields must be answered before advancing
+      case 'consent': return refillConsentGiven !== null && hipaaAckGiven !== null;
       case 'photo': return !!deliveryPhotoDataUrl;
       case 'id': return !!idPhotoDataUrl && dobConfirmed && mapsConfirmed;
       case 'cod': return codMethod !== '' && parseFloat(codAmountConfirmed) > 0;
@@ -154,7 +160,7 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
   const nextStepLabel = (() => {
     const next = steps[step]; // step is 1-based, so steps[step] is the *next* step name
     if (!next) return '';
-    const labels: Record<string, string> = { signature: 'Signature', photo: 'Delivery Photo', id: 'ID Check', cod: 'COD Collection', review: 'Review' };
+    const labels: Record<string, string> = { signature: 'Signature', consent: 'Consent', photo: 'Delivery Photo', id: 'ID Check', cod: 'COD Collection', review: 'Review' };
     return `Next: ${labels[next] ?? 'Continue'}`;
   })();
 
@@ -179,6 +185,9 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
       idVerified: isCS ? (!!idPhotoDataUrl && dobConfirmed) : false,
       idDobConfirmed: dobConfirmed,
       deliveryNotes: '',
+      // P-COMP13: refill consent + HIPAA ack — HIPAA §164.520(c)(2)(ii)
+      refillConsentGiven: refillConsentGiven ?? undefined,
+      hipaaAckGiven: hipaaAckGiven ?? undefined,
       ...(codAmount && codMethod ? {
         codCollected: {
           amount: parseFloat(codAmountConfirmed) || codAmount,
@@ -332,6 +341,59 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
                   </select>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── STEP: Consent (P-COMP13) ─────────────────────────────── */}
+          {currentStepName === 'consent' && (
+            <div className="space-y-4 pt-2">
+              <div className="flex items-center gap-2 mb-1">
+                <ShieldCheck size={18} className="text-[#0F4C81]" />
+                <h3 className="font-semibold text-gray-800">Patient Consents</h3>
+              </div>
+              <p className="text-xs text-gray-400">Both questions are required before completing delivery. HIPAA §164.520(c)(2)(ii) + Michigan R 338.3162.</p>
+
+              {/* Refill Consent */}
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-3">
+                <p className="text-sm font-semibold text-blue-900">Does the patient consent to refill reminders?</p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setRefillConsentGiven(true)}
+                    className={`flex-1 py-3 rounded-xl font-semibold text-sm border-2 transition-colors ${refillConsentGiven === true ? 'border-blue-600 bg-blue-600 text-white' : 'border-blue-200 text-blue-700 bg-white'}`}
+                    aria-pressed={refillConsentGiven === true}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => setRefillConsentGiven(false)}
+                    className={`flex-1 py-3 rounded-xl font-semibold text-sm border-2 transition-colors ${refillConsentGiven === false ? 'border-gray-600 bg-gray-600 text-white' : 'border-gray-200 text-gray-700 bg-white'}`}
+                    aria-pressed={refillConsentGiven === false}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+
+              {/* HIPAA Acknowledgment */}
+              <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 space-y-3">
+                <p className="text-sm font-semibold text-indigo-900">Did the patient acknowledge the HIPAA Notice of Privacy Practices?</p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setHipaaAckGiven(true)}
+                    className={`flex-1 py-3 rounded-xl font-semibold text-sm border-2 transition-colors ${hipaaAckGiven === true ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-indigo-200 text-indigo-700 bg-white'}`}
+                    aria-pressed={hipaaAckGiven === true}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => setHipaaAckGiven(false)}
+                    className={`flex-1 py-3 rounded-xl font-semibold text-sm border-2 transition-colors ${hipaaAckGiven === false ? 'border-gray-600 bg-gray-600 text-white' : 'border-gray-200 text-gray-700 bg-white'}`}
+                    aria-pressed={hipaaAckGiven === false}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -508,6 +570,19 @@ export function PodCaptureModal({ stopId, recipientNameHint, requiresPhoto, pack
                     </div>
                   </>
                 )}
+                {/* P-COMP13: consent summary in review */}
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Refill Consent</span>
+                  <span className={`font-medium flex items-center gap-1 ${refillConsentGiven === true ? 'text-green-600' : refillConsentGiven === false ? 'text-gray-500' : 'text-amber-500'}`}>
+                    {refillConsentGiven === true ? <><CheckCircle2 size={13} /> Yes</> : refillConsentGiven === false ? 'No' : 'Not answered'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">HIPAA Ack</span>
+                  <span className={`font-medium flex items-center gap-1 ${hipaaAckGiven === true ? 'text-green-600' : hipaaAckGiven === false ? 'text-gray-500' : 'text-amber-500'}`}>
+                    {hipaaAckGiven === true ? <><CheckCircle2 size={13} /> Acknowledged</> : hipaaAckGiven === false ? 'Declined' : 'Not answered'}
+                  </span>
+                </div>
                 {(codAmount ?? 0) > 0 && codMethod && (
                   <div className="flex justify-between">
                     <span className="text-gray-500">COD Collected</span>

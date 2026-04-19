@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory, auditLogs, stopNotes } from '../db/schema.js';
-import { eq, and, isNull, sql, inArray } from 'drizzle-orm';
+import { eq, and, isNull, sql, inArray, desc } from 'drizzle-orm';
 import { getDriverRoutes } from '../db/preparedStatements.js'; // P-PERF10
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification, sendTwilioSms } from '../services/notifications.js';
@@ -420,6 +420,9 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       isControlledSubstance?: boolean;
       idDobConfirmed?: boolean;
       driverNote?: string;
+      // P-COMP13: refill consent + HIPAA ack — HIPAA §164.520(c)(2)(ii) + Michigan R 338.3162
+      refillConsentGiven?: boolean;
+      hipaaAckGiven?: boolean;
     };
 
     const [existing] = await db.select().from(proofOfDeliveries).where(eq(proofOfDeliveries.stopId, stopId)).limit(1);
@@ -436,7 +439,26 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
         deliveryNotes: body.deliveryNotes,
         driverNote: body.driverNote,
       }).where(eq(proofOfDeliveries.stopId, stopId)).returning();
-      await db.update(stops).set({ status: 'completed', completedAt: new Date() }).where(eq(stops.id, stopId));
+      // P-COMP13: persist refill consent + HIPAA ack on stop row
+      const now = new Date();
+      const stopConsentUpdates: Record<string, unknown> = { status: 'completed', completedAt: now };
+      if (body.refillConsentGiven !== undefined) {
+        stopConsentUpdates.refillConsentGiven = body.refillConsentGiven;
+        stopConsentUpdates.refillConsentCapturedAt = now;
+      }
+      if (body.hipaaAckGiven !== undefined) {
+        stopConsentUpdates.hipaaAckGiven = body.hipaaAckGiven;
+        stopConsentUpdates.hipaaAckCapturedAt = now;
+      }
+      await db.update(stops).set(stopConsentUpdates).where(eq(stops.id, stopId));
+      // P-COMP13: audit log pod_consent_captured
+      if (body.refillConsentGiven !== undefined || body.hipaaAckGiven !== undefined) {
+        logPodConsentAudit(stopId, driverId, stopCheck.orgId, body.refillConsentGiven, body.hipaaAckGiven).catch(console.error);
+      }
+      // P-COMP13: if HIPAA ack given, suppress re-prompt for org for 1 year
+      if (body.hipaaAckGiven === true) {
+        db.execute(sql`UPDATE organizations SET hipaa_ack_suppressed_until = ${new Date(now.getTime() + 365 * 86400_000)} WHERE id = ${stopCheck.orgId} AND (hipaa_ack_suppressed_until IS NULL OR hipaa_ack_suppressed_until < NOW())`).catch(console.error);
+      }
       fireTrigger({
         orgId: stopCheck.orgId,
         trigger: 'stop_completed',
@@ -476,7 +498,24 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       driverNote: body.driverNote,
     }).returning();
 
-    await db.update(stops).set({ status: 'completed', completedAt: new Date() }).where(eq(stops.id, stopId));
+    // P-COMP13: persist refill consent + HIPAA ack on stop row
+    const nowNew = new Date();
+    const stopConsentUpdatesNew: Record<string, unknown> = { status: 'completed', completedAt: nowNew };
+    if (body.refillConsentGiven !== undefined) {
+      stopConsentUpdatesNew.refillConsentGiven = body.refillConsentGiven;
+      stopConsentUpdatesNew.refillConsentCapturedAt = nowNew;
+    }
+    if (body.hipaaAckGiven !== undefined) {
+      stopConsentUpdatesNew.hipaaAckGiven = body.hipaaAckGiven;
+      stopConsentUpdatesNew.hipaaAckCapturedAt = nowNew;
+    }
+    await db.update(stops).set(stopConsentUpdatesNew).where(eq(stops.id, stopId));
+    if (body.refillConsentGiven !== undefined || body.hipaaAckGiven !== undefined) {
+      logPodConsentAudit(stopId, driverId, stopCheck.orgId, body.refillConsentGiven, body.hipaaAckGiven).catch(console.error);
+    }
+    if (body.hipaaAckGiven === true) {
+      db.execute(sql`UPDATE organizations SET hipaa_ack_suppressed_until = ${new Date(nowNew.getTime() + 365 * 86400_000)} WHERE id = ${stopCheck.orgId} AND (hipaa_ack_suppressed_until IS NULL OR hipaa_ack_suppressed_until < NOW())`).catch(console.error);
+    }
     fireTrigger({
       orgId: stopCheck.orgId,
       trigger: 'stop_completed',
@@ -789,6 +828,26 @@ async function logCsAudit(stopId: string, driverId: string) {
         driverId,
         detail: 'Controlled substance delivered without ID verification',
         rule: 'R 338.3162',
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch { /* non-blocking */ }
+}
+
+// P-COMP13: audit log for POD consent capture — HIPAA §164.520(c)(2)(ii)
+async function logPodConsentAudit(stopId: string, driverId: string, orgId: string, refillConsentGiven?: boolean, hipaaAckGiven?: boolean) {
+  try {
+    const { auditLogs } = await import('../db/schema.js');
+    await db.insert(auditLogs).values({
+      orgId,
+      action: 'pod_consent_captured',
+      resource: 'stop',
+      resourceId: stopId,
+      metadata: {
+        driverId,
+        refillConsentGiven: refillConsentGiven ?? null,
+        hipaaAckGiven: hipaaAckGiven ?? null,
+        rule: 'HIPAA §164.520(c)(2)(ii) + Michigan R 338.3162',
         timestamp: new Date().toISOString(),
       },
     });

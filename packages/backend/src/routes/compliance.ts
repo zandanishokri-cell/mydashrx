@@ -1,10 +1,11 @@
 import type { FastifyPluginAsync } from 'fastify';
 import sjp from 'secure-json-parse';
 import { db } from '../db/connection.js';
-import { baaRegistry, auditLogs, complianceChecks, miComplianceItems, complianceScoreHistory } from '../db/schema.js';
+import { baaRegistry, auditLogs, complianceChecks, miComplianceItems, complianceScoreHistory, stops, proofOfDeliveries, drivers, users } from '../db/schema.js';
 import { eq, and, gte, lte, desc, sql, count } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { runComplianceScan, isDeploymentBlocked } from '../compliance/scanner.js';
+import { decryptPhi, decryptPhiArray } from '../lib/phiCrypto.js';
 
 const ADMIN = requireOrgRole('pharmacy_admin', 'super_admin');
 const ADMIN_READ = requireOrgRole('pharmacy_admin', 'super_admin', 'pharmacist');
@@ -390,6 +391,117 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
       .returning();
     if (!row) { reply.code(404).send({ error: 'Not found' }); return; }
     return row;
+  });
+
+  // ─── P-COMP14: Exportable compliance package ─────────────────────────────────
+  // GET /orgs/:orgId/compliance/export?startDate&endDate&patientPhone&format=csv|json
+  // Requires pharmacy_admin or super_admin. Decrypts PHI, joins delivery records + audit context.
+  // HIPAA §164.312(b): logs compliance_export_downloaded on every access.
+  app.get('/export', { preHandler: ADMIN }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { startDate, endDate, patientPhone, format } = req.query as {
+      startDate?: string; endDate?: string; patientPhone?: string; format?: string;
+    };
+    const user = req.user as { sub?: string; email?: string } | undefined;
+
+    if (!startDate || !endDate) {
+      return reply.code(400).send({ error: 'startDate and endDate are required (YYYY-MM-DD)' });
+    }
+
+    const from = new Date(startDate + 'T00:00:00Z');
+    const to = new Date(endDate + 'T23:59:59Z');
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+      return reply.code(400).send({ error: 'Invalid date format — use YYYY-MM-DD' });
+    }
+    if (to.getTime() - from.getTime() > 366 * 86400_000) {
+      return reply.code(400).send({ error: 'Date range cannot exceed 366 days' });
+    }
+
+    // Fetch stops in range for org, with POD + driver join
+    const rows = await db
+      .select({
+        stopId: stops.id,
+        completedAt: stops.completedAt,
+        createdAt: stops.createdAt,
+        recipientName: stops.recipientName,
+        recipientPhone: stops.recipientPhone,
+        address: stops.address,
+        rxNumbers: stops.rxNumbers,
+        status: stops.status,
+        refillConsentGiven: stops.refillConsentGiven,
+        hipaaAckGiven: stops.hipaaAckGiven,
+        codAmount: stops.codAmount,
+        codCollected: stops.codCollected,
+        codCollectedAt: stops.codCollectedAt,
+        podSignatureData: proofOfDeliveries.signatureData,
+        podSignatureWaivedReason: proofOfDeliveries.signatureWaivedReason,
+        driverName: drivers.name,
+      })
+      .from(stops)
+      .leftJoin(proofOfDeliveries, eq(proofOfDeliveries.stopId, stops.id))
+      .leftJoin(drivers, eq(drivers.id,
+        // join driver through route — use subquery via raw sql for simplicity
+        sql`(SELECT driver_id FROM routes WHERE id = ${stops.routeId} LIMIT 1)`,
+      ))
+      .where(and(
+        eq(stops.orgId, orgId),
+        gte(stops.createdAt, from),
+        lte(stops.createdAt, to),
+      ))
+      .orderBy(desc(stops.createdAt))
+      .limit(10000);
+
+    // Decrypt PHI + optional patientPhone filter
+    const decrypted = rows
+      .map(r => ({
+        ...r,
+        recipientName: decryptPhi(r.recipientName ?? ''),
+        recipientPhone: decryptPhi(r.recipientPhone ?? ''),
+        rxNumbers: (() => { try { return Array.isArray(r.rxNumbers) ? r.rxNumbers : JSON.parse(String(r.rxNumbers ?? '[]')); } catch { return []; } })(),
+      }))
+      .filter(r => !patientPhone || r.recipientPhone.includes(patientPhone));
+
+    // HIPAA §164.312(b): audit log every export download
+    db.insert(auditLogs).values({
+      orgId,
+      userId: user?.sub ?? undefined,
+      userEmail: user?.email ?? undefined,
+      action: 'compliance_export_downloaded',
+      resource: 'compliance',
+      metadata: {
+        startDate,
+        endDate,
+        recordCount: decrypted.length,
+        format: format ?? 'json',
+        patientPhone: patientPhone ? '***filtered***' : null,
+      },
+    }).catch(console.error);
+
+    if (format === 'csv') {
+      const csvEsc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const header = 'Date,Recipient Name,Recipient Phone,Address,Rx Numbers,Status,Signature Status,Refill Consent,HIPAA Ack,COD Amount,COD Collected,Driver Name,Completion Time';
+      const lines = decrypted.map(r => [
+        r.createdAt?.toISOString() ?? '',
+        r.recipientName,
+        r.recipientPhone,
+        r.address,
+        (r.rxNumbers as string[]).join('; '),
+        r.status,
+        r.podSignatureWaivedReason ? `waived:${r.podSignatureWaivedReason}` : (r.podSignatureData ? 'captured' : 'none'),
+        r.refillConsentGiven === true ? 'yes' : r.refillConsentGiven === false ? 'no' : 'not_captured',
+        r.hipaaAckGiven === true ? 'yes' : r.hipaaAckGiven === false ? 'no' : 'not_captured',
+        r.codAmount ?? 0,
+        r.codCollected ? 'yes' : 'no',
+        r.driverName ?? '',
+        r.completedAt?.toISOString() ?? '',
+      ].map(csvEsc).join(','));
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+      reply.header('Content-Type', 'text/csv');
+      reply.header('Content-Disposition', `attachment; filename="compliance-export-${todayStr}.csv"`);
+      return reply.send([header, ...lines].join('\n'));
+    }
+
+    return { records: decrypted, count: decrypted.length, exportedAt: new Date(), dateRange: { startDate, endDate } };
   });
 
   app.get('/scan/latest', { preHandler: ADMIN_READ }, async (req) => {

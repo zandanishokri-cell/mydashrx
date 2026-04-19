@@ -59,6 +59,15 @@ export const vehicleTypeEnum = pgEnum('vehicle_type', ['car', 'van', 'bicycle'])
 export const notifChannelEnum = pgEnum('notif_channel', ['sms', 'email', 'push']);
 
 // ─── Tables ───────────────────────────────────────────────────────────────────
+
+// P-COMP15: multi-location pharmacy chain — owns multiple organizations
+export const chains = pgTable('chains', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  ownerId: uuid('owner_id'), // set after user creation — FK added post-create
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
 export const organizations = pgTable('organizations', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
@@ -120,6 +129,10 @@ export const organizations = pgTable('organizations', {
   // P-CNV29: re-activation banner — tracks last dispatch + cross-device dismiss
   lastDispatchedAt: timestamp('last_dispatched_at'),
   reactivationBannerDismissedAt: timestamp('reactivation_banner_dismissed_at'),
+  // P-COMP13: suppress HIPAA ack re-prompt for org after first annual ack (6yr per §164.520(c)(2)(ii))
+  hipaaAckSuppressedUntil: timestamp('hipaa_ack_suppressed_until'),
+  // P-COMP15: chain membership — multi-location pharmacy chain
+  chainId: uuid('chain_id').references((): AnyPgColumn => chains.id),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });
@@ -297,6 +310,11 @@ export const stops = pgTable(
     idempotencyKey: text('idempotency_key'),
     // P-DISP3: chain-of-custody — links retry stop back to failed original
     retriedFromStopId: uuid('retried_from_stop_id').references((): AnyPgColumn => stops.id),
+    // P-COMP13: refill consent + HIPAA acknowledgment at POD — HIPAA §164.520(c)(2)(ii) + Michigan R 338.3162
+    refillConsentGiven: boolean('refill_consent_given'),
+    refillConsentCapturedAt: timestamp('refill_consent_captured_at'),
+    hipaaAckGiven: boolean('hipaa_ack_given'),
+    hipaaAckCapturedAt: timestamp('hipaa_ack_captured_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },

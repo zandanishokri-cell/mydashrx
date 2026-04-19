@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getUser, getAccessToken } from '@/lib/auth';
-import { Download, Search, ChevronLeft, ChevronRight as ChevRight, AlertCircle } from 'lucide-react';
+import { Download, Search, ChevronLeft, ChevronRight as ChevRight, AlertCircle, FileDown, Phone } from 'lucide-react';
 import Link from 'next/link';
 import { localDateStr } from '@/lib/dateUtils';
 
@@ -49,6 +49,14 @@ export default function AuditPage() {
   const [loadError, setLoadError] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+
+  // P-COMP14: compliance delivery export
+  const [compFrom, setCompFrom] = useState(defaultFrom);
+  const [compTo, setCompTo] = useState(defaultTo);
+  const [compPhone, setCompPhone] = useState('');
+  const [compFormat, setCompFormat] = useState<'csv' | 'json'>('csv');
+  const [compExporting, setCompExporting] = useState(false);
+  const [compExportError, setCompExportError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -110,6 +118,33 @@ export default function AuditPage() {
     setCursors(prev => prev.slice(0, -1));
   };
 
+  // P-COMP14: download compliance delivery export
+  const exportCompliance = async () => {
+    if (!user || compExporting) return;
+    setCompExporting(true);
+    setCompExportError(null);
+    const params = new URLSearchParams({ startDate: compFrom, endDate: compTo, format: compFormat });
+    if (compPhone.trim()) params.set('patientPhone', compPhone.trim());
+    const token = getAccessToken();
+    const url = `${BASE}/api/v1/orgs/${user.orgId}/compliance/export?${params}`;
+    try {
+      const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? `Export failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `compliance-export-${compFrom}-to-${compTo}.${compFormat}`;
+      a.click();
+    } catch (err) {
+      setCompExportError(err instanceof Error ? err.message : 'Export failed. Please try again.');
+    } finally {
+      setCompExporting(false);
+    }
+  };
+
   return (
     <div className="p-6 space-y-5">
       {/* Header */}
@@ -134,6 +169,56 @@ export default function AuditPage() {
             <Download size={14} /> {exporting ? 'Exporting…' : 'Export CSV'}
           </button>
           {exportError && <p className="text-xs text-red-500">{exportError}</p>}
+        </div>
+      </div>
+
+      {/* P-COMP14: Compliance Delivery Export Card */}
+      <div className="bg-white rounded-xl border border-blue-100 p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <FileDown size={18} className="text-[#0F4C81]" />
+          <div>
+            <h2 className="font-semibold text-gray-900 text-sm">Compliance Delivery Export</h2>
+            <p className="text-xs text-gray-400">Full delivery records with signature, consent, and HIPAA ack data — for DEA/state board audits.</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">From</label>
+            <input type="date" value={compFrom} onChange={e => setCompFrom(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">To</label>
+            <input type="date" value={compTo} onChange={e => setCompTo(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+              <Phone size={11} /> Patient Phone (optional)
+            </label>
+            <input value={compPhone} onChange={e => setCompPhone(e.target.value)}
+              placeholder="+15551234567"
+              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Format</label>
+            <select value={compFormat} onChange={e => setCompFormat(e.target.value as 'csv' | 'json')}
+              aria-label="Export format"
+              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+              <option value="csv">CSV</option>
+              <option value="json">JSON</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={exportCompliance}
+            disabled={compExporting}
+            className="flex items-center gap-1.5 px-4 py-2 bg-[#0F4C81] text-white text-sm font-medium rounded-lg hover:bg-blue-900 disabled:opacity-50 transition-colors"
+          >
+            <Download size={14} /> {compExporting ? 'Exporting…' : 'Download Compliance Export'}
+          </button>
+          {compExportError && <p className="text-xs text-red-500">{compExportError}</p>}
         </div>
       </div>
 

@@ -71,6 +71,7 @@ import { twilioWebhookRoutes } from './routes/twilioWebhook.js';
 import { stripeWebhookRoutes } from './routes/stripeWebhook.js';
 import { resendWebhookRoutes } from './routes/resendWebhook.js';
 import { unsubscribeRoutes } from './routes/unsubscribe.js';
+import { chainRoutes } from './routes/chain.js'; // P-COMP15
 import { phiFilterHook } from './middleware/phiFilter.js';
 import { phiAuditHook } from './middleware/phiAuditHook.js';
 import { sendDailyReport } from './services/dailyReport.js';
@@ -624,6 +625,35 @@ try {
   console.error('P-PERF12/P-PERF11 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-COMP13: refill consent + HIPAA ack columns on stops + hipaa_ack_suppressed_until on organizations
+try {
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS refill_consent_given boolean`);
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS refill_consent_captured_at timestamptz`);
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS hipaa_ack_given boolean`);
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS hipaa_ack_captured_at timestamptz`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hipaa_ack_suppressed_until timestamptz`);
+  console.log('P-COMP13 refill consent + HIPAA ack columns ensured');
+} catch (err) {
+  console.error('P-COMP13 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-COMP15: chains table + organizations.chain_id — multi-location chain dashboard
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS chains (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      name text NOT NULL,
+      owner_id uuid,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS chain_id uuid REFERENCES chains(id)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS orgs_chain_idx ON organizations(chain_id) WHERE chain_id IS NOT NULL`);
+  console.log('P-COMP15 chains table + organizations.chain_id ensured');
+} catch (err) {
+  console.error('P-COMP15 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {
@@ -799,6 +829,8 @@ await app.register(stripeWebhookRoutes, { prefix: '/api/v1/stripe' });
 await app.register(resendWebhookRoutes, { prefix: '/api/v1/webhooks' });
 // P-DEL12: RFC 8058 one-click unsubscribe
 await app.register(unsubscribeRoutes, { prefix: '/api/v1/unsubscribe' });
+// P-COMP15: multi-location chain dashboard
+await app.register(chainRoutes, { prefix: '/api/v1/chain' });
 
 // Public: list depots for pharmacy registration
 app.get('/api/v1/public/depots', async () => {
