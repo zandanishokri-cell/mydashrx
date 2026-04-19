@@ -7,71 +7,43 @@ import { todayInTz } from '../utils/date.js';
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/dashboard/summary
+  // P-PERF6: Single SQL JOIN replaces 3-serial-waterfall (plans→routes→stops).
+  // Cuts ~67% of DB round-trips on every dashboard poll.
   app.get('/summary', {
     preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const q = req.query as { depotId?: string };
+    const today = todayInTz();
 
-    // Today's plans → routes → stops in a single joined query
-    const todayPlans = await db
-      .select({ id: plans.id })
-      .from(plans)
-      .where(and(
-        eq(plans.orgId, orgId),
-        isNull(plans.deletedAt),
-        eq(plans.date, todayInTz()),
-        q.depotId ? eq(plans.depotId, q.depotId) : undefined,
-      ));
+    // Single joined query: plans → routes → stops + drivers count in parallel
+    type StopCountRow = { status: string; cnt: number };
+    type ActiveRow = { cnt: number };
 
-    const planIds = todayPlans.map(p => p.id);
+    const [stopCountRows, [activeRow]] = await Promise.all([
+      db.execute(sql`
+        SELECT s.status, COUNT(*)::int AS cnt
+        FROM stops s
+        JOIN routes r ON r.id = s.route_id AND r.deleted_at IS NULL
+        JOIN plans p  ON p.id = r.plan_id  AND p.deleted_at IS NULL
+          AND p.org_id = ${orgId}
+          AND p.date   = ${today}
+          ${q.depotId ? sql`AND p.depot_id = ${q.depotId}` : sql``}
+        WHERE s.org_id     = ${orgId}
+          AND s.deleted_at IS NULL
+        GROUP BY s.status
+      `) as unknown as StopCountRow[],
+      db.select({ cnt: sql<number>`count(*)::int` })
+        .from(drivers)
+        .where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt), eq(drivers.status, 'on_route'))),
+    ]);
 
-    let stopsToday = 0;
-    let completedToday = 0;
-    let inProgressToday = 0;
-
-    if (planIds.length > 0) {
-      const todayRoutes = await db
-        .select({ id: routes.id })
-        .from(routes)
-        .where(and(
-          inArray(routes.planId, planIds),
-          isNull(routes.deletedAt),
-        ));
-
-      const routeIds = todayRoutes.map(r => r.id);
-
-      if (routeIds.length > 0) {
-        const stopCounts = await db
-          .select({
-            status: stops.status,
-            cnt: sql<number>`count(*)::int`,
-          })
-          .from(stops)
-          .where(and(
-            eq(stops.orgId, orgId),
-            isNull(stops.deletedAt),
-            inArray(stops.routeId, routeIds),
-          ))
-          .groupBy(stops.status);
-
-        for (const row of stopCounts) {
-          stopsToday += row.cnt;
-          if (row.status === 'completed') completedToday = row.cnt;
-          if (row.status === 'en_route' || row.status === 'arrived') inProgressToday += row.cnt;
-        }
-      }
+    let stopsToday = 0, completedToday = 0, inProgressToday = 0;
+    for (const row of stopCountRows) {
+      stopsToday += row.cnt;
+      if (row.status === 'completed') completedToday = row.cnt;
+      if (row.status === 'en_route' || row.status === 'arrived') inProgressToday += row.cnt;
     }
-
-    // Active drivers: status = 'on_route', not deleted
-    const [activeRow] = await db
-      .select({ cnt: sql<number>`count(*)::int` })
-      .from(drivers)
-      .where(and(
-        eq(drivers.orgId, orgId),
-        isNull(drivers.deletedAt),
-        eq(drivers.status, 'on_route'),
-      ));
 
     return {
       stopsToday,
@@ -82,6 +54,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /orgs/:orgId/dashboard/drivers — fleet status for Command Center
+  // P-PERF6: Parallel fetch of drivers + route/stop counts via single SQL JOIN
   app.get('/drivers', {
     preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
@@ -89,71 +62,40 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     const q = req.query as { depotId?: string };
     const today = todayInTz();
 
-    const allDrivers = await db
-      .select({
-        id: drivers.id,
-        name: drivers.name,
-        status: drivers.status,
-        vehicleType: drivers.vehicleType,
-        currentLat: drivers.currentLat,
-        currentLng: drivers.currentLng,
-        lastPingAt: drivers.lastPingAt,
-      })
-      .from(drivers)
-      .where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt)));
+    type DriverRow = { id: string; name: string; status: string; vehicleType: string | null; currentLat: number | null; currentLng: number | null; lastPingAt: Date | null };
+    type RouteCountRow = { driver_id: string; route_id: string; route_status: string; total_stops: number; completed_stops: number };
+
+    const [allDrivers, routeCountRows] = await Promise.all([
+      db.select({
+        id: drivers.id, name: drivers.name, status: drivers.status,
+        vehicleType: drivers.vehicleType, currentLat: drivers.currentLat,
+        currentLng: drivers.currentLng, lastPingAt: drivers.lastPingAt,
+      }).from(drivers).where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt))),
+      db.execute(sql`
+        SELECT
+          r.driver_id,
+          r.id           AS route_id,
+          r.status       AS route_status,
+          COUNT(s.id)::int                                         AS total_stops,
+          COUNT(s.id) FILTER (WHERE s.status = 'completed')::int  AS completed_stops
+        FROM routes r
+        JOIN plans p ON p.id = r.plan_id
+          AND p.org_id     = ${orgId}
+          AND p.deleted_at IS NULL
+          AND p.date       = ${today}
+          ${q.depotId ? sql`AND p.depot_id = ${q.depotId}` : sql``}
+        LEFT JOIN stops s ON s.route_id = r.id AND s.deleted_at IS NULL AND s.org_id = ${orgId}
+        WHERE r.deleted_at IS NULL
+          AND r.driver_id IS NOT NULL
+        GROUP BY r.driver_id, r.id, r.status
+      `) as unknown as RouteCountRow[],
+    ]);
 
     if (allDrivers.length === 0) return { drivers: [] };
 
-    // Today's plans → routes → stop counts (depot-scoped when depotId provided)
-    const todayPlans = await db
-      .select({ id: plans.id })
-      .from(plans)
-      .where(and(
-        eq(plans.orgId, orgId),
-        isNull(plans.deletedAt),
-        eq(plans.date, today),
-        q.depotId ? eq(plans.depotId, q.depotId) : undefined,
-      ));
-
-    const planIds = todayPlans.map(p => p.id);
-    const driverRouteMap = new Map<string, { routeId: string; routeStatus: string; totalStops: number; completedStops: number }>();
-
-    if (planIds.length > 0) {
-      const todayRoutes = await db
-        .select({ id: routes.id, driverId: routes.driverId, status: routes.status })
-        .from(routes)
-        .where(and(inArray(routes.planId, planIds), isNull(routes.deletedAt), isNotNull(routes.driverId)));
-
-      const routeIds = todayRoutes.map(r => r.id);
-
-      if (routeIds.length > 0) {
-        const stopCounts = await db
-          .select({ routeId: stops.routeId, status: stops.status, cnt: sql<number>`count(*)::int` })
-          .from(stops)
-          .where(and(eq(stops.orgId, orgId), isNull(stops.deletedAt), inArray(stops.routeId, routeIds)))
-          .groupBy(stops.routeId, stops.status);
-
-        const routeTotals = new Map<string, { total: number; completed: number }>();
-        for (const row of stopCounts) {
-          if (!row.routeId) continue; // unassigned stops — skip route totals
-          const cur = routeTotals.get(row.routeId) ?? { total: 0, completed: 0 };
-          cur.total += row.cnt;
-          if (row.status === 'completed') cur.completed += row.cnt;
-          routeTotals.set(row.routeId, cur);
-        }
-
-        for (const route of todayRoutes) {
-          if (!route.driverId) continue;
-          const counts = routeTotals.get(route.id) ?? { total: 0, completed: 0 };
-          driverRouteMap.set(route.driverId, {
-            routeId: route.id,
-            routeStatus: route.status,
-            totalStops: counts.total,
-            completedStops: counts.completed,
-          });
-        }
-      }
-    }
+    const driverRouteMap = new Map(
+      routeCountRows.map(r => [r.driver_id, { routeId: r.route_id, routeStatus: r.route_status, totalStops: r.total_stops, completedStops: r.completed_stops }])
+    );
 
     return {
       drivers: allDrivers.map(d => ({
@@ -165,6 +107,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /orgs/:orgId/dashboard/today — single aggregate: plans + routes + stops
+  // P-PERF6: Single SQL JOIN replaces 3-serial-waterfall.
   app.get('/today', {
     preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
@@ -172,55 +115,64 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     const q = req.query as { date?: string; depotId?: string };
     const today = q.date ?? todayInTz();
 
-    const planRows = await db.select({
-      id: plans.id,
-      date: plans.date,
-      status: plans.status,
-      depotId: plans.depotId,
-    }).from(plans).where(and(
-      eq(plans.orgId, orgId),
-      isNull(plans.deletedAt),
-      eq(plans.date, today),
-      q.depotId ? eq(plans.depotId, q.depotId) : undefined,
-    )).orderBy(desc(plans.createdAt));
+    type PlanRow = { id: string; date: string; status: string; depot_id: string };
+    type JoinRow = {
+      route_id: string; plan_id: string; driver_id: string | null;
+      route_status: string; stop_order: unknown; estimated_duration: number | null;
+      stop_id: string | null; stop_status: string | null; stop_route_id: string | null;
+    };
+
+    // Parallel: fetch plans + (routes + stops via single JOIN query)
+    const [planRows, joinRows] = await Promise.all([
+      db.execute(sql`
+        SELECT id, date, status, depot_id
+        FROM plans
+        WHERE org_id     = ${orgId}
+          AND deleted_at IS NULL
+          AND date       = ${today}
+          ${q.depotId ? sql`AND depot_id = ${q.depotId}` : sql``}
+        ORDER BY created_at DESC
+      `) as unknown as PlanRow[],
+      db.execute(sql`
+        SELECT
+          r.id AS route_id, r.plan_id, r.driver_id, r.status AS route_status,
+          r.stop_order, r.estimated_duration,
+          s.id AS stop_id, s.status AS stop_status, s.route_id AS stop_route_id
+        FROM routes r
+        LEFT JOIN stops s ON s.route_id = r.id AND s.deleted_at IS NULL AND s.org_id = ${orgId}
+        JOIN plans p ON p.id = r.plan_id
+          AND p.org_id     = ${orgId}
+          AND p.deleted_at IS NULL
+          AND p.date       = ${today}
+          ${q.depotId ? sql`AND p.depot_id = ${q.depotId}` : sql``}
+        WHERE r.deleted_at IS NULL
+      `) as unknown as JoinRow[],
+    ]);
 
     if (planRows.length === 0) return { plans: [] };
-
-    const planIds = planRows.map(p => p.id);
-
-    const routeRows = await db.select({
-      id: routes.id,
-      planId: routes.planId,
-      driverId: routes.driverId,
-      status: routes.status,
-      stopOrder: routes.stopOrder,
-      estimatedDuration: routes.estimatedDuration,
-    }).from(routes).where(and(inArray(routes.planId, planIds), isNull(routes.deletedAt)));
 
     type StopSlim = { id: string; status: string; routeId: string | null };
     type RouteWithStops = { id: string; planId: string; driverId: string | null; status: string; stopOrder: unknown; estimatedDuration: number | null; stops: StopSlim[] };
     type PlanWithRoutes = { id: string; date: string; status: string; depotId: string; routes: RouteWithStops[] };
 
-    const routeMap = new Map<string, RouteWithStops>(
-      routeRows.map(r => [r.id, { ...r, stops: [] }])
-    );
+    const routeMap = new Map<string, RouteWithStops>();
     const planMap = new Map<string, PlanWithRoutes>(
-      planRows.map(p => [p.id, { ...p, routes: [] }])
+      planRows.map(p => [p.id, { id: p.id, date: p.date, status: p.status, depotId: p.depot_id, routes: [] }])
     );
-    for (const r of routeRows) planMap.get(r.planId)?.routes.push(routeMap.get(r.id)!);
 
-    const routeIds = routeRows.map(r => r.id);
-    if (routeIds.length > 0) {
-      const stopRows = await db.select({
-        id: stops.id,
-        status: stops.status,
-        routeId: stops.routeId,
-      }).from(stops).where(and(
-        eq(stops.orgId, orgId),
-        isNull(stops.deletedAt),
-        inArray(stops.routeId, routeIds),
-      ));
-      for (const s of stopRows) if (s.routeId) routeMap.get(s.routeId)?.stops.push(s);
+    for (const row of joinRows) {
+      if (!routeMap.has(row.route_id)) {
+        const route: RouteWithStops = {
+          id: row.route_id, planId: row.plan_id, driverId: row.driver_id,
+          status: row.route_status, stopOrder: row.stop_order,
+          estimatedDuration: row.estimated_duration, stops: [],
+        };
+        routeMap.set(row.route_id, route);
+        planMap.get(row.plan_id)?.routes.push(route);
+      }
+      if (row.stop_id) {
+        routeMap.get(row.route_id)?.stops.push({ id: row.stop_id, status: row.stop_status!, routeId: row.stop_route_id });
+      }
     }
 
     return { plans: [...planMap.values()] };

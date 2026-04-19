@@ -69,3 +69,39 @@ export async function uploadBuffer(buffer: Buffer, mimeType: string, folder = 'p
   if (useR2) return uploadR2(buffer, mimeType, folder);
   return uploadLocal(buffer, mimeType, folder);
 }
+
+// P-DEL13-S3: HIPAA §164.310(d)(2)(i) — delete object from storage backend
+// Used by runPhiPurgeCron to actually remove PHI files after DB fields are NULLed
+export async function deleteFromStorage(key: string): Promise<void> {
+  if (!key) return;
+  if (useS3) {
+    const { S3Client, DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+    const s3 = new S3Client({
+      region: process.env.AWS_REGION ?? 'us-east-1',
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID!.trim(),
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!.trim(),
+      },
+    });
+    await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME!, Key: key }));
+    return;
+  }
+  if (useR2) {
+    const { S3Client, DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+    const r2 = new S3Client({
+      region: 'auto',
+      endpoint: process.env.R2_ENDPOINT!,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+      },
+    });
+    await r2.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME!, Key: key }));
+    return;
+  }
+  // Local dev: delete from disk
+  const { unlink } = await import('fs/promises');
+  const { join } = await import('path');
+  const UPLOAD_DIR = process.env.UPLOAD_DIR ?? join(process.cwd(), 'uploads');
+  await unlink(join(UPLOAD_DIR, key)).catch(() => {}); // ignore if already gone
+}

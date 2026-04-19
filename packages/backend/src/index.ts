@@ -72,6 +72,7 @@ import { unsubscribeRoutes } from './routes/unsubscribe.js';
 import { phiFilterHook } from './middleware/phiFilter.js';
 import { phiAuditHook } from './middleware/phiAuditHook.js';
 import { sendDailyReport } from './services/dailyReport.js';
+import { deleteFromStorage } from './services/storage.js';
 import { runAutoApproval } from './lib/autoApproval.js';
 import { db, client } from './db/connection.js';
 import { organizations, magicLinkTokens, signupIntents, users } from './db/schema.js';
@@ -599,8 +600,11 @@ setInterval(async () => {
   }
 }, 60 * 60 * 1000);
 
-// P-DEL9: HIPAA §164.310(d)(2)(i) PHI purge cron — Sunday 2 AM UTC
-// Purges PHI fields from POD records past 6yr retention + driver GPS traces past 1yr
+// P-DEL9 + P-DEL13-S3: HIPAA §164.310(d)(2)(i) PHI purge cron — Sunday 2 AM UTC
+// Step 1: Fetch S3 keys from records past 6yr retention
+// Step 2: Delete objects from S3/R2 storage
+// Step 3: NULL PHI DB fields + set pod_purged_at
+// Step 4: Delete driver GPS traces past 1yr retention
 const runPhiPurgeCron = async () => {
   const now = new Date();
   const isSunday = now.getUTCDay() === 0;
@@ -608,13 +612,54 @@ const runPhiPurgeCron = async () => {
   if (!isSunday || !is2am) return;
 
   try {
-    // Purge POD PHI fields (signature, photo URLs, recipient name) after retention window
+    // Step 1: Fetch S3 keys for records to purge (before NULLing them)
+    type PodRow = { id: string; signature_data: string | null; id_photo_url: string | null; photos: unknown };
+    const podsToPurge = (await db.execute(sql`
+      SELECT id, signature_data, id_photo_url, photos
+      FROM proof_of_deliveries
+      WHERE retention_expires_at < NOW()
+        AND pod_purged_at IS NULL
+    `)) as unknown as PodRow[];
+
+    const s3KeysToDelete: string[] = [];
+    for (const pod of podsToPurge) {
+      // signatureData stores the S3 key directly
+      if (pod.signature_data) s3KeysToDelete.push(pod.signature_data);
+      // idPhotoUrl may be a full URL or a key — extract key portion if it starts with https
+      if (pod.id_photo_url) {
+        const url = pod.id_photo_url;
+        // Strip base URL prefix to get key: "pod/uuid.jpg" or full https://... URL
+        const key = url.startsWith('https://') ? url.split('/').slice(3).join('/') : url;
+        if (key) s3KeysToDelete.push(key);
+      }
+      // photos is a JSONB array — may contain objects with url/key fields
+      const photos = Array.isArray(pod.photos) ? pod.photos as Array<{ key?: string; url?: string }> : [];
+      for (const photo of photos) {
+        const k = photo.key ?? (photo.url?.startsWith('https://') ? photo.url.split('/').slice(3).join('/') : photo.url);
+        if (k) s3KeysToDelete.push(k);
+      }
+    }
+
+    // Step 2: Delete from S3/R2 in parallel (allSettled — don't fail on individual key errors)
+    let s3Deleted = 0;
+    let s3Errors = 0;
+    if (s3KeysToDelete.length > 0) {
+      const results = await Promise.allSettled(s3KeysToDelete.map(k => deleteFromStorage(k)));
+      s3Deleted = results.filter(r => r.status === 'fulfilled').length;
+      s3Errors = results.filter(r => r.status === 'rejected').length;
+      if (s3Errors > 0) {
+        console.warn(JSON.stringify({ event: 'phi_purge_s3_partial_errors', s3Errors, s3Deleted, ts: now.toISOString() }));
+      }
+    }
+
+    // Step 3: NULL PHI DB fields after S3 objects are deleted
     const podResult = await db.execute(sql`
       UPDATE proof_of_deliveries
       SET
         signature_data = NULL,
         id_photo_url   = NULL,
         recipient_name = NULL,
+        photos         = '[]'::jsonb,
         pod_purged_at  = NOW()
       WHERE retention_expires_at < NOW()
         AND pod_purged_at IS NULL
@@ -622,7 +667,7 @@ const runPhiPurgeCron = async () => {
     `);
     const podPurged = (podResult as unknown as Array<unknown>).length;
 
-    // Purge driver GPS traces past 1yr retention (address proximity PHI)
+    // Step 4: Purge driver GPS traces past 1yr retention (address proximity PHI)
     const locResult = await db.execute(sql`
       DELETE FROM driver_location_history
       WHERE retention_expires_at < NOW()
@@ -631,7 +676,6 @@ const runPhiPurgeCron = async () => {
     const locPurged = (locResult as unknown as Array<unknown>).length;
 
     if (podPurged > 0 || locPurged > 0) {
-      // Audit log the purge event
       await db.execute(sql`
         INSERT INTO admin_audit_logs (id, org_id, admin_id, admin_email, event, metadata, created_at)
         VALUES (
@@ -640,11 +684,11 @@ const runPhiPurgeCron = async () => {
           '00000000-0000-0000-0000-000000000000',
           'system@mydashrx.internal',
           'pod_phi_purged',
-          ${JSON.stringify({ podRecordsPurged: podPurged, locationRecordsDeleted: locPurged, runAt: now.toISOString() })}::jsonb,
+          ${JSON.stringify({ podRecordsPurged: podPurged, locationRecordsDeleted: locPurged, s3ObjectsDeleted: s3Deleted, s3Errors, runAt: now.toISOString() })}::jsonb,
           NOW()
         )
       `);
-      console.log(JSON.stringify({ event: 'phi_purge_cron', podPurged, locPurged, ts: now.toISOString() }));
+      console.log(JSON.stringify({ event: 'phi_purge_cron', podPurged, locPurged, s3Deleted, s3Errors, ts: now.toISOString() }));
     }
   } catch (err) {
     console.error('[phi_purge_cron] error (non-fatal):', err instanceof Error ? err.message : err);
