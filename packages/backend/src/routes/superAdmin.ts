@@ -5,7 +5,7 @@ import { organizations, users, stops, drivers, adminAuditLogs, auditLogs, magicL
 import { eq, isNull, sql, gte, lte, count, and, desc, asc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
-import { invalidateOrgRole, invalidateOrg, listTemplates, upsertTemplate } from '../lib/rbacCache.js';
+import { invalidateOrgRole, invalidateOrg, listTemplates, upsertTemplate, seedOrgDefaults } from '../lib/rbacCache.js';
 import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
 
 // P-ADM39: in-memory SSE client registry for approval queue live updates
@@ -345,6 +345,9 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
     const actor = req.user as { sub: string; email: string };
     await logAuditAction(actor.sub, actor.email, 'approve_org', orgId, org.name);
+
+    // P-RBAC23: ensure org has isolated role templates (idempotent — ON CONFLICT DO NOTHING)
+    seedOrgDefaults(orgId).catch((e: unknown) => { console.error('[P-RBAC23] seedOrgDefaults on approve failed:', e); });
 
     notifyApprovalClients(); // P-ADM39: push refresh to all SSE subscribers
 
@@ -849,6 +852,8 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .from(users).where(and(eq(users.orgId, orgId), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
     if (admin) sendOrgApprovalEmail(orgId, org.name, admin.email, admin.name);
     await logAuditAction('email-link', 'email-approve', 'approve_org', orgId, org.name);
+    // P-RBAC23: seed org-specific templates on approval (idempotent)
+    seedOrgDefaults(orgId).catch((e: unknown) => { console.error('[P-RBAC23] seedOrgDefaults on link-approve failed:', e); });
     const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
     return reply.redirect(`${dashUrl}/admin/approvals?approved=${orgId}`);
   });
@@ -1490,19 +1495,104 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     if (!body.role || !Array.isArray(body.permissions)) {
       return reply.code(400).send({ error: 'role and permissions[] required' });
     }
-    // Validate permissions are known keys
     const validKeys = new Set(Object.keys(ROLE_PERMISSIONS));
-    // permissions are permission keys, not role names — allow any string (future-proof) but warn on unknowns
     const unknown = body.permissions.filter(p => !validKeys.has(p as keyof typeof ROLE_PERMISSIONS));
     if (unknown.length > 0) {
       console.warn(`[RBAC32] Unknown permissions in template patch: ${unknown.join(', ')}`);
     }
     const orgId = body.orgId ?? null;
+
+    // P-RBAC16: capture before-state for diff audit (HIPAA §164.312(b))
+    const [existing] = await db.select({ permissions: roleTemplates.permissions })
+      .from(roleTemplates)
+      .where(orgId === null
+        ? sql`org_id IS NULL AND role = ${body.role}`
+        : and(eq(roleTemplates.orgId, orgId), eq(roleTemplates.role, body.role))
+      ).limit(1);
+    const beforePermissions: string[] = (existing?.permissions as string[]) ?? [];
+    const afterPermissions = body.permissions;
+    const added = afterPermissions.filter(p => !beforePermissions.includes(p));
+    const removed = beforePermissions.filter(p => !afterPermissions.includes(p));
+
     await upsertTemplate(orgId, body.role, body.permissions);
-    // Audit log
+
+    // P-RBAC16: audit with before/after diff
     const actor = req.user as { sub: string; email: string };
-    await logAuditAction(actor.sub, actor.email, 'role_template_updated', orgId ?? 'platform', body.role, { orgId, permissions: body.permissions });
-    return reply.send({ ok: true, orgId, role: body.role, permissions: body.permissions });
+    await logAuditAction(actor.sub, actor.email, 'role_template_updated', orgId ?? 'platform', body.role, {
+      orgId, role: body.role,
+      before: beforePermissions,
+      after: afterPermissions,
+      diff: { added, removed },
+      changedBy: actor.sub,
+    });
+    return reply.send({ ok: true, orgId, role: body.role, permissions: body.permissions, diff: { added, removed } });
+  });
+
+  // GET /admin/rbac-audit/permissions — P-RBAC16: permission change history with before/after diff
+  // HIPAA §164.312(b): audit reconstruction for permission changes
+  app.get('/rbac-audit/permissions', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+    const { orgId, role, format, cursor, limit: limitStr } = req.query as {
+      orgId?: string; role?: string; format?: string; cursor?: string; limit?: string;
+    };
+
+    const pageLimit = Math.min(parseInt(limitStr ?? '100', 10), 500);
+    const conditions: any[] = [eq(adminAuditLogs.action, 'role_template_updated')];
+    if (cursor) {
+      try {
+        const { created_at, id } = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { created_at: string; id: string };
+        conditions.push(sql`(${adminAuditLogs.createdAt}, ${adminAuditLogs.id}) < (${new Date(created_at)}::timestamptz, ${id}::uuid)`);
+      } catch { /* invalid cursor — first page */ }
+    }
+
+    let rows = await db.select().from(adminAuditLogs)
+      .where(and(...conditions))
+      .orderBy(desc(adminAuditLogs.createdAt))
+      .limit(pageLimit + 1);
+
+    // Filter by orgId/role on metadata (post-query filter — metadata is jsonb)
+    rows = rows.filter(r => {
+      const meta = r.metadata as Record<string, unknown> | null;
+      if (orgId && meta?.orgId !== orgId) return false;
+      if (role && r.targetName !== role) return false;
+      return true;
+    });
+
+    const hasMore = rows.length > pageLimit;
+    const events = rows.slice(0, pageLimit).map(r => {
+      const meta = r.metadata as Record<string, unknown> | null;
+      return {
+        id: r.id,
+        timestamp: r.createdAt,
+        actor: r.actorEmail,
+        role: r.targetName,
+        orgId: meta?.orgId ?? null,
+        before: meta?.before ?? [],
+        after: meta?.after ?? [],
+        diff: meta?.diff ?? { added: [], removed: [] },
+      };
+    });
+
+    if (format === 'csv') {
+      const actor = req.user as { sub: string; email: string };
+      await logAuditAction(actor.sub, actor.email, 'rbac_audit_exported', actor.sub, actor.email, { rowCount: events.length });
+      const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const header = 'timestamp,actor,role,org_id,permissions_added,permissions_removed\n';
+      const body = events.map(e =>
+        [e.timestamp, e.actor, e.role, e.orgId ?? 'platform',
+          (e.diff as any)?.added?.join('|') ?? '',
+          (e.diff as any)?.removed?.join('|') ?? '',
+        ].map(escape).join(',')
+      ).join('\n');
+      reply.header('Content-Type', 'text/csv');
+      reply.header('Content-Disposition', `attachment; filename="rbac-audit-${new Date().toISOString().slice(0, 10)}.csv"`);
+      return reply.send(header + body);
+    }
+
+    const last = events[events.length - 1];
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ created_at: last.timestamp?.toISOString?.() ?? last.timestamp, id: last.id })).toString('base64url')
+      : null;
+    return { events, nextCursor, hasMore };
   });
 
   // DELETE /admin/role-templates/:id — delete an org-specific template (restores platform default)

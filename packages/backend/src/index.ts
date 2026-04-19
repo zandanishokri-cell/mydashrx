@@ -563,6 +563,15 @@ try {
   console.error('P-RBAC32 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-RBAC14: assigned_dispatcher_id on routes — dispatcher resource scoping (HIPAA §164.502(b))
+try {
+  await db.execute(sql`ALTER TABLE routes ADD COLUMN IF NOT EXISTS assigned_dispatcher_id uuid REFERENCES users(id)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS routes_assigned_dispatcher_idx ON routes(assigned_dispatcher_id) WHERE deleted_at IS NULL AND assigned_dispatcher_id IS NOT NULL`);
+  console.log('P-RBAC14 routes.assigned_dispatcher_id column ensured');
+} catch (err) {
+  console.error('P-RBAC14 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-DEL21: email_daily_counts — per-subdomain daily send + bounce tracking for warm-up + circuit breaker
 try {
   await db.execute(sql`

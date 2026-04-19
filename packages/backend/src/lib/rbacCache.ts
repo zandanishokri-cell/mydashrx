@@ -67,6 +67,30 @@ export async function listTemplates(orgId?: string) {
   return orgId ? rows.filter(r => r.orgId === null || r.orgId === orgId) : rows;
 }
 
+/**
+ * P-RBAC23: Seed org-specific role templates from platform defaults on org creation.
+ * Each org gets its own isolated permission set — platform default changes no longer
+ * silently affect existing orgs. HIPAA §164.308(a)(4)(ii)(B).
+ * Fire-and-forget safe — uses ON CONFLICT DO NOTHING.
+ */
+export async function seedOrgDefaults(orgId: string): Promise<void> {
+  // Fetch all platform defaults (orgId IS NULL)
+  const platformDefaults = await db.select({
+    role: roleTemplates.role,
+    permissions: roleTemplates.permissions,
+  }).from(roleTemplates).where(sql`org_id IS NULL`);
+
+  for (const { role, permissions } of platformDefaults) {
+    await db.execute(sql`
+      INSERT INTO role_templates (id, org_id, role, permissions, is_default, created_at, updated_at)
+      VALUES (gen_random_uuid(), ${orgId}, ${role}, ${JSON.stringify(permissions)}::jsonb, false, NOW(), NOW())
+      ON CONFLICT (org_id, role) WHERE org_id IS NOT NULL DO NOTHING
+    `).catch(() => {
+      // Best-effort — never blocks org creation
+    });
+  }
+}
+
 /** Upsert an org-specific template */
 export async function upsertTemplate(orgId: string | null, role: string, permissions: string[]) {
   if (orgId === null) {

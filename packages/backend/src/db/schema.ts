@@ -221,6 +221,9 @@ export const routes = pgTable(
       .references(() => plans.id),
     driverId: uuid('driver_id')
       .references(() => drivers.id),
+    // P-RBAC14: dispatcher resource scoping — HIPAA §164.502(b) minimum-necessary
+    assignedDispatcherId: uuid('assigned_dispatcher_id')
+      .references((): AnyPgColumn => users.id),
     status: routeStatusEnum('status').notNull().default('pending'),
     stopOrder: jsonb('stop_order').notNull().default('[]'),
     startedAt: timestamp('started_at'),

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { routes, stops, plans, drivers, organizations } from '../db/schema.js';
-import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
+import { routes, stops, plans, drivers, organizations, users, adminAuditLogs } from '../db/schema.js';
+import { eq, and, isNull, inArray, notInArray, or } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 
 export const routeRoutes: FastifyPluginAsync = async (app) => {
@@ -9,7 +9,7 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin', 'driver'),
   }, async (req, reply) => {
     const { planId } = req.params as { planId: string };
-    const { orgId: userOrgId, role, depotIds } = req.user as { orgId: string; role: string; depotIds: string[] };
+    const { orgId: userOrgId, role, depotIds, sub } = req.user as { orgId: string; role: string; depotIds: string[]; sub: string };
     const [plan] = await db.select({ orgId: plans.orgId, depotId: plans.depotId }).from(plans)
       .where(and(eq(plans.id, planId), isNull(plans.deletedAt))).limit(1);
     if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
@@ -18,6 +18,17 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(403).send({ error: 'Access denied' });
       }
     }
+
+    // P-RBAC14: dispatcher resource scoping — dispatchers only see routes assigned to them + unassigned
+    // HIPAA §164.502(b) minimum-necessary: multi-team chains must not see all org routes
+    if (role === 'dispatcher') {
+      return db.select().from(routes).where(and(
+        eq(routes.planId, planId),
+        isNull(routes.deletedAt),
+        or(eq(routes.assignedDispatcherId, sub), isNull(routes.assignedDispatcherId)),
+      ));
+    }
+
     return db.select().from(routes).where(and(eq(routes.planId, planId), isNull(routes.deletedAt)));
   });
 
@@ -63,7 +74,6 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     if (!updated) return reply.code(404).send({ error: 'Not found' });
 
     // P-ONB38/P-ONB37: set firstDispatchAt + activatedAt on first route dispatch (idempotent)
-    // activatedAt was previously set on first stop created — now corrected to first dispatch
     if (status === 'active') {
       const now = new Date();
       db.update(organizations)
@@ -73,6 +83,47 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return updated;
+  });
+
+  // P-RBAC14: PATCH /:routeId/assign-dispatcher — pharmacy_admin/super_admin only
+  // Assigns a dispatcher to a route so they can see it in their scoped view
+  app.patch('/:routeId/assign-dispatcher', {
+    preHandler: requireRole('pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { planId, routeId } = req.params as { planId: string; routeId: string };
+    const { orgId: userOrgId } = req.user as { orgId: string };
+    const { dispatcherId } = req.body as { dispatcherId: string | null };
+
+    // Verify plan org
+    const [plan] = await db.select({ orgId: plans.orgId }).from(plans)
+      .where(and(eq(plans.id, planId), isNull(plans.deletedAt))).limit(1);
+    if (!plan || plan.orgId !== userOrgId) return reply.code(403).send({ error: 'Forbidden' });
+
+    // If assigning (not clearing), verify dispatcher belongs to same org with dispatcher role
+    if (dispatcherId) {
+      const [dispatcher] = await db.select({ id: users.id }).from(users)
+        .where(and(eq(users.id, dispatcherId), eq(users.orgId, userOrgId), eq(users.role, 'dispatcher'), isNull(users.deletedAt))).limit(1);
+      if (!dispatcher) return reply.code(400).send({ error: 'Invalid dispatcherId — must be a dispatcher in this org' });
+    }
+
+    const [updated] = await db.update(routes)
+      .set({ assignedDispatcherId: dispatcherId ?? null })
+      .where(and(eq(routes.id, routeId), eq(routes.planId, planId), isNull(routes.deletedAt)))
+      .returning();
+    if (!updated) return reply.code(404).send({ error: 'Route not found' });
+
+    // Audit log — HIPAA §164.308(a)(4)(ii)(B)
+    const actor = req.user as { sub: string; email: string };
+    db.insert(adminAuditLogs).values({
+      actorId: actor.sub,
+      actorEmail: actor.email,
+      action: 'dispatcher_assigned_to_route',
+      targetId: routeId,
+      targetName: `route:${routeId}`,
+      metadata: { routeId, planId, dispatcherId: dispatcherId ?? null, orgId: userOrgId },
+    }).catch(console.error);
+
+    return { ok: true, routeId, assignedDispatcherId: updated.assignedDispatcherId };
   });
 
   app.get('/:routeId/stops', {
