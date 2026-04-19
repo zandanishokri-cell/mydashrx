@@ -1,6 +1,5 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { onSendHookHandler } from 'fastify';
 
-// Fields stripped by role BEFORE sending response
 const PHI_STRIP: Record<string, string[]> = {
   driver:     ['rxNumbers', 'controlledSubstance', 'requiresRefrigeration', 'deliveryNotes', 'codAmount'],
   dispatcher: ['rxNumbers', 'controlledSubstance'],
@@ -29,16 +28,14 @@ function stripPHI(obj: unknown, role: string): unknown {
   return out;
 }
 
-export const phiFilterPlugin: FastifyPluginAsync = async (app) => {
-  app.addHook('onSend', async (req, _reply, payload) => {
-    const user = (req as any).user as { role?: string } | undefined;
-    const role = user?.role;
-    if (!role || !PHI_STRIP[role]) return payload;
-    try {
-      const parsed = JSON.parse(payload as string);
-      return JSON.stringify(stripPHI(parsed, role));
-    } catch {
-      return payload;
-    }
-  });
+export const phiFilterHook: onSendHookHandler<any> = async (req, _reply, payload) => {
+  const user = (req as any).user as { role?: string } | undefined;
+  const role = user?.role;
+  if (!role || !PHI_STRIP[role]) return payload;
+  try {
+    const parsed = JSON.parse(payload as string);
+    return JSON.stringify(stripPHI(parsed, role));
+  } catch {
+    return payload;
+  }
 };

@@ -47,7 +47,7 @@ import { reportRoutes } from './routes/reports.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { notificationRoutes } from './routes/notifications.js';
 import { userSettingsRoutes } from './routes/userSettings.js';
-import { phiFilterPlugin } from './middleware/phiFilter.js';
+import { phiFilterHook } from './middleware/phiFilter.js';
 import { sendDailyReport } from './services/dailyReport.js';
 import { runAutoApproval } from './lib/autoApproval.js';
 import { db, client } from './db/connection.js';
@@ -95,7 +95,7 @@ await app.register(multipart, {
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
 
-await app.register(phiFilterPlugin);
+app.addHook('onSend', phiFilterHook);
 
 // 1 MB limit for JSON payloads (multipart handles its own)
 app.addHook('preValidation', async (request, reply) => {
