@@ -10,6 +10,7 @@
  *   - rxNumbers, controlledSubstance, requiresRefrigeration, deliveryNotes, codAmount
  */
 import type { onSendHookHandler } from 'fastify';
+import sjp from 'secure-json-parse';
 
 /** Fields stripped entirely by role */
 const STRIP_FIELDS: Record<string, string[]> = {
@@ -61,7 +62,8 @@ export const phiFilterHook: onSendHookHandler<any> = async (req, _reply, payload
   const role = user?.role;
   if (!role || ELEVATED.has(role)) return payload; // elevated roles get full PHI
   try {
-    const parsed = JSON.parse(payload as string);
+    // P-SEC35: secure-json-parse prevents prototype pollution via crafted JSON payloads
+    const parsed = sjp.parse(payload as string, undefined, { protoAction: 'error', constructorAction: 'error' });
     return JSON.stringify(filterFields(parsed, role));
   } catch {
     return payload;

@@ -3,6 +3,11 @@ import { clearSession, getAccessToken, setAccessToken } from './auth';
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
+// P-RBAC31: impersonation header — set by layout, injected into every request
+let _impersonateOrgId: string | null = null;
+export const setImpersonateOrgId = (orgId: string | null) => { _impersonateOrgId = orgId; };
+export const getImpersonateOrgId = () => _impersonateOrgId;
+
 let _isRefreshing = false;
 let _refreshQueue: Array<(token: string | null) => void> = [];
 
@@ -69,6 +74,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(_impersonateOrgId ? { 'X-Impersonate-Org': _impersonateOrgId } : {}),
       ...(init?.headers ?? {}),
     },
   });

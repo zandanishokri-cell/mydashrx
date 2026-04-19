@@ -1,9 +1,9 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { api } from '@/lib/api';
+import { api, setImpersonateOrgId } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { Crown, Building2, Users, Truck, TrendingUp, DollarSign, Plus, X } from 'lucide-react';
+import { Crown, Building2, Users, Truck, TrendingUp, DollarSign, Plus, X, UserCheck } from 'lucide-react';
 
 interface OrgRow {
   id: string; name: string; timezone: string; billingPlan: string;
@@ -68,6 +68,16 @@ export default function AdminPage() {
       ]);
       setStats(s); setOrgs(o);
     } finally { setLoading(false); }
+  };
+
+  // P-RBAC31: start impersonation — stores orgId in sessionStorage and api module header
+  const impersonate = async (orgId: string, orgName: string) => {
+    const data = await api.post<{ orgId: string; orgName: string }>(`/admin/impersonate/${orgId}`, {});
+    const impState = { orgId: data.orgId, orgName: data.orgName };
+    sessionStorage.setItem('mdrx_impersonate', JSON.stringify(impState));
+    setImpersonateOrgId(data.orgId);
+    // Navigate to that org's dashboard
+    router.push('/dashboard');
   };
 
   const changePlan = async (orgId: string, plan: string) => {
@@ -178,6 +188,14 @@ export default function AdminPage() {
                             <option key={s} value={s}>{s.replace('_', ' ')}</option>
                           ))}
                         </select>
+                        {/* P-RBAC31: impersonation button */}
+                        <button
+                          onClick={() => impersonate(org.id, org.name)}
+                          title={`Impersonate ${org.name}`}
+                          className="flex items-center gap-1 px-2 py-1.5 text-xs bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg transition-colors"
+                        >
+                          <UserCheck size={12} /> View as
+                        </button>
                       </div>
                     </td>
                   </tr>

@@ -3,8 +3,8 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { isAuthenticated, clearSession, getUser, attemptSilentBootstrap } from '@/lib/auth';
-import { api } from '@/lib/api';
-import { LayoutDashboard, Route, Map, Users, LogOut, Search, BarChart2, Target, Shield, Scale, Menu, X, Zap, CreditCard, Settings2, ChevronDown, Crown, RefreshCw, TrendingUp } from 'lucide-react';
+import { api, setImpersonateOrgId } from '@/lib/api';
+import { LayoutDashboard, Route, Map, Users, LogOut, Search, BarChart2, Target, Shield, Scale, Menu, X, Zap, CreditCard, Settings2, ChevronDown, Crown, RefreshCw, TrendingUp, AlertTriangle } from 'lucide-react';
 import NotificationPanel from '@/components/NotificationPanel';
 import { CommandPalette } from '@/components/CommandPalette';
 import { useIdleTimeout } from '@/hooks/useIdleTimeout';
@@ -59,6 +59,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [profileOpen, setProfileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  // P-RBAC31: super admin impersonation state
+  const [impersonatedOrg, setImpersonatedOrg] = useState<{ orgId: string; orgName: string } | null>(null);
   const profileRef = useRef<HTMLDivElement>(null);
   const onboardingChecked = useRef(false);
   // P-SES23: bootstrapped=false until silent refresh resolves — prevents flash redirect on reload
@@ -116,6 +118,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [user, pathname, router]);
 
   useEffect(() => { setDrawerOpen(false); }, [pathname]);
+
+  // P-RBAC31: restore impersonation state from sessionStorage on load
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = sessionStorage.getItem('mdrx_impersonate');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        setImpersonatedOrg(parsed);
+        setImpersonateOrgId(parsed.orgId); // sync module-level header for api.ts
+      } catch { sessionStorage.removeItem('mdrx_impersonate'); }
+    }
+  }, []);
+
+  const startImpersonation = async (orgId: string) => {
+    const data = await api.post<{ orgId: string; orgName: string }>(`/admin/impersonate/${orgId}`, {});
+    const impState = { orgId: data.orgId, orgName: data.orgName };
+    sessionStorage.setItem('mdrx_impersonate', JSON.stringify(impState));
+    setImpersonateOrgId(data.orgId);
+    setImpersonatedOrg(impState);
+  };
+
+  const endImpersonation = async () => {
+    if (!impersonatedOrg) return;
+    await api.del('/admin/impersonate').catch(() => {});
+    sessionStorage.removeItem('mdrx_impersonate');
+    setImpersonateOrgId(null);
+    setImpersonatedOrg(null);
+  };
 
   // Close profile dropdown on outside click
   useEffect(() => {
@@ -311,6 +342,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       <main className="flex-1 overflow-auto mt-14 md:mt-0">
+        {/* P-RBAC31: impersonation amber banner — visible whenever super_admin is acting as another org */}
+        {impersonatedOrg && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 text-amber-800 text-sm">
+            <AlertTriangle size={15} className="shrink-0 text-amber-600" />
+            <span className="font-semibold">Impersonating:</span>
+            <span>{impersonatedOrg.orgName}</span>
+            <span className="text-amber-500 text-xs ml-1">({impersonatedOrg.orgId})</span>
+            <button
+              onClick={endImpersonation}
+              className="ml-auto text-xs bg-amber-200 hover:bg-amber-300 text-amber-900 font-medium px-2 py-0.5 rounded transition-colors"
+            >
+              End Impersonation
+            </button>
+          </div>
+        )}
         {user?.role === 'pharmacy_admin' && <OnboardingChecklist />}
         {children}
       </main>

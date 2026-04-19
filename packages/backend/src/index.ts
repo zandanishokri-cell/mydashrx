@@ -398,6 +398,32 @@ await app.register(multipart, {
 app.addHook('onSend', phiFilterHook);
 app.addHook('onRequest', phiAuditHook); // P-RBAC21: PHI read-event audit for HIPAA §164.312(b)
 
+// P-SEC34: CVE-2026-21710 — reject __proto__/constructor headers before Fastify accesses headersDistinct
+// Unauthenticated crash vector on Node.js v24.14.1. Defence-in-depth until NODE_VERSION=24.14.2 propagates.
+app.addHook('onRequest', async (req, reply) => {
+  if ('__proto__' in req.headers || 'constructor' in req.headers) {
+    req.log.warn({ ip: req.ip, path: req.url }, 'P-SEC34 proto header rejected');
+    return reply.code(400).send({ error: 'Invalid header name' });
+  }
+});
+
+// P-SEC37: Strip hop-by-hop Connection header abuse (CVE-2026-33805 class, preventive)
+// Prevents clients stripping proxy-injected security headers via Connection: header listing.
+const HOP_BY_HOP = new Set(['connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailers','transfer-encoding','upgrade']);
+app.addHook('onRequest', async (req) => {
+  const connHeader = req.headers['connection'];
+  if (connHeader) {
+    const hops = (Array.isArray(connHeader) ? connHeader.join(',') : connHeader)
+      .split(',').map(s => s.trim().toLowerCase());
+    for (const h of hops) {
+      if (h && !HOP_BY_HOP.has(h)) {
+        req.log.warn({ hop: h, ip: req.ip }, 'P-SEC37 suspicious Connection header stripping attempt');
+        delete (req.headers as Record<string, unknown>)[h];
+      }
+    }
+  }
+});
+
 // 1 MB limit for JSON payloads (multipart handles its own)
 app.addHook('preValidation', async (request, reply) => {
   const contentLength = parseInt(request.headers['content-length'] ?? '0', 10);

@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import sjp from 'secure-json-parse';
 import { db } from '../db/connection.js';
 import { organizations, stops, drivers } from '../db/schema.js';
 import { eq, and, gte, isNull, count } from 'drizzle-orm';
@@ -172,7 +173,8 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
     try {
       (req as any).rawBody = (body as Buffer).toString('utf8');
-      done(null, JSON.parse((body as Buffer).toString('utf8')));
+      // P-SEC35: secure-json-parse — external Stripe body before signature check, prototype pollution risk
+      done(null, sjp.parse((body as Buffer).toString('utf8'), undefined, { protoAction: 'error', constructorAction: 'error' }));
     } catch (e) {
       done(e as Error, undefined);
     }

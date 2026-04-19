@@ -1164,4 +1164,68 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       overallIntact: alBroken === 0 && aalBroken === 0,
     });
   });
+
+  // P-RBAC31: Super admin impersonation — POST /admin/impersonate/:orgId
+  // Returns a scoped impersonation token the frontend stores and sends as X-Impersonate-Org.
+  // Logs impersonation_start audit event. Impersonation is request-scoped via header (no long-lived token).
+  app.post('/impersonate/:orgId', { preHandler: auth }, async (req, reply) => {
+    const actor = req.user as { sub: string; email: string; role: string };
+    const { orgId } = req.params as { orgId: string };
+
+    const [org] = await db.select({ id: organizations.id, name: organizations.name })
+      .from(organizations)
+      .where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)))
+      .limit(1);
+
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+
+    await logAuditAction(actor.sub, actor.email, 'impersonation_start', orgId, org.name, {
+      impersonatorId: actor.sub,
+      impersonatorEmail: actor.email,
+      targetOrgId: orgId,
+      targetOrgName: org.name,
+    });
+
+    return reply.code(200).send({
+      orgId: org.id,
+      orgName: org.name,
+      message: 'Impersonation started. Send X-Impersonate-Org header on subsequent requests.',
+      instructions: 'Add header: X-Impersonate-Org: ' + org.id,
+    });
+  });
+
+  // P-RBAC31: End impersonation — DELETE /admin/impersonate
+  // Logs impersonation_end event. Frontend clears the stored orgId.
+  app.delete('/impersonate', { preHandler: auth }, async (req, reply) => {
+    const actor = req.user as { sub: string; email: string };
+    const impersonateHeader = req.headers['x-impersonate-org'];
+    const impersonatedOrgId = Array.isArray(impersonateHeader) ? impersonateHeader[0] : impersonateHeader;
+
+    await logAuditAction(actor.sub, actor.email, 'impersonation_end',
+      impersonatedOrgId ?? 'unknown', impersonatedOrgId ?? 'unknown', {
+        impersonatorId: actor.sub,
+        endedAt: new Date().toISOString(),
+      });
+
+    return reply.code(200).send({ message: 'Impersonation ended.' });
+  });
+
+  // P-RBAC31: GET /admin/impersonate — list active impersonation sessions from audit log
+  app.get('/impersonate/active', { preHandler: auth }, async (_req, reply) => {
+    const rows = await db.select({
+      id: adminAuditLogs.id,
+      actorId: adminAuditLogs.actorId,
+      actorEmail: adminAuditLogs.actorEmail,
+      targetId: adminAuditLogs.targetId,
+      targetName: adminAuditLogs.targetName,
+      createdAt: adminAuditLogs.createdAt,
+      metadata: adminAuditLogs.metadata,
+    })
+      .from(adminAuditLogs)
+      .where(eq(adminAuditLogs.action, 'impersonation_start'))
+      .orderBy(desc(adminAuditLogs.createdAt))
+      .limit(50);
+
+    return reply.send({ sessions: rows });
+  });
 };

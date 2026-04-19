@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import sjp from 'secure-json-parse';
 import { db } from '../db/connection.js';
 import { baaRegistry, auditLogs, complianceChecks, miComplianceItems, complianceScoreHistory } from '../db/schema.js';
 import { eq, and, gte, lte, desc, sql, count } from 'drizzle-orm';
@@ -392,7 +393,8 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
     return rows
       .map(r => {
         try {
-          const detail = r.detail ? JSON.parse(r.detail) : null;
+          // P-SEC35: protoAction:remove for DB-sourced data (lower risk, good hygiene)
+          const detail = r.detail ? sjp.parse(r.detail, undefined, { protoAction: 'remove' }) : null;
           if (!detail?.severity) return null;
           return { ...r, detail };
         } catch { return null; }
