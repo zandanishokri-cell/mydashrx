@@ -1,11 +1,15 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { createHmac, randomBytes } from 'crypto';
 import { db } from '../db/connection.js';
-import { drivers, stops, routes, plans, users } from '../db/schema.js';
+import { drivers, stops, routes, plans, users, magicLinkTokens } from '../db/schema.js';
 import { eq, and, isNull, sql, gte, lte, inArray } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { hashPassword } from '../services/auth.js';
 import { checkDriverLimit } from '../utils/usageLimits.js';
 import { todayInTz } from '../utils/date.js';
+
+const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? '';
+const signToken = (t: string) => createHmac('sha256', MAGIC_LINK_SECRET).update(t).digest('hex');
 
 export const driverRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
@@ -333,5 +337,109 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
       rank,
       totalDrivers,
     };
+  });
+
+  // P-ONB27: POST /orgs/:orgId/drivers/bulk-invite — CSV batch driver invite via magic links
+  app.post('/bulk-invite', {
+    preHandler: requireOrgRole('pharmacy_admin', 'super_admin'),
+    schema: {
+      body: {
+        type: 'object',
+        required: ['drivers'],
+        properties: {
+          drivers: {
+            type: 'array',
+            maxItems: 50,
+            items: {
+              type: 'object',
+              required: ['name', 'email'],
+              properties: {
+                name:  { type: 'string', minLength: 1, maxLength: 200 },
+                email: { type: 'string', format: 'email', maxLength: 254 },
+                phone: { type: 'string', maxLength: 30 },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+    },
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const { drivers: invites } = req.body as { drivers: { name: string; email: string; phone?: string }[] };
+
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+    const resendKey = process.env.RESEND_API_KEY;
+    const senderDomain = process.env.SENDER_DOMAIN ?? 'mydashrx.com';
+
+    const results: { email: string; status: 'invited' | 'already_exists' | 'failed'; error?: string }[] = [];
+
+    for (const invite of invites) {
+      try {
+        const email = invite.email.toLowerCase().trim();
+
+        // Skip if user already exists
+        const [existing] = await db.select({ id: users.id }).from(users)
+          .where(eq(users.email, email)).limit(1);
+        if (existing) {
+          results.push({ email, status: 'already_exists' });
+          continue;
+        }
+
+        // Create driver record (passwordHash placeholder — driver authenticates via magic link invite)
+        const inviteHash = await hashPassword(randomBytes(16).toString('hex'));
+        const [driver] = await db.insert(drivers).values({
+          orgId, name: invite.name, email, phone: invite.phone ?? '',
+          passwordHash: inviteHash, drugCapable: false, vehicleType: 'car',
+        }).returning({ id: drivers.id });
+
+        // Create user record — placeholder password, driver signs in via invite magic link
+        await db.insert(users).values({
+          orgId, email, name: invite.name, role: 'driver',
+          passwordHash: inviteHash, mustChangePassword: false, depotIds: [],
+        }).onConflictDoNothing();
+
+        // Generate 24hr magic link invite token
+        const token = randomBytes(32).toString('hex');
+        const tokenHash = signToken(token);
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours for invite links
+        await db.insert(magicLinkTokens).values({ email, tokenHash, expiresAt });
+
+        // Send invite email via Resend API (raw fetch — consistent with auth.ts pattern)
+        if (resendKey) {
+          const inviteUrl = `${dashUrl}/auth/verify?token=${token}`;
+          fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+            body: JSON.stringify({
+              from: `MyDashRx <hello@${senderDomain}>`,
+              to: [email],
+              subject: `You've been invited to deliver with MyDashRx`,
+              html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+                <h2 style="color:#0F4C81">You're invited to join MyDashRx</h2>
+                <p>Hi ${invite.name},</p>
+                <p>Your pharmacy has added you as a delivery driver on MyDashRx. Click below to set up your account and start receiving routes.</p>
+                <p style="margin:24px 0">
+                  <a href="${inviteUrl}" style="background:#0F4C81;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;display:inline-block">
+                    Set Up My Driver Account →
+                  </a>
+                </p>
+                <p style="color:#6b7280;font-size:13px">This link expires in 24 hours. If you have questions, contact your pharmacy admin.</p>
+              </div>`,
+            }),
+          }).catch((e: unknown) => console.error('[BulkInvite] email failed:', email, e));
+        }
+
+        results.push({ email, status: 'invited' });
+      } catch (err) {
+        results.push({ email: invite.email, status: 'failed', error: err instanceof Error ? err.message : 'Unknown error' });
+      }
+    }
+
+    const invited = results.filter(r => r.status === 'invited').length;
+    const alreadyExist = results.filter(r => r.status === 'already_exists').length;
+    const failed = results.filter(r => r.status === 'failed').length;
+
+    return reply.code(207).send({ invited, alreadyExist, failed, results });
   });
 };
