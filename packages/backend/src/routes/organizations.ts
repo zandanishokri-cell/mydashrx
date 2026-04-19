@@ -320,4 +320,48 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.code(201).send({ user: newUser, tempPassword, ...(driverId ? { driverId } : {}) });
   });
+
+  // POST /orgs/:orgId/baa-accept — P-ONB37: record BAA digital acceptance for HIPAA §164.308(b)(1)
+  app.post('/:orgId/baa-accept', { preHandler: requireRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const actor = req.user as { sub: string; email: string; orgId: string; role: string };
+
+    // Pharmacy admin can only accept BAA for their own org
+    if (actor.role === 'pharmacy_admin' && actor.orgId !== orgId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+
+    const [org] = await db.select({ id: organizations.id, name: organizations.name, baaAcceptedAt: organizations.baaAcceptedAt })
+      .from(organizations).where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt))).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Organization not found' });
+
+    // Idempotent — return success if already accepted
+    if (org.baaAcceptedAt) {
+      return { success: true, baaAcceptedAt: org.baaAcceptedAt, alreadyAccepted: true };
+    }
+
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? null;
+    const ua = (req.headers['user-agent'] as string) ?? null;
+    const now = new Date();
+
+    await db.update(organizations).set({
+      baaAcceptedAt: now,
+      baaAcceptedByUserId: actor.sub,
+      baaIpAddress: ip,
+      baaUserAgent: ua,
+      hipaaBaaStatus: 'signed',
+    }).where(eq(organizations.id, orgId));
+
+    // Audit log — HIPAA §164.312(b) requires access activity logs
+    await db.insert(adminAuditLogs).values({
+      actorId: actor.sub,
+      actorEmail: actor.email,
+      action: 'baa_accepted',
+      targetId: orgId,
+      targetName: org.name,
+      metadata: { ip, userAgent: ua, acceptedAt: now.toISOString() },
+    }).catch((e: unknown) => { console.error('[AuditLog] baa_accepted insert failed:', e); });
+
+    return reply.code(201).send({ success: true, baaAcceptedAt: now });
+  });
 };

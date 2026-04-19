@@ -95,6 +95,11 @@ export const organizations = pgTable('organizations', {
   // P-CNV18: activation nudge email timestamps (prevents duplicate nudges)
   nudgeSentAt: timestamp('nudge_sent_at'),   // Day-3 nudge sent at
   nudge2SentAt: timestamp('nudge2_sent_at'), // Day-7 nudge sent at
+  // P-ONB37: BAA digital acceptance — HIPAA §164.308(b)(1) requires documented BAA before ePHI flows
+  baaAcceptedAt: timestamp('baa_accepted_at'),
+  baaAcceptedByUserId: uuid('baa_accepted_by_user_id'),
+  baaIpAddress: text('baa_ip_address'),
+  baaUserAgent: text('baa_user_agent'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

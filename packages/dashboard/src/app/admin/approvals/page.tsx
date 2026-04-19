@@ -230,7 +230,21 @@ function DetailDrawer({
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Organization</p>
             <DetailRow label="Name" value={org.name} />
             <DetailRow label="Applied" value={new Date(org.createdAt).toLocaleString()} />
-            {org.hipaaBaaStatus && <DetailRow label="HIPAA BAA" value={org.hipaaBaaStatus} />}
+            {/* P-ONB37: BAA acceptance indicator — amber badge if no BAA on file */}
+            <div className="flex items-start justify-between py-1.5 border-b border-gray-50">
+              <span className="text-xs text-gray-400 w-24 shrink-0">BAA</span>
+              <div className="text-right">
+                {(org as { baaAcceptedAt?: string | null }).baaAcceptedAt ? (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded bg-green-50 text-green-700 border border-green-200">
+                    ✓ Signed {new Date((org as { baaAcceptedAt: string }).baaAcceptedAt).toLocaleDateString()}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded bg-amber-50 text-amber-700 border border-amber-200">
+                    ⚠ No BAA on file
+                  </span>
+                )}
+              </div>
+            </div>
             {org.billingPlan && <DetailRow label="Plan" value={org.billingPlan} />}
             {/* P-ADM16: NPI verification badge */}
             {org.npiNumber && (
@@ -410,6 +424,11 @@ export default function ApprovalsPage() {
   const [undoToast, setUndoToast] = useState<{ orgIds: string[]; count: number } | null>(null);
   // P-ADM16: Slideout detail panel
   const [selectedOrg, setSelectedOrg] = useState<PendingOrg | null>(null);
+  // P-ADM35: filter + sort controls (client-side, no server round-trip)
+  const [search, setSearch] = useState('');
+  const [filterHold, setFilterHold] = useState<'all' | 'on_hold' | 'not_hold'>('all');
+  const [filterBaa, setFilterBaa] = useState<'all' | 'missing' | 'signed'>('all');
+  const [sortBy, setSortBy] = useState<'oldest' | 'newest' | 'score_asc' | 'score_desc'>('oldest');
 
   // P-ADM20: handle hold toggle — update local state optimistically, reload in background
   const handleHoldToggle = useCallback((orgId: string, wasOnHold: boolean) => {
@@ -550,6 +569,26 @@ export default function ApprovalsPage() {
   const toggleSelect = (orgId: string) =>
     setSelected(s => { const n = new Set(s); n.has(orgId) ? n.delete(orgId) : n.add(orgId); return n; });
 
+  // P-ADM35: computed filtered+sorted list
+  const filteredPending = pending
+    .filter(({ org, admin }) => {
+      if (search) {
+        const q = search.toLowerCase();
+        if (!org.name.toLowerCase().includes(q) && !(admin?.email ?? '').toLowerCase().includes(q)) return false;
+      }
+      if (filterHold === 'on_hold' && !org.onHold) return false;
+      if (filterHold === 'not_hold' && org.onHold) return false;
+      if (filterBaa === 'missing' && (org as { baaAcceptedAt?: string | null }).baaAcceptedAt) return false;
+      if (filterBaa === 'signed' && !(org as { baaAcceptedAt?: string | null }).baaAcceptedAt) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'newest') return new Date(b.org.createdAt).getTime() - new Date(a.org.createdAt).getTime();
+      if (sortBy === 'score_desc') return (b.org.riskScore ?? 0) - (a.org.riskScore ?? 0);
+      if (sortBy === 'score_asc') return (a.org.riskScore ?? 0) - (b.org.riskScore ?? 0);
+      return new Date(a.org.createdAt).getTime() - new Date(b.org.createdAt).getTime(); // oldest first
+    });
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
@@ -583,6 +622,48 @@ export default function ApprovalsPage() {
         </div>
       )}
 
+      {/* P-ADM35: filter + sort bar */}
+      {!loading && pending.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4 items-center">
+          <input
+            type="text"
+            placeholder="Search by name or email…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="flex-1 min-w-[180px] border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30"
+            aria-label="Search pending approvals"
+          />
+          <select value={filterHold} onChange={e => setFilterHold(e.target.value as typeof filterHold)}
+            className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30">
+            <option value="all">All status</option>
+            <option value="on_hold">On hold</option>
+            <option value="not_hold">Active</option>
+          </select>
+          <select value={filterBaa} onChange={e => setFilterBaa(e.target.value as typeof filterBaa)}
+            className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30">
+            <option value="all">All BAA</option>
+            <option value="missing">No BAA</option>
+            <option value="signed">BAA signed</option>
+          </select>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)}
+            className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30">
+            <option value="oldest">Oldest first</option>
+            <option value="newest">Newest first</option>
+            <option value="score_desc">Risk: high first</option>
+            <option value="score_asc">Risk: low first</option>
+          </select>
+          {(search || filterHold !== 'all' || filterBaa !== 'all' || sortBy !== 'oldest') && (
+            <button onClick={() => { setSearch(''); setFilterHold('all'); setFilterBaa('all'); setSortBy('oldest'); }}
+              className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded border border-gray-200">
+              Clear filters
+            </button>
+          )}
+          {filteredPending.length !== pending.length && (
+            <span className="text-xs text-gray-400">{filteredPending.length} of {pending.length}</span>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="bg-red-50 border border-red-100 text-red-700 text-sm px-4 py-3 rounded-lg mb-4 flex justify-between">
           {error}
@@ -594,22 +675,23 @@ export default function ApprovalsPage() {
         <div className="space-y-3">
           {[1, 2, 3].map(i => <div key={i} className="h-20 bg-gray-100 rounded-xl animate-pulse" />)}
         </div>
-      ) : pending.length === 0 ? (
+      ) : filteredPending.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <svg className="w-10 h-10 mx-auto mb-3 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <p className="text-sm">No pending approvals</p>
+          <p className="text-sm">{pending.length === 0 ? 'No pending approvals' : 'No results match filters'}</p>
+          {pending.length > 0 && <button onClick={() => { setSearch(''); setFilterHold('all'); setFilterBaa('all'); setSortBy('oldest'); }} className="text-xs text-[#0F4C81] mt-2 hover:underline">Clear filters</button>}
         </div>
       ) : (
         // P-A11Y5: WCAG 1.3.1 — role="grid" with aria-rowcount for screen reader navigation
         <div
           role="grid"
           aria-label="Pending pharmacy approvals"
-          aria-rowcount={pending.length}
+          aria-rowcount={filteredPending.length}
           className="space-y-3"
         >
-          {pending.map(({ org, admin }, rowIdx) => {
+          {filteredPending.map(({ org, admin }, rowIdx) => {
             const aging = getAgingClass(org.createdAt);
             const isSelected = selectedOrg?.org.id === org.id;
             return (

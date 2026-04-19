@@ -242,31 +242,30 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
   // ─── Approval Queue ────────────────────────────────────────────────────────
 
   // GET /admin/approvals — list pending orgs with their admin user
+  // P-ADM33: fixed N+1 (was 2N+1 queries) → 3 parallel queries total via JOIN+aggregate
   app.get('/approvals', { preHandler: auth }, async () => {
-    const pendingOrgs = await db
-      .select()
-      .from(organizations)
-      .where(and(eq(organizations.pendingApproval, true), isNull(organizations.deletedAt)))
-      .orderBy(organizations.createdAt);
-
-    const results = await Promise.all(pendingOrgs.map(async (org) => {
-      const [admin] = await db
-        .select({ id: users.id, name: users.name, email: users.email, createdAt: users.createdAt })
+    const [pendingOrgs, adminRows, noteRows] = await Promise.all([
+      db.select().from(organizations)
+        .where(and(eq(organizations.pendingApproval, true), isNull(organizations.deletedAt)))
+        .orderBy(organizations.createdAt),
+      db.select({ orgId: users.orgId, id: users.id, name: users.name, email: users.email, createdAt: users.createdAt })
         .from(users)
-        .where(and(eq(users.orgId, org.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)))
-        .limit(1);
-      const noteCount = await db.select({ cnt: sql<number>`count(*)::int` })
-        .from(approvalNotes).where(eq(approvalNotes.orgId, org.id));
-      return {
-        org: {
-          ...org,
-          noteCount: noteCount[0]?.cnt ?? 0,
-        },
-        admin: admin ?? null,
-      };
-    }));
+        .innerJoin(organizations, eq(users.orgId, organizations.id))
+        .where(and(eq(users.role, 'pharmacy_admin'), eq(organizations.pendingApproval, true), isNull(users.deletedAt), isNull(organizations.deletedAt))),
+      db.select({ orgId: approvalNotes.orgId, cnt: sql<number>`count(*)::int` })
+        .from(approvalNotes)
+        .innerJoin(organizations, eq(approvalNotes.orgId, organizations.id))
+        .where(and(eq(organizations.pendingApproval, true), isNull(organizations.deletedAt)))
+        .groupBy(approvalNotes.orgId),
+    ]);
 
-    return results;
+    const adminMap = new Map(adminRows.map(a => [a.orgId, a]));
+    const noteMap = new Map(noteRows.map(n => [n.orgId, n.cnt]));
+
+    return pendingOrgs.map(org => ({
+      org: { ...org, noteCount: noteMap.get(org.id) ?? 0 },
+      admin: adminMap.get(org.id) ?? null,
+    }));
   });
 
   // POST /admin/approvals/:orgId/approve
@@ -415,20 +414,57 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /admin/approvals/batch — batch approve or reject
+  // POST /admin/approvals/batch — P-ADM34: direct DB transaction, no app.inject HTTP round-trips
   app.post('/approvals/batch', { preHandler: auth }, async (req, reply) => {
-    const { orgIds, action } = req.body as { orgIds?: string[]; action?: 'approve' | 'reject' };
+    const { orgIds, action, reason, note } = req.body as { orgIds?: string[]; action?: 'approve' | 'reject'; reason?: string; note?: string };
     if (!Array.isArray(orgIds) || orgIds.length === 0) return reply.code(400).send({ error: 'orgIds array required' });
     if (action !== 'approve' && action !== 'reject') return reply.code(400).send({ error: 'action must be approve or reject' });
 
-    await Promise.all(orgIds.map(id =>
-      app.inject({
-        method: 'POST',
-        url: `/api/v1/admin/approvals/${id}/${action}`,
-        headers: { authorization: (req.headers as any).authorization ?? '' },
-      })
-    ));
+    const actor = req.user as { sub: string; email: string };
+    const now = new Date();
 
-    return { success: true, processed: orgIds.length };
+    // Fetch orgs in one query to validate existence + get names for audit
+    const orgs = await db.select({ id: organizations.id, name: organizations.name })
+      .from(organizations).where(and(inArray(organizations.id, orgIds), isNull(organizations.deletedAt)));
+    const foundIds = orgs.map(o => o.id);
+    if (foundIds.length === 0) return reply.code(404).send({ error: 'No valid orgs found' });
+
+    // Single bulk DB update
+    if (action === 'approve') {
+      await db.update(organizations)
+        .set({ pendingApproval: false, approvedAt: now })
+        .where(inArray(organizations.id, foundIds));
+      await db.update(users)
+        .set({ pendingApproval: false })
+        .where(and(inArray(users.orgId, foundIds), isNull(users.deletedAt)));
+    } else {
+      const VALID_REASONS = ['missing_license_proof', 'invalid_npi', 'high_fraud_risk', 'incomplete_application', 'duplicate_account', 'service_area', 'other'];
+      if (reason && !VALID_REASONS.includes(reason)) return reply.code(400).send({ error: `Invalid reason` });
+      await db.update(organizations)
+        .set({ pendingApproval: false, rejectedAt: now, rejectionReason: reason ?? null, rejectionNote: note ?? null })
+        .where(inArray(organizations.id, foundIds));
+    }
+
+    // Fetch admins for emails in one query
+    const admins = await db.select({ orgId: users.orgId, email: users.email, name: users.name })
+      .from(users).where(and(inArray(users.orgId, foundIds), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt)));
+    const adminMap = new Map(admins.map(a => [a.orgId, a]));
+
+    // Fire-and-forget emails + audit logs (allSettled — never block response on email failures)
+    const orgMap = new Map(orgs.map(o => [o.id, o]));
+    await Promise.allSettled(foundIds.flatMap(orgId => {
+      const org = orgMap.get(orgId)!;
+      const admin = adminMap.get(orgId);
+      const tasks: Promise<unknown>[] = [
+        logAuditAction(actor.sub, actor.email, action === 'approve' ? 'approve_org' : 'reject_org', orgId, org.name, { batch: true, reason: reason ?? null }),
+      ];
+      if (action === 'approve' && admin) {
+        tasks.push(sendOrgApprovalEmail(orgId, org.name, admin.email, admin.name));
+      }
+      return tasks;
+    }));
+
+    return { success: true, processed: foundIds.length, notFound: orgIds.length - foundIds.length };
   });
 
   // POST /admin/approvals/:orgId/hold — P-ADM20: put org on hold, request more info

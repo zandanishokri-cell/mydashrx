@@ -1,11 +1,12 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Button } from '@/components/ui/Button';
 import { FormField, SelectField } from '@/components/ui/FormField';
 import { CheckCircle2, Building2, Users, Sparkles, ArrowRight } from 'lucide-react';
+import { BAAModal } from '@/components/BAAModal';
 
 const STEPS = ['Welcome', 'Add Depot', 'Add Driver', 'Setup Complete'];
 
@@ -42,6 +43,17 @@ export default function OnboardingPage() {
   const [seeding, setSeeding] = useState(false);
   const [initCompliance, setInitCompliance] = useState(false);
   const [initMi, setInitMi] = useState(false);
+  // P-ONB37: BAA gate — show modal if org hasn't accepted BAA yet
+  const [showBaa, setShowBaa] = useState(false);
+  const [baaChecked, setBaaChecked] = useState(false);
+
+  useEffect(() => {
+    if (!user?.orgId) return;
+    api.get<{ baaAcceptedAt?: string | null }>(`/orgs/${user.orgId}`)
+      .then(org => { if (!org?.baaAcceptedAt) setShowBaa(true); })
+      .catch(() => { /* non-blocking — don't block onboarding on API error */ })
+      .finally(() => setBaaChecked(true));
+  }, [user?.orgId]);
 
   const seedAutomations = async () => {
     if (!user) return;
@@ -69,6 +81,10 @@ export default function OnboardingPage() {
 
   return (
     <div className="min-h-screen bg-[#F7F8FC] flex items-center justify-center p-4">
+      {/* P-ONB37: BAA modal — blocks onboarding until accepted */}
+      {baaChecked && showBaa && user?.orgId && (
+        <BAAModal orgId={user.orgId} onAccepted={() => setShowBaa(false)} />
+      )}
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
         <ProgressBar step={step} />
 

@@ -163,6 +163,17 @@ try {
   console.error('P-CNV17/18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-ONB37: BAA digital acceptance columns — HIPAA §164.308(b)(1)
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS baa_accepted_at timestamptz`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS baa_accepted_by_user_id uuid`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS baa_ip_address text`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS baa_user_agent text`);
+  console.log('P-ONB37 BAA acceptance columns ensured');
+} catch (err) {
+  console.error('P-ONB37 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-COMP11: idempotent DDL for Stripe copay payment link columns on stops
 try {
   await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS payment_link_token text`);
