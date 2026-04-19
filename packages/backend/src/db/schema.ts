@@ -717,6 +717,21 @@ export const roleEscalations = pgTable('role_escalations', {
   expiresIdx: index('re_expires_idx').on(t.expiresAt),
 }));
 
+// P-RBAC32: Tenant-configurable role permission templates
+// orgId NULL = platform default; orgId set = org-specific override that wins over platform default.
+// permissions JSONB is string[] matching Permission keys in rbacPolicy.ts.
+export const roleTemplates = pgTable('role_templates', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').references(() => organizations.id), // nullable = platform default
+  role: text('role').notNull(), // matches roleEnum values
+  permissions: jsonb('permissions').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  isDefault: boolean('is_default').notNull().default(false),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (t) => ({
+  orgRoleIdx: index('rt_org_role_idx').on(t.orgId, t.role),
+}));
+
 // P-SES22: Device trust — "Remember this device for 30 days" after magic link verify
 export const trustedDevices = pgTable('trusted_devices', {
   id: uuid('id').primaryKey().defaultRandom(),

@@ -101,13 +101,22 @@ export const api = {
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   upload: async <T>(path: string, formData: FormData): Promise<T> => {
-    const token = getAccessToken(); // P-SEC28: in-memory AT
+    // P-SES28: proactive pre-refresh in upload() — same guard as request()
+    let token = getAccessToken();
+    if (token && !_isRefreshing) {
+      const exp = decodeExp(token);
+      if (exp && exp * 1000 - Date.now() < 60_000) {
+        const fresh = await attemptSilentRefresh();
+        if (fresh) token = fresh;
+      }
+    }
     const res = await fetch(`${BASE}/api/v1${path}`, {
       method: 'POST',
       credentials: 'include', // P-SEC28
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
     });
+
     if (!res.ok) {
       if (res.status === 401 && typeof window !== 'undefined') {
         // P-SES9: upload uses same single-flight guard as request()

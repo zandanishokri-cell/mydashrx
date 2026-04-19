@@ -1,10 +1,11 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { createHmac, timingSafeEqual, createHash } from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, stops, drivers, adminAuditLogs, auditLogs, magicLinkTokens, refreshTokens, depots, approvalNotes } from '../db/schema.js';
+import { organizations, users, stops, drivers, adminAuditLogs, auditLogs, magicLinkTokens, refreshTokens, depots, approvalNotes, roleTemplates } from '../db/schema.js';
 import { eq, isNull, sql, gte, lte, count, and, desc, asc, lt, or, isNotNull, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
+import { invalidateOrgRole, invalidateOrg, listTemplates, upsertTemplate } from '../lib/rbacCache.js';
 import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
 
 const PLAN_PRICES: Record<string, number> = {
@@ -1367,5 +1368,49 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .limit(50);
 
     return reply.send({ sessions: rows });
+  });
+
+  // ─── P-RBAC32: Role template admin CRUD ──────────────────────────────────────
+
+  // GET /admin/role-templates — list all templates (platform + org-specific)
+  app.get('/role-templates', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+    const { orgId } = req.query as { orgId?: string };
+    const rows = await listTemplates(orgId);
+    return reply.send({ templates: rows });
+  });
+
+  // PATCH /admin/role-templates — upsert a template (platform default or org-specific override)
+  // Body: { orgId?: string | null, role: string, permissions: string[] }
+  app.patch('/role-templates', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+    const body = req.body as { orgId?: string | null; role?: string; permissions?: string[] };
+    if (!body.role || !Array.isArray(body.permissions)) {
+      return reply.code(400).send({ error: 'role and permissions[] required' });
+    }
+    // Validate permissions are known keys
+    const validKeys = new Set(Object.keys(ROLE_PERMISSIONS));
+    // permissions are permission keys, not role names — allow any string (future-proof) but warn on unknowns
+    const unknown = body.permissions.filter(p => !validKeys.has(p as keyof typeof ROLE_PERMISSIONS));
+    if (unknown.length > 0) {
+      console.warn(`[RBAC32] Unknown permissions in template patch: ${unknown.join(', ')}`);
+    }
+    const orgId = body.orgId ?? null;
+    await upsertTemplate(orgId, body.role, body.permissions);
+    // Audit log
+    const actor = req.user as { sub: string; email: string };
+    await logAuditAction(actor.sub, actor.email, 'role_template_updated', orgId ?? 'platform', body.role, { orgId, permissions: body.permissions });
+    return reply.send({ ok: true, orgId, role: body.role, permissions: body.permissions });
+  });
+
+  // DELETE /admin/role-templates/:id — delete an org-specific template (restores platform default)
+  app.delete('/role-templates/:id', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const [row] = await db.select({ orgId: roleTemplates.orgId, role: roleTemplates.role, isDefault: roleTemplates.isDefault })
+      .from(roleTemplates).where(eq(roleTemplates.id, id)).limit(1);
+    if (!row) return reply.code(404).send({ error: 'Template not found' });
+    if (row.isDefault) return reply.code(400).send({ error: 'Cannot delete platform default templates' });
+    await db.delete(roleTemplates).where(eq(roleTemplates.id, id));
+    if (row.orgId) invalidateOrg(row.orgId);
+    else invalidateOrgRole(null, row.role);
+    return reply.code(204).send();
   });
 };

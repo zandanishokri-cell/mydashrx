@@ -111,6 +111,20 @@ function buildDeviceName(ua: string | null): string {
   return `${os} · ${br}`;
 }
 
+// P-SES27: role-adaptive RT idle limit — HIPAA 2025 NPRM (OCR Dec 2024) requires
+// role-specific session controls for ePHI-touching roles. Trusted devices get extended window.
+function getIdleLimitMs(role: string, isTrustedDevice: boolean): number {
+  if (isTrustedDevice) return 30 * 24 * 3600_000; // 30d trusted device (any role)
+  switch (role) {
+    case 'pharmacy_admin':
+    case 'dispatcher':   return 8  * 3600_000; // ePHI roles — 8hr
+    case 'pharmacist':   return 12 * 3600_000; // pharmacist — 12hr
+    case 'driver':       return 24 * 3600_000; // driver — 24hr
+    case 'super_admin':  return 14 * 24 * 3600_000; // super_admin — 14d
+    default:             return 14 * 24 * 3600_000; // conservative fallback
+  }
+}
+
 async function seedRefreshToken(
   userId: string,
   familyId: string,
@@ -418,6 +432,18 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       // P-SES3-TXN: idle + absolute expiry checks moved INSIDE transaction — atomic with FOR UPDATE
       let txIdleExpired = false;
       let txAbsoluteExpired = false;
+      let txIdleRole = 'unknown';
+      let txIdleLimitHr = 0;
+      // P-SES27: role-adaptive idle limit — captured before tx for use inside
+      // role decoded from RT payload (user lookup happens after tx to avoid deadlock)
+      // We use a best-effort role from the decoded RT; falls back to 14d for unknown roles
+      // Full user role resolved after tx — idle check uses decoded role from the JWT itself (embedded at sign time)
+      // Note: role is NOT in the RT payload — we use a conservative default here and refine post-tx
+      // The spec says to check trusted_devices via buildDeviceFingerprint inside tx, so we do both
+      const ua = (req.headers['user-agent'] as string | undefined) ?? null;
+      const acceptLang = (req.headers['accept-language'] as string | undefined) ?? null;
+      const tz = (req.headers['x-timezone'] as string | undefined) ?? null;
+      const deviceFingerprint = buildDeviceFingerprint(ua, acceptLang, tz);
 
       await db.transaction(async (tx) => {
         const rows = await tx.execute(
@@ -426,7 +452,22 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         const row = (rows as unknown as Array<{ id: string; family_id: string; status: string; ip: string | null; user_agent: string | null; last_used_at: string | null; absolute_expires_at: string | null }>)[0];
         if (!row) return;
         // P-SES16: idle + absolute expiry — evaluated under lock to prevent race conditions
-        const IDLE_LIMIT_MS = 14 * 24 * 3600_000;
+        // P-SES27: role-adaptive idle limit — look up user role + trusted device status inside tx
+        // This is done inside tx so the idle check is atomic with the FOR UPDATE lock
+        const userRows = await tx.execute(sql`SELECT role FROM users WHERE id = ${decoded.sub} LIMIT 1`);
+        const userRole = (userRows as unknown as Array<{ role: string }>)[0]?.role ?? 'driver';
+        const trustedRows = await tx.execute(sql`
+          SELECT id FROM trusted_devices
+          WHERE user_id = ${decoded.sub}
+            AND fingerprint = ${deviceFingerprint}
+            AND is_revoked = false
+            AND trusted_until > NOW()
+          LIMIT 1
+        `);
+        const isTrustedDevice = (trustedRows as unknown as Array<{ id: string }>).length > 0;
+        const IDLE_LIMIT_MS = getIdleLimitMs(userRole, isTrustedDevice);
+        txIdleRole = userRole;
+        txIdleLimitHr = Math.round(IDLE_LIMIT_MS / 3600_000);
         if (row.last_used_at && Date.now() - new Date(row.last_used_at).getTime() > IDLE_LIMIT_MS) {
           txIdleExpired = true;
           await tx.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.jti, jti));
@@ -451,7 +492,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         await tx.update(refreshTokens).set({ status: 'used', usedAt: new Date() }).where(eq(refreshTokens.jti, jti));
       });
 
-      if (txIdleExpired) return reply.code(401).send({ error: 'Session expired due to inactivity. Please log in again.' });
+      if (txIdleExpired) {
+        // P-SES27: structured idle expiry log with role + idleLimitHr for HIPAA audit
+        console.log(JSON.stringify({ event: 'rt_idle_expired', userId: decoded.sub, role: txIdleRole, idleLimitHr: txIdleLimitHr, ip: req.ip, ts: new Date().toISOString() }));
+        return reply.code(401).send({ error: 'Session expired due to inactivity. Please log in again.' });
+      }
       if (txAbsoluteExpired) return reply.code(401).send({ error: 'Session maximum lifetime reached. Please log in again.' });
 
       if (txStatus === 'not_found') return reply.code(401).send({ error: 'Unknown token' });

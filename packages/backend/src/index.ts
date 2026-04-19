@@ -484,6 +484,32 @@ try {
   console.error('P-RBAC33 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-RBAC32: role_templates table — tenant-configurable role permission templates
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS role_templates (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id uuid REFERENCES organizations(id),
+      role text NOT NULL,
+      permissions jsonb NOT NULL DEFAULT '[]',
+      is_default boolean NOT NULL DEFAULT false,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS rt_org_role_idx ON role_templates(org_id, role)`);
+  // Partial unique indexes: handle NULL orgId (platform defaults) — PostgreSQL NULL != NULL in standard UNIQUE
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS rt_platform_role_uniq ON role_templates(role) WHERE org_id IS NULL`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS rt_org_role_uniq ON role_templates(org_id, role) WHERE org_id IS NOT NULL`);
+  console.log('P-RBAC32 role_templates table ensured');
+  // Seed platform defaults from static ROLE_PERMISSIONS map
+  const { seedPlatformDefaults } = await import('./lib/rbacCache.js');
+  await seedPlatformDefaults();
+  console.log('P-RBAC32 platform defaults seeded');
+} catch (err) {
+  console.error('P-RBAC32 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

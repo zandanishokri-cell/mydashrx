@@ -16,6 +16,7 @@
  */
 
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { getOrgPermissions } from './rbacCache.js';
 
 export const ROUTE_POLICY = {
   // Delivery stops
@@ -59,13 +60,25 @@ export type Permission = keyof typeof ROUTE_POLICY;
  * Includes structured denial log for HIPAA §164.312 audit trail.
  */
 export function requirePermission(perm: Permission) {
-  const allowed = new Set<string>(ROUTE_POLICY[perm] as readonly string[]);
+  // P-RBAC32: fallback to static policy for unauthenticated fast-fail check
+  const staticAllowed = new Set<string>(ROUTE_POLICY[perm] as readonly string[]);
   return async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try { await req.jwtVerify(); } catch {
       reply.code(401).send({ error: 'Unauthorized' }); return;
     }
     const user = req.user as { role: string; orgId?: string; mustChangePw?: boolean; sub?: string; email?: string };
-    if (!allowed.has(user.role)) {
+
+    // P-RBAC32: check org-specific permissions first, fall back to static policy
+    let allowed = staticAllowed.has(user.role);
+    if (user.orgId) {
+      try {
+        const orgPerms = await getOrgPermissions(user.orgId, user.role);
+        // If org has a custom template, use it; otherwise static check already computed above
+        if (orgPerms.length > 0) allowed = orgPerms.includes(perm);
+      } catch { /* non-blocking — static policy remains in effect */ }
+    }
+
+    if (!allowed) {
       console.warn(JSON.stringify({
         event: 'permission_denied', rule: `requirePermission(${perm})`,
         reason: 'not_in_policy', role: user.role,
