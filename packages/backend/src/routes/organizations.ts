@@ -393,4 +393,52 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.code(201).send({ success: true, baaAcceptedAt: now });
   });
+
+  // PATCH /orgs/:orgId/onboarding/progress — P-CNV22: persist onboarding step server-side
+  // Prevents abandonment on browser refresh / tab close. Idempotent — only advances step, never regresses.
+  app.patch('/:orgId/onboarding/progress', {
+    preHandler: requireRole('pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const actor = req.user as { sub: string; orgId: string; role: string };
+    if (actor.role !== 'super_admin' && actor.orgId !== orgId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    const { step } = req.body as { step?: number };
+    if (typeof step !== 'number' || step < 1 || step > 5) {
+      return reply.code(400).send({ error: 'step must be an integer 1–5' });
+    }
+    const [org] = await db.select({ id: organizations.id, onboardingStep: organizations.onboardingStep, onboardingCompletedAt: organizations.onboardingCompletedAt })
+      .from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Not found' });
+
+    const currentStep = org.onboardingStep ?? 1;
+    // Only advance — never regress (protect against concurrent tab / back-button issues)
+    if (step <= currentStep && step !== 5) {
+      return reply.send({ onboardingStep: currentStep, onboardingCompletedAt: org.onboardingCompletedAt });
+    }
+
+    const now = new Date();
+    const completedAt = step === 5 && !org.onboardingCompletedAt ? now : undefined;
+    await db.update(organizations)
+      .set({ onboardingStep: step, ...(completedAt ? { onboardingCompletedAt: completedAt } : {}) })
+      .where(eq(organizations.id, orgId));
+
+    return reply.send({ onboardingStep: step, onboardingCompletedAt: completedAt ?? org.onboardingCompletedAt });
+  });
+
+  // GET /orgs/:orgId/onboarding/progress — P-CNV22: restore onboarding step on page load
+  app.get('/:orgId/onboarding/progress', {
+    preHandler: requireRole('pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+    const actor = req.user as { orgId: string; role: string };
+    if (actor.role !== 'super_admin' && actor.orgId !== orgId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    const [org] = await db.select({ onboardingStep: organizations.onboardingStep, onboardingCompletedAt: organizations.onboardingCompletedAt })
+      .from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    if (!org) return reply.code(404).send({ error: 'Not found' });
+    return { onboardingStep: org.onboardingStep ?? 1, onboardingCompletedAt: org.onboardingCompletedAt };
+  });
 };

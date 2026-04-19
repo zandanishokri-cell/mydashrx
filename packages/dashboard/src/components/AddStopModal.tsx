@@ -29,6 +29,22 @@ interface StopBody {
   deliveryNotes?: string;
 }
 
+// P-ROUTE2: exponential backoff retry — handles transient 'Failed to fetch' on stop creation
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  let delay = 200;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const isTransient = err.message?.includes('Failed to fetch') || err.message?.includes('network') || err.message?.includes('fetch');
+      if (attempt === maxRetries || !isTransient) throw err;
+      await new Promise(r => setTimeout(r, delay + Math.random() * 100));
+      delay *= 2; // 200ms → 400ms → 800ms
+    }
+  }
+  throw new Error('Max retries exceeded');
+}
+
 // Geocode an address using Nominatim (OpenStreetMap) — free, no key
 async function geocode(address: string): Promise<{ lat: number; lng: number }> {
   const res = await fetch(
@@ -83,10 +99,11 @@ export function AddStopModal({ routeId, orgId, onClose, onSaved }: Props) {
         requiresSignature: form.requiresSignature,
         deliveryNotes: form.deliveryNotes || undefined,
       };
-      await api.post(`/routes/${routeId}/stops`, body);
+      // P-ROUTE2: retry up to 3× with backoff — recovers from Render cold-start / transient network
+      await withRetry(() => api.post(`/routes/${routeId}/stops`, body));
       onSaved();
     } catch (err: any) {
-      setError(err.message ?? 'Failed to add stop');
+      setError(err.message ?? 'Failed to add stop. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -144,7 +161,7 @@ export function AddStopModal({ routeId, orgId, onClose, onSaved }: Props) {
               ),
               deliveryNotes: row['notes'] || row['delivery_notes'] || undefined,
             };
-            await api.post(`/routes/${routeId}/stops`, body);
+            await withRetry(() => api.post(`/routes/${routeId}/stops`, body));
             success++;
           } catch (err: any) {
             errors.push(`Row ${i + 2} (${name}): ${err.message}`);

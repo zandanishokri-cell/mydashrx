@@ -88,6 +88,9 @@ export const organizations = pgTable('organizations', {
   onboardingDepotAt: timestamp('onboarding_depot_at'), // P-ONB10: when depot step completed in wizard
   onboardingDriverAt: timestamp('onboarding_driver_at'), // P-ONB10: when driver step completed
   onboardingCompletedAt: timestamp('onboarding_completed_at'), // P-ONB10: when full onboarding completed
+  // P-CNV22: server-side current step persistence (prevents abandonment on browser refresh/tab close)
+  onboardingStep: integer('onboarding_step').default(1), // 1=welcome, 2=depot, 3=driver, 4=plan, 5=done
+  stuckNudgeSentAt: timestamp('stuck_nudge_sent_at'), // P-CNV22: stuck-onboarding email sent timestamp
   // P-CNV17: TTA — first stop created by this org (idempotent, set once)
   activatedAt: timestamp('activated_at'),
   // P-ONB38: firstDispatchAt — first route dispatched (status→active). Correct TTV metric.

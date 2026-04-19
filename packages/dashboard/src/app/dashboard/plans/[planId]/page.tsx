@@ -774,16 +774,17 @@ function SortableStopItem({ stop, idx, stopCount, routeCount, onSelect, onMove, 
       </span>
       <div className="flex-1 min-w-0 cursor-pointer" onClick={onSelect}>
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-900 truncate">{stop.recipientName}</span>
+          {/* P-ROUTE1: optional chaining guards — recipientName/address can be null on partial DB writes */}
+          <span className="text-sm font-medium text-gray-900 truncate">{stop.recipientName ?? '(no name)'}</span>
           {stop.priority === 'urgent' && <span className="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-medium">Urgent</span>}
           {stop.priority === 'high' && <span className="text-xs bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-medium">High</span>}
           {stop.requiresRefrigeration && <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">❄ Cold</span>}
           {stop.controlledSubstance && <span className="text-xs bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded">⚠ Ctrl</span>}
         </div>
-        <p className="text-xs text-gray-400 truncate">{stop.address}</p>
+        <p className="text-xs text-gray-400 truncate">{stop.address ?? ''}</p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        {stop.rxNumbers?.length > 0 && <span className="text-xs text-gray-400">Rx ×{stop.rxNumbers.length}</span>}
+        {(stop.rxNumbers?.length ?? 0) > 0 && <span className="text-xs text-gray-400">Rx ×{stop.rxNumbers.length}</span>}
         <Badge status={stop.status} />
         {routeCount > 1 && (
           <button
