@@ -561,6 +561,8 @@ export const refreshTokens = pgTable('refresh_tokens', {
   userAgent: text('user_agent'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   usedAt: timestamp('used_at'),
+  lastUsedAt: timestamp('last_used_at'), // P-SES16: updated on each rotation for idle expiry tracking
+  absoluteExpiresAt: timestamp('absolute_expires_at'), // P-SES16: hard upper bound (90d) regardless of activity
   expiresAt: timestamp('expires_at').notNull(),
 }, (t) => ({
   familyIdx: index('rt_family_idx').on(t.familyId),

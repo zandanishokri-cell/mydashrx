@@ -98,13 +98,16 @@ async function seedRefreshToken(
   jti: string,
   req: { ip: string; headers: Record<string, string | string[] | undefined> },
 ): Promise<void> {
+  const seedNow = new Date();
   await db.insert(refreshTokens).values({
     jti,
     familyId,
     userId,
     ip: req.ip,
     userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
-    expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+    lastUsedAt: seedNow, // P-SES16
+    absoluteExpiresAt: new Date(seedNow.getTime() + 90 * 24 * 60 * 60 * 1000), // P-SES16: 90d hard cap
+    expiresAt: new Date(seedNow.getTime() + 90 * 24 * 60 * 60 * 1000),
   });
   await enforceSessionCap(userId);
 }
@@ -304,6 +307,25 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       let txStoredIp: string | null = null;
       let txStoredUa: string | null = null;
 
+      // P-SES16: 14d idle window — check lastUsedAt before the FOR UPDATE lock
+      const [rtCheck] = await db.select({
+        lastUsedAt: refreshTokens.lastUsedAt,
+        absoluteExpiresAt: refreshTokens.absoluteExpiresAt,
+        status: refreshTokens.status,
+      }).from(refreshTokens).where(eq(refreshTokens.jti, jti)).limit(1);
+      if (rtCheck) {
+        const IDLE_LIMIT_MS = 14 * 24 * 3600_000; // 14 days
+        const lastActivity = rtCheck.lastUsedAt ?? null;
+        if (lastActivity && Date.now() - new Date(lastActivity).getTime() > IDLE_LIMIT_MS) {
+          await db.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.jti, jti));
+          return reply.code(401).send({ error: 'Session expired due to inactivity. Please log in again.' });
+        }
+        if (rtCheck.absoluteExpiresAt && new Date(rtCheck.absoluteExpiresAt) < new Date()) {
+          await db.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.jti, jti));
+          return reply.code(401).send({ error: 'Session maximum lifetime reached. Please log in again.' });
+        }
+      }
+
       await db.transaction(async (tx) => {
         const rows = await tx.execute(
           sql`SELECT id, family_id, status, ip, user_agent FROM refresh_tokens WHERE jti = ${jti} FOR UPDATE`
@@ -357,16 +379,19 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         ...(driverId ? { driverId } : {}),
       }, user.tokenVersion, { jti: newJti, familyId: txFamilyId });
 
+      const now = new Date();
       await db.insert(refreshTokens).values({
         jti: newJti,
         familyId: txFamilyId,
         userId: user.id,
         ip: req.ip,
         userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
-        expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+        lastUsedAt: now, // P-SES16: track last activity for idle expiry
+        absoluteExpiresAt: new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000), // 90d absolute cap
+        expiresAt: new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000),
       });
 
-      console.log(JSON.stringify({ event: 'rt_rotated', userId: user.id, familyId: txFamilyId, ip: req.ip, ts: new Date().toISOString() }));
+      console.log(JSON.stringify({ event: 'rt_rotated', userId: user.id, familyId: txFamilyId, ip: req.ip, ts: now.toISOString() }));
       return reply.send(tokens);
     }
 
