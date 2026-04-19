@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
 import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory, auditLogs } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
+import { getDriverRoutes } from '../db/preparedStatements.js'; // P-PERF10
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification, sendTwilioSms } from '../services/notifications.js';
 import { sendCopayPaymentLink } from '../services/paymentLink.js';
@@ -49,29 +50,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const today = todayInTz();
 
-    const myRoutes = await db
-      .select({
-        id: routes.id,
-        planId: routes.planId,
-        status: routes.status,
-        stopOrder: routes.stopOrder,
-        estimatedDuration: routes.estimatedDuration,
-        totalDistance: routes.totalDistance,
-        startedAt: routes.startedAt,
-        planDate: plans.date,
-        planStatus: plans.status,
-        depotName: depots.name,
-        depotLat: depots.lat,
-        depotLng: depots.lng,
-      })
-      .from(routes)
-      .leftJoin(plans, eq(routes.planId, plans.id))
-      .leftJoin(depots, eq(plans.depotId, depots.id))
-      .where(and(
-        eq(routes.driverId, driverId),
-        isNull(routes.deletedAt),
-        eq(plans.date, today),
-      ));
+    // P-PERF10: prepared statement — parsed + planned once by Postgres
+    const myRoutes = await getDriverRoutes.execute({ driverId, planDate: today });
 
     return myRoutes;
   });

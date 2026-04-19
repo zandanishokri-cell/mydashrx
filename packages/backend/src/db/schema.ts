@@ -671,6 +671,28 @@ export const stopNotes = pgTable('stop_notes', {
   orgIdx: index('stop_notes_org_idx').on(t.orgId),
 }));
 
+// P-ML18: WebAuthn passkeys — NIST SP 800-63B rev4 AAL2, HIPAA §164.312(d) Person Authentication
+export const passkeys = pgTable('passkeys', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  credentialId: text('credential_id').notNull().unique(),
+  publicKey: text('public_key').notNull(),        // base64url encoded COSE public key
+  counter: integer('counter').notNull().default(0),
+  deviceType: text('device_type').notNull().default('unknown'), // 'singleDevice' | 'multiDevice'
+  backedUp: boolean('backed_up').notNull().default(false),
+  aaguid: text('aaguid'),                         // authenticator model identifier
+  transports: jsonb('transports').$type<string[]>(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({ userIdx: index('passkeys_user_idx').on(t.userId) }));
+
+export const webauthnChallenges = pgTable('webauthn_challenges', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  challenge: text('challenge').notNull().unique(),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({ userIdx: index('wac_user_idx').on(t.userId) }));
+
 // P-SES22: Device trust — "Remember this device for 30 days" after magic link verify
 export const trustedDevices = pgTable('trusted_devices', {
   id: uuid('id').primaryKey().defaultRandom(),

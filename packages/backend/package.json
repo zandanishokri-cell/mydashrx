@@ -26,6 +26,7 @@
     "@fastify/rate-limit": "^9.0.0",
     "@fastify/static": "^6.12.0",
     "@mydash-rx/shared": "*",
+    "@simplewebauthn/server": "^13.3.0",
     "bcryptjs": "^2.4.3",
     "disposable-email-domains": "^1.0.62",
     "dotenv": "^16.4.0",

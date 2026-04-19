@@ -39,6 +39,7 @@ import compress from '@fastify/compress';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { authRoutes } from './routes/auth.js';
+import { passkeyRoutes } from './routes/passkeys.js';
 import { signupRoutes } from './routes/signup.js';
 import { organizationRoutes } from './routes/organizations.js';
 import { depotRoutes } from './routes/depots.js';
@@ -381,6 +382,38 @@ try {
   console.error('P-DISP3 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-ML18: WebAuthn passkeys tables — NIST SP 800-63B rev4 AAL2, HIPAA §164.312(d)
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS passkeys (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      credential_id text NOT NULL UNIQUE,
+      public_key text NOT NULL,
+      counter integer NOT NULL DEFAULT 0,
+      device_type text NOT NULL DEFAULT 'unknown',
+      backed_up boolean NOT NULL DEFAULT false,
+      aaguid text,
+      transports jsonb DEFAULT '[]',
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS passkeys_user_idx ON passkeys(user_id)`);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS webauthn_challenges (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      challenge text NOT NULL UNIQUE,
+      expires_at timestamptz NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS wac_user_idx ON webauthn_challenges(user_id)`);
+  console.log('P-ML18 passkeys + webauthn_challenges tables ensured');
+} catch (err) {
+  console.error('P-ML18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-SES22: trusted_devices table — device trust fingerprint for 30-day remember
 try {
   await db.execute(sql`
@@ -514,6 +547,7 @@ await app.register(staticFiles, { root: uploadDir, prefix: '/uploads/', decorate
 
 // Routes
 await app.register(authRoutes, { prefix: '/api/v1/auth' });
+await app.register(passkeyRoutes, { prefix: '/api/v1/auth/passkey' }); // P-ML18
 await app.register(signupRoutes, { prefix: '/api/v1/signup' });
 await app.register(organizationRoutes, { prefix: '/api/v1/orgs' });
 await app.register(depotRoutes, { prefix: '/api/v1/orgs/:orgId/depots' });

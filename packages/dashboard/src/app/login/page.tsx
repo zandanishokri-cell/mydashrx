@@ -1,15 +1,50 @@
 'use client';
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { setSession } from '@/lib/auth';
 import type { AuthTokens } from '@mydash-rx/shared';
+import { startAuthentication } from '@simplewebauthn/browser';
 
 const IAB_RE = /FBAN|FBAV|Instagram|LinkedInApp|GSA/i;
 function useIsInAppBrowser() {
   const [isIAB, setIsIAB] = useState(false);
   useEffect(() => { setIsIAB(IAB_RE.test(navigator.userAgent)); }, []);
   return isIAB;
+}
+
+// P-ML20: Provider detection
+type EmailProvider = 'gmail' | 'outlook' | 'yahoo' | 'other';
+const EMAIL_DEEPLINKS: Record<EmailProvider, { label: string; url: string } | null> = {
+  gmail:   { label: 'Open Gmail', url: 'https://mail.google.com/mail/u/0/#inbox' },
+  outlook: { label: 'Open Outlook', url: 'https://outlook.live.com/mail/inbox' },
+  yahoo:   { label: 'Open Yahoo Mail', url: 'https://mail.yahoo.com/' },
+  other:   null,
+};
+function getEmailProvider(email: string): EmailProvider {
+  const domain = email.split('@')[1]?.toLowerCase() ?? '';
+  if (domain === 'gmail.com' || domain === 'googlemail.com') return 'gmail';
+  if (['outlook.com', 'hotmail.com', 'live.com', 'msn.com'].includes(domain)) return 'outlook';
+  if (['yahoo.com', 'yahoo.co.uk', 'ymail.com'].includes(domain)) return 'yahoo';
+  return 'other';
+}
+function ProviderHint({ email }: { email: string }) {
+  const provider = getEmailProvider(email);
+  const deeplink = EMAIL_DEEPLINKS[provider];
+  if (provider === 'other' && !deeplink) return null;
+  return (
+    <div className={`rounded-lg px-3 py-2.5 text-xs mb-3 ${provider === 'outlook' ? 'bg-amber-50 border border-amber-200 text-amber-700' : 'bg-blue-50 border border-blue-200 text-blue-700'}`}>
+      {provider === 'gmail' && <p>Check the <span className="font-semibold">Promotions tab</span> in Gmail — magic links sometimes land there.</p>}
+      {provider === 'outlook' && <p><span className="font-semibold">Outlook email scanners</span> may consume your link before you click it. If the link doesn't work, request a new one.</p>}
+      {provider === 'yahoo' && <p>Check your <span className="font-semibold">Spam folder</span> — Yahoo Mail sometimes filters login emails.</p>}
+      {deeplink && (
+        <a href={deeplink.url} target="_blank" rel="noopener noreferrer"
+          className="inline-block mt-1.5 font-semibold underline underline-offset-2 hover:opacity-80">
+          {deeplink.label} →
+        </a>
+      )}
+    </div>
+  );
 }
 
 function LoginForm() {
@@ -31,9 +66,19 @@ function LoginForm() {
   const [resendCooldown, setResendCooldown] = useState(30);
   const [expiredNotice, setExpiredNotice] = useState(false);
 
+  // P-ML19: tab-ready indicator state
+  const [tabVisible, setTabVisible] = useState(true);
+  // P-ML19: warmup ping refs
+  const warmupRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const warmupCountRef = useRef(0);
+
   const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
+
+  // P-ML18: passkey-first login for enrolled users
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [passkeyError, setPasskeyError] = useState('');
 
   useEffect(() => {
     if (params.get('expired') === '1') setExpiredNotice(true);
@@ -41,6 +86,13 @@ function LoginForm() {
     if (params.get('welcome') === '1') {
       sessionStorage.setItem('postAuthRedirect', '/dashboard/onboarding');
     }
+  }, []);
+
+  // P-ML19: track tab visibility for tab-ready indicator
+  useEffect(() => {
+    const handler = () => setTabVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
   }, []);
 
   useEffect(() => {
@@ -63,6 +115,41 @@ function LoginForm() {
 
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
+  // P-ML18: passkey authentication flow
+  const signInWithPasskey = async () => {
+    if (!email) { setPasskeyError('Enter your email first'); return; }
+    setPasskeyLoading(true);
+    setPasskeyError('');
+    try {
+      const options = await api.post<any>('/auth/passkey/authenticate/options', { email });
+      const authResponse = await startAuthentication({ optionsJSON: options });
+      const tokens = await api.post<AuthTokens>('/auth/passkey/authenticate/verify', { email, response: authResponse });
+      setSession(tokens);
+      router.replace((tokens.user as any).mustChangePassword ? '/change-password' : '/dashboard');
+    } catch (err: unknown) {
+      const msg = (err as Error)?.message ?? '';
+      if (msg.includes('cancelled') || msg.includes('abort') || msg.includes('NotAllowed')) {
+        setPasskeyError('');
+      } else {
+        setPasskeyError('Passkey sign-in failed. Try your email link instead.');
+      }
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
+
+  const startWarmupPing = () => {
+    // P-ML19: ping /health every 15s for 120s to keep Render warm during email-to-click window
+    warmupCountRef.current = 0;
+    if (warmupRef.current) clearInterval(warmupRef.current);
+    const BACKEND = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com';
+    warmupRef.current = setInterval(() => {
+      warmupCountRef.current += 1;
+      if (warmupCountRef.current >= 8) { clearInterval(warmupRef.current!); warmupRef.current = null; return; }
+      fetch(`${BACKEND}/health`, { mode: 'no-cors' }).catch(() => {});
+    }, 15_000);
+  };
+
   const requestMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -75,6 +162,7 @@ function LoginForm() {
       setCountdown(900);
       setCanResend(false);
       setSent(true);
+      startWarmupPing(); // P-ML19: keep Render warm during 90s email-to-click window
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
@@ -88,6 +176,7 @@ function LoginForm() {
       await api.post('/auth/magic-link/request', { email });
       setCountdown(900);
       setResendCount(c => c + 1);
+      startWarmupPing(); // P-ML19: restart warmup after resend
     } catch { /* silent */ } finally {
       setResending(false);
     }
@@ -129,11 +218,19 @@ function LoginForm() {
         <h2 className="text-lg font-semibold text-gray-900 mb-2">Check your email</h2>
         <p className="text-gray-500 text-sm mb-1">We sent a login link to</p>
         <p className="text-[#0F4C81] font-medium text-sm mb-3">{email}</p>
+        {/* P-ML19: tab-ready indicator */}
+        <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium mb-3 ${tabVisible ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+          <span className={`w-2 h-2 rounded-full ${tabVisible ? 'bg-green-500' : 'bg-amber-400'}`} />
+          {tabVisible ? 'Tab ready — link will auto-verify when you return' : 'Switch back to this tab after clicking your link'}
+        </div>
         {countdown > 0
           ? <p className="text-gray-400 text-xs mb-2">Link expires in <span className="font-mono">{fmt(countdown)}</span></p>
           : <p className="text-red-400 text-xs mb-2">Link expired — please request a new one.</p>
         }
-        <p className="text-gray-400 text-xs mb-5">Using Outlook or corporate email? Links may take 2–3 minutes.</p>
+        {/* P-ML20: provider-specific hint */}
+        <div className="mb-2 text-left">
+          <ProviderHint email={email} />
+        </div>
         <div className="space-y-2">
           {canResend ? (
             <button
@@ -219,6 +316,7 @@ function LoginForm() {
           />
         </div>
         {error && !showPassword && <p className="text-red-500 text-sm">{error}</p>}
+        {passkeyError && <p className="text-red-500 text-sm">{passkeyError}</p>}
         <button
           type="submit"
           disabled={loading}
@@ -226,6 +324,26 @@ function LoginForm() {
         >
           {loading ? 'Sending link…' : 'Send login link'}
         </button>
+        {/* P-ML18: passkey-first button — shown only for enrolled users */}
+        {typeof window !== 'undefined' && localStorage.getItem('mdrx_passkey_enrolled') === '1' && (
+          <button
+            type="button"
+            onClick={signInWithPasskey}
+            disabled={passkeyLoading || !email}
+            className="w-full border border-[#0F4C81] text-[#0F4C81] rounded-lg py-2.5 text-sm font-medium hover:bg-blue-50 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+          >
+            {passkeyLoading ? (
+              <><span className="w-4 h-4 border-2 border-[#0F4C81] border-t-transparent rounded-full animate-spin" /> Verifying…</>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
+                </svg>
+                Sign in with Face ID / Touch ID
+              </>
+            )}
+          </button>
+        )}
       </form>
 
       <div className="mt-5 pt-5 border-t border-gray-100 text-center space-y-2">

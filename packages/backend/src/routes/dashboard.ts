@@ -4,6 +4,7 @@ import { stops, routes, plans, drivers } from '../db/schema.js';
 import { eq, and, isNull, isNotNull, sql, inArray, desc } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { todayInTz } from '../utils/date.js';
+import { getDashboardDrivers } from '../db/preparedStatements.js'; // P-PERF10
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/dashboard/summary
@@ -68,11 +69,8 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     type RouteCountRow = { driver_id: string; route_id: string; route_status: string; total_stops: number; completed_stops: number };
 
     const [allDrivers, routeCountRows] = await Promise.all([
-      db.select({
-        id: drivers.id, name: drivers.name, status: drivers.status,
-        vehicleType: drivers.vehicleType, currentLat: drivers.currentLat,
-        currentLng: drivers.currentLng, lastPingAt: drivers.lastPingAt,
-      }).from(drivers).where(and(eq(drivers.orgId, orgId), isNull(drivers.deletedAt))),
+      // P-PERF10: prepared statement for driver list (most-hit dashboard query)
+      getDashboardDrivers.execute({ orgId }),
       db.execute(sql`
         SELECT
           r.driver_id,

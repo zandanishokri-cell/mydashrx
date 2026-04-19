@@ -1,9 +1,10 @@
 'use client';
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { setSession, resolveNext } from '@/lib/auth';
 import type { AuthTokens } from '@mydash-rx/shared';
+import { PasskeyEnrollModal } from '@/components/PasskeyEnrollModal';
 
 const LINK_EXPIRY_SECS = 15 * 60;
 
@@ -27,6 +28,10 @@ function VerifyContent() {
   const [cancelStatus, setCancelStatus] = useState<'idle' | 'cancelling' | 'cancelled'>('idle');
   // P-SES22: Trust device prompt shown after successful confirm
   const [showTrustPrompt, setShowTrustPrompt] = useState(false);
+  // P-ML19: pending retry on tab-return — if user was on another tab while validating
+  const pendingRetryRef = useRef(false);
+  // P-ML18: passkey enrollment modal shown after verify + trust prompt
+  const [showPasskeyModal, setShowPasskeyModal] = useState(false);
   const [trustDestination, setTrustDestination] = useState('');
   const deviceLabel = typeof navigator !== 'undefined'
     ? (/mobile/i.test(navigator.userAgent) ? 'Mobile device' : /tablet|ipad/i.test(navigator.userAgent) ? 'Tablet' : 'Desktop / Laptop')
@@ -50,6 +55,24 @@ function VerifyContent() {
   const expirySecs = secsLeft % 60;
   const expiryStr = secsLeft > 60 ? `${expiryMins}m ${expirySecs}s` : `${secsLeft}s`;
   const expiryColor = secsLeft < 30 ? 'text-red-500' : secsLeft < 120 ? 'text-amber-500' : 'text-gray-400';
+
+  // P-ML19: Page Visibility API — when user returns to this tab, re-trigger verify if not yet confirmed
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState === 'visible' && pendingRetryRef.current) {
+        pendingRetryRef.current = false;
+        if (status === 'valid' || status === 'validating') {
+          // Force re-attempt by re-running the verify effect — handled via status reset
+          // Actually: just trigger confirm if we're in 'valid' state (user clicked link, returned)
+          if (status === 'valid') handleConfirm();
+        }
+      } else if (document.visibilityState === 'hidden') {
+        pendingRetryRef.current = true;
+      }
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!token) { setStatus('error'); setErrorMsg('No sign-in token found. Please request a new link.'); return; }
@@ -153,6 +176,31 @@ function VerifyContent() {
     }
   }
 
+  // P-ML18: passkey enrollment modal — shown after trust decision if not already enrolled
+  const proceedAfterTrust = (dest: string) => {
+    const alreadyEnrolled = localStorage.getItem('mdrx_passkey_enrolled') === '1';
+    const alreadyPrompted = localStorage.getItem('mdrx_passkey_prompt_shown') === '1';
+    if (!alreadyEnrolled && !alreadyPrompted) {
+      setTrustDestination(dest);
+      setShowTrustPrompt(false);
+      setShowPasskeyModal(true);
+    } else {
+      router.replace(dest);
+    }
+  };
+
+  if (showPasskeyModal) {
+    return (
+      <>
+        <div className="text-center">
+          <div className="w-10 h-10 border-2 border-[#0F4C81] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-gray-500 text-sm mt-3">Signed in…</p>
+        </div>
+        <PasskeyEnrollModal onDone={() => { setShowPasskeyModal(false); router.replace(trustDestination); }} />
+      </>
+    );
+  }
+
   // P-SES22: Trust device prompt after successful verify
   if (showTrustPrompt) {
     const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com';
@@ -164,7 +212,7 @@ function VerifyContent() {
           headers: { Authorization: `Bearer ${getAccessToken()}` },
         });
       } catch { /* non-fatal */ }
-      router.replace(trustDestination);
+      proceedAfterTrust(trustDestination);
     };
     return (
       <div className="text-center">
@@ -177,7 +225,7 @@ function VerifyContent() {
         <p className="text-gray-500 text-sm mb-5">Trust this device for 30 days? You won&apos;t need a link next time.</p>
         <div className="flex gap-3 justify-center">
           <button onClick={trustDevice} className="px-5 py-2.5 bg-[#0F4C81] text-white rounded-lg text-sm font-semibold hover:bg-[#0d3d69]">Yes, trust it</button>
-          <button onClick={() => router.replace(trustDestination)} className="px-5 py-2.5 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200">No thanks</button>
+          <button onClick={() => proceedAfterTrust(trustDestination)} className="px-5 py-2.5 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200">No thanks</button>
         </div>
       </div>
     );
