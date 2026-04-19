@@ -371,31 +371,28 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       let txStoredIp: string | null = null;
       let txStoredUa: string | null = null;
 
-      // P-SES16: 14d idle window — check lastUsedAt before the FOR UPDATE lock
-      const [rtCheck] = await db.select({
-        lastUsedAt: refreshTokens.lastUsedAt,
-        absoluteExpiresAt: refreshTokens.absoluteExpiresAt,
-        status: refreshTokens.status,
-      }).from(refreshTokens).where(eq(refreshTokens.jti, jti)).limit(1);
-      if (rtCheck) {
-        const IDLE_LIMIT_MS = 14 * 24 * 3600_000; // 14 days
-        const lastActivity = rtCheck.lastUsedAt ?? null;
-        if (lastActivity && Date.now() - new Date(lastActivity).getTime() > IDLE_LIMIT_MS) {
-          await db.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.jti, jti));
-          return reply.code(401).send({ error: 'Session expired due to inactivity. Please log in again.' });
-        }
-        if (rtCheck.absoluteExpiresAt && new Date(rtCheck.absoluteExpiresAt) < new Date()) {
-          await db.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.jti, jti));
-          return reply.code(401).send({ error: 'Session maximum lifetime reached. Please log in again.' });
-        }
-      }
+      // P-SES3-TXN: idle + absolute expiry checks moved INSIDE transaction — atomic with FOR UPDATE
+      let txIdleExpired = false;
+      let txAbsoluteExpired = false;
 
       await db.transaction(async (tx) => {
         const rows = await tx.execute(
-          sql`SELECT id, family_id, status, ip, user_agent FROM refresh_tokens WHERE jti = ${jti} FOR UPDATE`
+          sql`SELECT id, family_id, status, ip, user_agent, last_used_at, absolute_expires_at FROM refresh_tokens WHERE jti = ${jti} FOR UPDATE`
         );
-        const row = (rows as unknown as Array<{ id: string; family_id: string; status: string; ip: string | null; user_agent: string | null }>)[0];
+        const row = (rows as unknown as Array<{ id: string; family_id: string; status: string; ip: string | null; user_agent: string | null; last_used_at: string | null; absolute_expires_at: string | null }>)[0];
         if (!row) return;
+        // P-SES16: idle + absolute expiry — evaluated under lock to prevent race conditions
+        const IDLE_LIMIT_MS = 14 * 24 * 3600_000;
+        if (row.last_used_at && Date.now() - new Date(row.last_used_at).getTime() > IDLE_LIMIT_MS) {
+          txIdleExpired = true;
+          await tx.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.jti, jti));
+          return;
+        }
+        if (row.absolute_expires_at && new Date(row.absolute_expires_at) < new Date()) {
+          txAbsoluteExpired = true;
+          await tx.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.jti, jti));
+          return;
+        }
         if (row.status === 'used') {
           txStatus = 'used';
           await tx.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.familyId, row.family_id));
@@ -409,6 +406,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         txStoredUa = row.user_agent;
         await tx.update(refreshTokens).set({ status: 'used', usedAt: new Date() }).where(eq(refreshTokens.jti, jti));
       });
+
+      if (txIdleExpired) return reply.code(401).send({ error: 'Session expired due to inactivity. Please log in again.' });
+      if (txAbsoluteExpired) return reply.code(401).send({ error: 'Session maximum lifetime reached. Please log in again.' });
 
       if (txStatus === 'not_found') return reply.code(401).send({ error: 'Unknown token' });
       if (txStatus === 'used') return reply.code(401).send({ error: 'Token reuse detected. All sessions revoked.' });
