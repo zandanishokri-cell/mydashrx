@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, drivers, plans, adminAuditLogs } from '../db/schema.js';
+import { stops, routes, drivers, plans, adminAuditLogs, organizations } from '../db/schema.js';
 import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { requirePermission } from '../lib/rbacPolicy.js';
@@ -210,6 +210,13 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       unit: body.unit,
       deliveryNotes: body.deliveryNotes,
     }).returning();
+
+    // P-CNV17: set activatedAt on first stop ever created by this org (idempotent)
+    db.update(organizations)
+      .set({ activatedAt: new Date() })
+      .where(and(eq(organizations.id, userOrgId), isNull(organizations.activatedAt)))
+      .catch(console.error);
+
     return reply.code(201).send(stop);
   });
 

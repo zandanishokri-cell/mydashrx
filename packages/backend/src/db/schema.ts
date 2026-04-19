@@ -88,6 +88,11 @@ export const organizations = pgTable('organizations', {
   onboardingDepotAt: timestamp('onboarding_depot_at'), // P-ONB10: when depot step completed in wizard
   onboardingDriverAt: timestamp('onboarding_driver_at'), // P-ONB10: when driver step completed
   onboardingCompletedAt: timestamp('onboarding_completed_at'), // P-ONB10: when full onboarding completed
+  // P-CNV17: TTA — first stop created by this org (idempotent, set once)
+  activatedAt: timestamp('activated_at'),
+  // P-CNV18: activation nudge email timestamps (prevents duplicate nudges)
+  nudgeSentAt: timestamp('nudge_sent_at'),   // Day-3 nudge sent at
+  nudge2SentAt: timestamp('nudge2_sent_at'), // Day-7 nudge sent at
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

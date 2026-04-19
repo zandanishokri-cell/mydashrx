@@ -30,7 +30,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const since30d = new Date(Date.now() - 30 * 86400000).toISOString();
 
     const [allOrgs, allDrivers, stops30d, stopsAll] = await Promise.all([
-      db.select({ id: organizations.id, billingPlan: organizations.billingPlan })
+      db.select({ id: organizations.id, billingPlan: organizations.billingPlan, approvedAt: organizations.approvedAt, activatedAt: organizations.activatedAt })
         .from(organizations).where(isNull(organizations.deletedAt)),
       db.select({ id: drivers.id }).from(drivers).where(isNull(drivers.deletedAt)),
       db.select({ count: sql<number>`count(*)::int` }).from(stops)
@@ -86,6 +86,14 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .map(o => (new Date(o.approvedAt!).getTime() - new Date(o.createdAt).getTime()) / 3600_000);
     const avgHoursToApproval = hoursArr.length ? Math.round(hoursArr.reduce((s, h) => s + h, 0) / hoursArr.length * 10) / 10 : null;
 
+    // P-CNV17: avgActivationHours — hours from approvedAt to first stop (activatedAt)
+    const activationTimes = allOrgs
+      .filter(o => o.approvedAt && o.activatedAt)
+      .map(o => (new Date(o.activatedAt!).getTime() - new Date(o.approvedAt!).getTime()) / 3600_000);
+    const avgActivationHours = activationTimes.length
+      ? Math.round(activationTimes.reduce((s, h) => s + h, 0) / activationTimes.length * 10) / 10
+      : null;
+
     return {
       totalOrgs: allOrgs.length,
       activeOrgs: activeOrgRows.length,
@@ -104,6 +112,11 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         rejectedLast7d: rejectedLast7d[0]?.count ?? 0,
         pendingOver24h,
         avgHoursToApproval,
+      },
+      activationHealth: {
+        avgActivationHours,
+        activatedOrgs: activationTimes.length,
+        unactivatedOrgs: allOrgs.filter(o => o.approvedAt && !o.activatedAt).length,
       },
     };
   });
@@ -1001,5 +1014,62 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     }).catch(console.error);
 
     return reply.send({ generatedAt: new Date().toISOString(), userCount: result.length, users: result });
+  });
+
+  // GET /admin/session-audit — P-SES24: paginated session history with CSV export
+  // HIPAA §164.308(a)(1)(ii)(D) — information system activity review
+  app.get('/session-audit', { preHandler: auth }, async (req, reply) => {
+    const actor = req.user as { sub: string; email: string };
+    const { page = '1', limit = '100', format } = req.query as { page?: string; limit?: string; format?: string };
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const pageSize = Math.min(500, Math.max(1, parseInt(limit, 10)));
+    const offset = (pageNum - 1) * pageSize;
+
+    const rows = await db
+      .select({
+        sessionId: refreshTokens.jti,
+        userId: refreshTokens.userId,
+        userEmail: users.email,
+        userName: users.name,
+        userRole: users.role,
+        orgId: users.orgId,
+        status: refreshTokens.status,
+        ip: refreshTokens.ip,
+        userAgent: refreshTokens.userAgent,
+        deviceName: refreshTokens.deviceName,
+        createdAt: refreshTokens.createdAt,
+        lastUsedAt: refreshTokens.lastUsedAt,
+        expiresAt: refreshTokens.expiresAt,
+      })
+      .from(refreshTokens)
+      .innerJoin(users, eq(refreshTokens.userId, users.id))
+      .orderBy(desc(refreshTokens.createdAt))
+      .limit(pageSize)
+      .offset(offset);
+
+    // Audit log the export event (HIPAA §164.308(a)(1)(ii)(D))
+    db.insert(adminAuditLogs).values({
+      actorId: actor.sub,
+      actorEmail: actor.email,
+      action: 'session_audit_export',
+      targetId: 'system',
+      targetName: 'all_sessions',
+      metadata: { format: format ?? 'json', page: pageNum, limit: pageSize, rowsReturned: rows.length },
+    }).catch(console.error);
+
+    if (format === 'csv') {
+      const header = 'sessionId,userId,userEmail,userName,userRole,orgId,status,ip,userAgent,deviceName,createdAt,lastUsedAt,expiresAt';
+      const csvRows = rows.map(r =>
+        [r.sessionId, r.userId, r.userEmail, r.userName, r.userRole, r.orgId, r.status,
+          r.ip ?? '', (r.userAgent ?? '').replace(/,/g, ';'), r.deviceName ?? '',
+          r.createdAt.toISOString(), r.lastUsedAt?.toISOString() ?? '', r.expiresAt.toISOString(),
+        ].join(',')
+      );
+      reply.header('Content-Type', 'text/csv');
+      reply.header('Content-Disposition', `attachment; filename="session-audit-${new Date().toISOString().slice(0, 10)}.csv"`);
+      return reply.send([header, ...csvRows].join('\n'));
+    }
+
+    return reply.send({ generatedAt: new Date().toISOString(), page: pageNum, limit: pageSize, count: rows.length, sessions: rows });
   });
 };

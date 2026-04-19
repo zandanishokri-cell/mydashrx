@@ -73,7 +73,7 @@ import { runAutoApproval } from './lib/autoApproval.js';
 import { db, client } from './db/connection.js';
 import { organizations, magicLinkTokens, signupIntents, users } from './db/schema.js';
 import { sendAbandonmentEmail } from './lib/emailHelpers.js';
-import { isNull, isNotNull, and, or, lt, sql } from 'drizzle-orm';
+import { isNull, isNotNull, and, or, lt, sql, eq } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 
 // Run schema migrations synchronously — fast DDL, must complete before routes work
@@ -146,6 +146,16 @@ try {
   console.log('P-SES15 lastKnownCountry column ensured');
 } catch (err) {
   console.error('P-SES15 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-CNV17/18: idempotent DDL for TTA + activation nudge columns on organizations
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS activated_at timestamptz`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS nudge_sent_at timestamptz`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS nudge2_sent_at timestamptz`);
+  console.log('P-CNV17/18 activation columns ensured');
+} catch (err) {
+  console.error('P-CNV17/18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
 const app = Fastify({ logger: true, trustProxy: true });
@@ -307,6 +317,96 @@ const runAbandonmentSweep = async () => {
   if (sent > 0) console.log(`[AbandonmentSweep] Sent ${sent} recovery email(s)`);
 };
 setInterval(() => { runAbandonmentSweep().catch(console.error); }, 30 * 60 * 1000);
+
+// P-CNV18: Activation nudge cron — runs hourly, fires emails at 10 AM UTC
+// Day-3: approved 3d+ ago, activatedAt IS NULL, nudgeSentAt IS NULL
+// Day-7: approved 7d+ ago, activatedAt IS NULL, nudge2SentAt IS NULL
+const runActivationNudgeCron = async () => {
+  const hour = new Date().getUTCHours();
+  if (hour !== 10) return; // Only fires at 10 AM UTC
+
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+
+  const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+  const now = Date.now();
+  const day3Cutoff = new Date(now - 3 * 86400_000);
+  const day7Cutoff = new Date(now - 7 * 86400_000);
+
+  // Fetch all approved, unactivated orgs with their admin email (join users WHERE role=pharmacy_admin)
+  const candidates = await db
+    .select({
+      id: organizations.id,
+      name: organizations.name,
+      approvedAt: organizations.approvedAt,
+      activatedAt: organizations.activatedAt,
+      nudgeSentAt: organizations.nudgeSentAt,
+      nudge2SentAt: organizations.nudge2SentAt,
+      onboardingDepotAt: organizations.onboardingDepotAt,
+      onboardingDriverAt: organizations.onboardingDriverAt,
+    })
+    .from(organizations)
+    .where(and(
+      isNotNull(organizations.approvedAt),
+      isNull(organizations.activatedAt),
+      isNull(organizations.deletedAt),
+    ));
+
+  let nudge1Sent = 0, nudge2Sent = 0;
+  for (const org of candidates) {
+    if (!org.approvedAt) continue;
+    const approved = new Date(org.approvedAt);
+
+    // Find pharmacy_admin user email for this org
+    const [admin] = await db.select({ email: users.email, name: users.name })
+      .from(users)
+      .where(and(eq(users.orgId, org.id), sql`role = 'pharmacy_admin'`, isNull(users.deletedAt)))
+      .limit(1);
+    if (!admin) continue;
+
+    // Determine next incomplete step
+    const nextStep = !org.onboardingDepotAt ? 'depot' : !org.onboardingDriverAt ? 'driver' : 'route';
+    const stepUrl = `${dashUrl}/${nextStep === 'depot' ? 'depots/new' : nextStep === 'driver' ? 'drivers/new' : 'plans/new'}`;
+    const stepLabel = nextStep === 'depot' ? 'Add your first depot' : nextStep === 'driver' ? 'Add a driver' : 'Create your first route';
+
+    // Day-7 nudge (check first to avoid sending Day-3 to Day-7 orgs)
+    if (approved <= day7Cutoff && !org.nudge2SentAt) {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: `MyDashRx <noreply@${process.env.SENDER_DOMAIN ?? 'mydashrx.com'}>`,
+          to: admin.email,
+          subject: `${org.name} — you're one step away from your first delivery`,
+          track_clicks: false, track_opens: false,
+          html: `<p>Hi ${admin.name},</p><p>It's been a week since your MyDashRx account was approved, and your team hasn't made a delivery yet.</p><p>Your next step: <strong>${stepLabel}</strong></p><p><a href="${stepUrl}" style="background:#0F766E;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block;margin:12px 0">${stepLabel} →</a></p><p>If you need help getting started, reply to this email and our team will walk you through it.</p><p>– The MyDashRx Team</p>`,
+        }),
+      }).catch(console.error);
+      await db.update(organizations).set({ nudge2SentAt: new Date() }).where(eq(organizations.id, org.id));
+      nudge2Sent++;
+    }
+    // Day-3 nudge (only if Day-7 not yet sent)
+    else if (approved <= day3Cutoff && !org.nudgeSentAt) {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: `MyDashRx <noreply@${process.env.SENDER_DOMAIN ?? 'mydashrx.com'}>`,
+          to: admin.email,
+          subject: `${org.name} — ready to make your first delivery?`,
+          track_clicks: false, track_opens: false,
+          html: `<p>Hi ${admin.name},</p><p>Your MyDashRx account is approved and ready to go. Most pharmacies make their first delivery within a day of signing up.</p><p>Your next step: <strong>${stepLabel}</strong></p><p><a href="${stepUrl}" style="background:#0F766E;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block;margin:12px 0">${stepLabel} →</a></p><p>– The MyDashRx Team</p>`,
+        }),
+      }).catch(console.error);
+      await db.update(organizations).set({ nudgeSentAt: new Date() }).where(eq(organizations.id, org.id));
+      nudge1Sent++;
+    }
+  }
+  if (nudge1Sent + nudge2Sent > 0) {
+    console.log(JSON.stringify({ event: 'activation_nudge_cron', nudge1Sent, nudge2Sent, ts: new Date().toISOString() }));
+  }
+};
+setInterval(() => { runActivationNudgeCron().catch(console.error); }, 60 * 60 * 1000);
 
 // Startup config warnings — log which optional features are unconfigured
 const optionalEnvs: [string, string][] = [
