@@ -200,6 +200,19 @@ function DetailDrawer({
               {aging.label}
             </span>
             <SlaCountdown createdAt={org.createdAt} />
+            {/* P-ADM22: Risk score + trust tier badge */}
+            {org.riskScore != null && (
+              <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${
+                org.trustTier === 'block' ? 'bg-red-50 text-red-700 border-red-200' :
+                org.trustTier === 'auto_approve' ? 'bg-green-50 text-green-700 border-green-200' :
+                org.riskScore > 40 ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                'bg-gray-50 text-gray-600 border-gray-200'
+              }`} title={`Trust tier: ${org.trustTier ?? 'review'}`}>
+                Risk: {org.riskScore}
+                {org.trustTier === 'auto_approve' && ' · Auto-approve'}
+                {org.trustTier === 'block' && ' · Block'}
+              </span>
+            )}
           </div>
 
           {/* Hold banner */}
@@ -747,6 +760,17 @@ export default function ApprovalsPage() {
                     {org.riskFlags && org.riskFlags.length > 0 && (
                       <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-orange-50 text-orange-700 border border-orange-200">
                         ⚠ {org.riskFlags.join(', ')}
+                      </span>
+                    )}
+                    {/* P-ADM22: Risk score badge in list row */}
+                    {org.riskScore != null && (
+                      <span className={`px-1.5 py-0.5 text-xs font-medium rounded ${
+                        org.trustTier === 'block' ? 'bg-red-50 text-red-700 border border-red-200' :
+                        org.trustTier === 'auto_approve' ? 'bg-green-50 text-green-700 border border-green-200' :
+                        org.riskScore > 40 ? 'bg-orange-50 text-orange-700 border border-orange-200' :
+                        'bg-gray-100 text-gray-500'
+                      }`} title={`Risk score: ${org.riskScore}/100`}>
+                        {org.trustTier === 'auto_approve' ? '✓ Auto' : org.trustTier === 'block' ? '✗ Block' : `${org.riskScore}`}
                       </span>
                     )}
                   </div>
