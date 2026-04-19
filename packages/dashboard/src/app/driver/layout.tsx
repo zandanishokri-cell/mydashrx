@@ -16,6 +16,12 @@ export default function DriverLayout({ children }: { children: React.ReactNode }
       if (!user || user.role !== 'driver') { router.replace('/driver/login'); return; }
       setReady(true);
     });
+
+    // P-DRV3: Register Service Worker for Background Sync (Chrome/Android offline POD queue drain)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        .catch(() => { /* non-fatal — iOS/Safari falls back to useOfflineSync 30s polling */ });
+    }
   }, [router]);
 
   // P-SES25: HIPAA §164.312(a)(2)(iii) — automatic logoff for driver portal

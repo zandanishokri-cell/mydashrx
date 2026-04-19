@@ -271,6 +271,8 @@ export const stops = pgTable(
     trackingToken: uuid('tracking_token').notNull().defaultRandom().unique(),
     sequenceNumber: integer('sequence_number').notNull().default(0),
     priority: text('priority').notNull().default('normal'),
+    // P-DRV3: Idempotency-Key for offline queue retry deduplication
+    idempotencyKey: text('idempotency_key'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },

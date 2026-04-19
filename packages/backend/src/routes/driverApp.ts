@@ -238,8 +238,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const driverId = await resolveDriverId(user);
     if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
     const { stopId } = req.params as { stopId: string };
-    const { status, failureReason, failureNote } = req.body as {
-      status: StopStatus; failureReason?: string; failureNote?: string;
+    const { status, failureReason, failureNote, idempotencyKey } = req.body as {
+      status: StopStatus; failureReason?: string; failureNote?: string; idempotencyKey?: string;
     };
 
     // Verify driver owns this stop's route (fetch full stop for copay check)
@@ -247,8 +247,14 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       id: stops.id, routeId: stops.routeId, orgId: stops.orgId,
       codAmount: stops.codAmount, paymentLinkSentAt: stops.paymentLinkSentAt,
       recipientName: stops.recipientName, recipientPhone: stops.recipientPhone, address: stops.address,
+      idempotencyKey: stops.idempotencyKey,
     }).from(stops).where(eq(stops.id, stopId)).limit(1);
     if (!stop) return reply.code(404).send({ error: 'Not found' });
+
+    // P-DRV3: Idempotency — duplicate offline queue retry returns 200 (cached response)
+    if (idempotencyKey && stop.idempotencyKey === idempotencyKey) {
+      return reply.code(200).send(stop);
+    }
 
     const [route] = await db.select({ driverId: routes.driverId })
       .from(routes).where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt))).limit(1);
@@ -259,6 +265,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     if (status === 'completed') updates.completedAt = new Date();
     if (failureReason) updates.failureReason = failureReason;
     if (failureNote) updates.failureNote = failureNote;
+    // P-DRV3: Persist idempotency key to detect duplicate queue replays
+    if (idempotencyKey) updates.idempotencyKey = idempotencyKey;
 
     const [updated] = await db.update(stops).set(updates).where(eq(stops.id, stopId)).returning();
     sendStopNotification(updated, status).catch(console.error);

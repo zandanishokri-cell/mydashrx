@@ -57,9 +57,15 @@ export function useOfflineSync() {
 
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
+
+    // iOS 30s polling fallback — Background Sync API absent on iOS/Safari
+    // Drains queue when online; no-op when offline (syncQueue guard handles this)
+    const iosInterval = setInterval(() => { if (navigator.onLine) syncQueue(); }, 30_000);
+
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
+      clearInterval(iosInterval);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

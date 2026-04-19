@@ -365,6 +365,14 @@ try {
   console.error('P-DISP1 stop_notes DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-DRV3: idempotency_key column on stops — deduplicates offline queue retries
+try {
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS idempotency_key text`);
+  console.log('P-DRV3 idempotency_key column ensured');
+} catch (err) {
+  console.error('P-DRV3 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

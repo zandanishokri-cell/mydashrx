@@ -38,13 +38,26 @@ export async function enqueueAction(action: Omit<QueuedAction, 'id' | 'createdAt
   });
 }
 
+const TTL_MS = 24 * 60 * 60 * 1000; // 24hr — HIPAA: PHI not persisted locally beyond 24hr
+
 export async function getAllActions(): Promise<QueuedAction[]> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readonly');
-    const idx = tx.objectStore(STORE).index('createdAt');
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
+    const idx = store.index('createdAt');
     const req = idx.getAll();
-    req.onsuccess = e => resolve((e.target as IDBRequest<QueuedAction[]>).result);
+    req.onsuccess = async (e) => {
+      const all = (e.target as IDBRequest<QueuedAction[]>).result;
+      const now = Date.now();
+      // Purge expired items (HIPAA 24hr TTL on locally-stored PHI)
+      const stale = all.filter(a => now - a.createdAt > TTL_MS);
+      for (const item of stale) {
+        store.delete(item.id);
+        console.warn('[offline-queue] purged expired item', item.id, 'pod_sync_expired');
+      }
+      resolve(all.filter(a => now - a.createdAt <= TTL_MS));
+    };
     req.onerror = e => reject((e.target as IDBRequest).error);
     tx.oncomplete = () => db.close();
   });

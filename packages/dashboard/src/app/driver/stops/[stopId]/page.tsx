@@ -100,7 +100,9 @@ export default function StopDetailPage() {
     if (!stop) return;
     setSaving(true);
     setError('');
-    const body: Record<string, unknown> = { status };
+    // P-DRV3: Idempotency-Key prevents double-POD on offline queue retry/background sync
+    const idempotencyKey = `${stopId}:${status}:${Date.now()}`;
+    const body: Record<string, unknown> = { status, idempotencyKey };
     if (status === 'failed') { body.failureReason = failureReason; body.failureNote = failureNote; }
 
     if (!isOnline) {
