@@ -274,6 +274,9 @@ export const proofOfDeliveries = pgTable('proof_of_deliveries', {
   isControlledSubstance: boolean('is_controlled_substance').notNull().default(false),
   idDobConfirmed: boolean('id_dob_confirmed').notNull().default(false),
   capturedAt: timestamp('captured_at').notNull().defaultNow(),
+  // P-DEL9: HIPAA 164.310(d)(2)(i) PHI retention — 6yr from capture, weekly purge cron
+  retentionExpiresAt: timestamp('retention_expires_at'),
+  podPurgedAt: timestamp('pod_purged_at'),
 });
 
 export const notificationLogs = pgTable('notification_logs', {
@@ -300,6 +303,8 @@ export const driverLocationHistory = pgTable(
     lat: real('lat').notNull(),
     lng: real('lng').notNull(),
     recordedAt: timestamp('recorded_at').notNull().defaultNow(),
+    // P-DEL9: PHI retention — driver route GPS traces contain patient address proximity data
+    retentionExpiresAt: timestamp('retention_expires_at'),
   },
   (t) => ({ driverIdx: index('location_driver_idx').on(t.driverId) }),
 );

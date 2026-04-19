@@ -36,6 +36,20 @@ body {
     @apply text-3xl font-bold text-gray-900;
     font-family: var(--font-sora);
   }
+
+  /* P-A11Y9: WCAG 2.5.8 touch target minimum — apply to interactive elements in mobile flows */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+    @apply flex items-center justify-center;
+  }
+
+  /* P-A11Y9: Inline touch target for buttons that don't need flex centering */
+  .touch-target-inline {
+    min-height: 44px;
+    padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /* Slim scrollbar */

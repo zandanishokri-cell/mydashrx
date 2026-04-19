@@ -12,7 +12,14 @@ interface Stop {
   deliveryNotes?: string; priority?: string;
 }
 
-const ETA_PER_STOP_MIN = 8;
+interface EtaData {
+  remainingStops: number;
+  avgMinPerStop: number;
+  distanceToNextKm: number | null;
+  totalMinRemaining: number;
+  etaIso: string;
+  completedStopsUsedForAvg: number;
+}
 
 const statusColor: Record<string, string> = {
   pending: 'text-gray-400',
@@ -35,12 +42,6 @@ const statusLabel: Record<string, string> = {
   pending: 'Pending', en_route: 'En Route', arrived: 'Arrived', completed: 'Done', failed: 'Failed', rescheduled: 'Rescheduled',
 };
 
-const fmtETA = (remainingStops: number): string => {
-  const ms = remainingStops * ETA_PER_STOP_MIN * 60 * 1000;
-  const eta = new Date(Date.now() + ms);
-  return eta.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-};
-
 export default function DriverRoutePage() {
   const router = useRouter();
   const { routeId } = useParams<{ routeId: string }>();
@@ -51,7 +52,14 @@ export default function DriverRoutePage() {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState('');
   const [locationStatus, setLocationStatus] = useState<'off' | 'active' | 'denied'>('off');
+  const [eta, setEta] = useState<EtaData | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadEta = () => {
+    api.get<EtaData>(`/driver/me/routes/${routeId}/eta`)
+      .then(setEta)
+      .catch(() => {}); // non-fatal — fallback to null
+  };
 
   const load = () => {
     Promise.all([
@@ -62,6 +70,7 @@ export default function DriverRoutePage() {
         setStops(stopsData);
         setRouteStatus(routeData.status);
         setLoading(false);
+        loadEta();
       })
       .catch(() => { setLoading(false); setLoadError('Failed to load route. Pull to refresh.'); });
   };
@@ -91,9 +100,18 @@ export default function DriverRoutePage() {
     setLocationStatus('active');
   };
 
-  // Start pinging when route becomes active
+  // Start pinging when route becomes active + refresh ETA every 60s
+  const etaIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
-    if (routeStatus === 'active') startLocationPing();
+    if (routeStatus === 'active') {
+      startLocationPing();
+      if (!etaIntervalRef.current) {
+        etaIntervalRef.current = setInterval(loadEta, 60000);
+      }
+    }
+    return () => {
+      if (etaIntervalRef.current) { clearInterval(etaIntervalRef.current); etaIntervalRef.current = null; }
+    };
   }, [routeStatus]); // eslint-disable-line
 
   const startRoute = async () => {
@@ -143,9 +161,17 @@ export default function DriverRoutePage() {
             </span>
           )}
           <span className="font-semibold text-white">{remaining} remaining</span>
-          {!allDone && remaining > 0 && (
+          {!allDone && remaining > 0 && eta && (
             <span className="flex items-center gap-1 text-blue-200">
-              <Clock size={13} /> Est. complete by {fmtETA(remaining)}
+              <Clock size={13} /> Est. complete by {new Date(eta.etaIso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              {eta.distanceToNextKm != null && (
+                <span className="ml-1 text-blue-300 text-xs">· {eta.distanceToNextKm}km to next</span>
+              )}
+            </span>
+          )}
+          {!allDone && remaining > 0 && !eta && (
+            <span className="flex items-center gap-1 text-blue-200">
+              <Clock size={13} /> {remaining * 8} min est.
             </span>
           )}
         </div>

@@ -157,7 +157,7 @@ export default function StopDetailPage() {
 
   if (!stop) return (
     <div className="min-h-screen bg-gray-50 p-6">
-      <button onClick={() => router.back()} className="flex items-center gap-2 text-gray-500 mb-4"><ArrowLeft size={16} /> Back</button>
+      <button onClick={() => router.back()} className="flex items-center gap-2 text-gray-500 mb-4 min-h-[44px]"><ArrowLeft size={16} /> Back</button>
       <div className="text-center py-12 text-red-500">Stop not found</div>
     </div>
   );
@@ -197,7 +197,7 @@ export default function StopDetailPage() {
       )}
       {/* Header */}
       <div className="bg-[#0F4C81] text-white px-5 pt-12 pb-5">
-        <button onClick={() => router.back()} className="flex items-center gap-2 text-blue-200 mb-3 text-sm">
+        <button onClick={() => router.back()} className="flex items-center gap-2 text-blue-200 mb-3 text-sm min-h-[44px]">
           <ArrowLeft size={16} /> Back to route
         </button>
         <h1 className="text-xl font-bold">{stop.recipientName}</h1>

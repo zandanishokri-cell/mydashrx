@@ -624,8 +624,9 @@ export default function ApprovalsPage() {
                   type="checkbox"
                   checked={selected.has(org.id)}
                   onChange={() => toggleSelect(org.id)}
-                  className="mt-1 accent-[#0F4C81]"
+                  className="mt-1 accent-[#0F4C81] w-5 h-5 cursor-pointer"
                   onClick={e => e.stopPropagation()}
+                  aria-label={`Select ${org.name} for batch action`}
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">

@@ -119,6 +119,27 @@ try {
   console.error('P-CNV14 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-DEL9: HIPAA 164.310(d)(2)(i) PHI retention columns — idempotent DDL
+try {
+  await db.execute(sql`ALTER TABLE proof_of_deliveries ADD COLUMN IF NOT EXISTS retention_expires_at timestamptz`);
+  await db.execute(sql`ALTER TABLE proof_of_deliveries ADD COLUMN IF NOT EXISTS pod_purged_at timestamptz`);
+  // Back-fill: set retention_expires_at = captured_at + 6 years for existing rows
+  await db.execute(sql`
+    UPDATE proof_of_deliveries
+    SET retention_expires_at = captured_at + INTERVAL '6 years'
+    WHERE retention_expires_at IS NULL
+  `);
+  await db.execute(sql`ALTER TABLE driver_location_history ADD COLUMN IF NOT EXISTS retention_expires_at timestamptz`);
+  await db.execute(sql`
+    UPDATE driver_location_history
+    SET retention_expires_at = recorded_at + INTERVAL '1 year'
+    WHERE retention_expires_at IS NULL
+  `);
+  console.log('P-DEL9 HIPAA retention columns ensured');
+} catch (err) {
+  console.error('P-DEL9 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {
@@ -348,3 +369,56 @@ setInterval(async () => {
     sendDailyReport(org.id).catch(console.error);
   }
 }, 60 * 60 * 1000);
+
+// P-DEL9: HIPAA §164.310(d)(2)(i) PHI purge cron — Sunday 2 AM UTC
+// Purges PHI fields from POD records past 6yr retention + driver GPS traces past 1yr
+const runPhiPurgeCron = async () => {
+  const now = new Date();
+  const isSunday = now.getUTCDay() === 0;
+  const is2am = now.getUTCHours() === 2;
+  if (!isSunday || !is2am) return;
+
+  try {
+    // Purge POD PHI fields (signature, photo URLs, recipient name) after retention window
+    const podResult = await db.execute(sql`
+      UPDATE proof_of_deliveries
+      SET
+        signature_data = NULL,
+        id_photo_url   = NULL,
+        recipient_name = NULL,
+        pod_purged_at  = NOW()
+      WHERE retention_expires_at < NOW()
+        AND pod_purged_at IS NULL
+      RETURNING id
+    `);
+    const podPurged = (podResult as unknown as Array<unknown>).length;
+
+    // Purge driver GPS traces past 1yr retention (address proximity PHI)
+    const locResult = await db.execute(sql`
+      DELETE FROM driver_location_history
+      WHERE retention_expires_at < NOW()
+      RETURNING id
+    `);
+    const locPurged = (locResult as unknown as Array<unknown>).length;
+
+    if (podPurged > 0 || locPurged > 0) {
+      // Audit log the purge event
+      await db.execute(sql`
+        INSERT INTO admin_audit_logs (id, org_id, admin_id, admin_email, event, metadata, created_at)
+        VALUES (
+          gen_random_uuid(),
+          '00000000-0000-0000-0000-000000000000',
+          '00000000-0000-0000-0000-000000000000',
+          'system@mydashrx.internal',
+          'pod_phi_purged',
+          ${JSON.stringify({ podRecordsPurged: podPurged, locationRecordsDeleted: locPurged, runAt: now.toISOString() })}::jsonb,
+          NOW()
+        )
+      `);
+      console.log(JSON.stringify({ event: 'phi_purge_cron', podPurged, locPurged, ts: now.toISOString() }));
+    }
+  } catch (err) {
+    console.error('[phi_purge_cron] error (non-fatal):', err instanceof Error ? err.message : err);
+  }
+};
+setInterval(() => { runPhiPurgeCron().catch(console.error); }, 60 * 60 * 1000);

@@ -104,6 +104,77 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     return route;
   });
 
+  // GET /driver/me/routes/:routeId/eta — P-DEL8: dynamic ETA using Haversine + rolling actual avg
+  app.get('/me/routes/:routeId/eta', {
+    preHandler: requireRole('driver'),
+  }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found' });
+    const { routeId } = req.params as { routeId: string };
+
+    const [route] = await db.select({ driverId: routes.driverId, startedAt: routes.startedAt })
+      .from(routes).where(and(eq(routes.id, routeId), isNull(routes.deletedAt))).limit(1);
+    if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
+
+    // Get driver current position
+    const [driver] = await db.select({ currentLat: drivers.currentLat, currentLng: drivers.currentLng })
+      .from(drivers).where(eq(drivers.id, driverId)).limit(1);
+
+    // Get all non-deleted stops for this route
+    const allStops = await db.select({
+      id: stops.id,
+      status: stops.status,
+      lat: stops.lat,
+      lng: stops.lng,
+      arrivedAt: stops.arrivedAt,
+      completedAt: stops.completedAt,
+    }).from(stops).where(and(eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+      .orderBy(stops.sequenceNumber);
+
+    const remaining = allStops.filter(s => s.status !== 'completed' && s.status !== 'failed' && s.status !== 'rescheduled');
+
+    // Rolling avg: actual min/stop from completed stops today
+    const completed = allStops.filter(s => s.status === 'completed' && s.arrivedAt && s.completedAt);
+    let avgMinPerStop = 8; // fallback constant
+    if (completed.length >= 2) {
+      const durations = completed.map(s => (new Date(s.completedAt!).getTime() - new Date(s.arrivedAt!).getTime()) / 60000);
+      avgMinPerStop = durations.reduce((a, b) => a + b, 0) / durations.length;
+      avgMinPerStop = Math.max(2, Math.min(avgMinPerStop, 30)); // clamp 2-30min
+    }
+
+    // Haversine to next stop
+    const haversineKm = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    };
+
+    let distanceToNextKm: number | null = null;
+    if (driver?.currentLat && driver?.currentLng && remaining.length > 0) {
+      const next = remaining[0];
+      if (next.lat && next.lng) {
+        distanceToNextKm = haversineKm(driver.currentLat, driver.currentLng, next.lat, next.lng);
+      }
+    }
+
+    // Travel time to next stop: assume 30km/h avg urban speed
+    const travelMinToNext = distanceToNextKm != null ? (distanceToNextKm / 30) * 60 : 0;
+    const totalMinRemaining = travelMinToNext + (remaining.length * avgMinPerStop);
+    const etaTs = new Date(Date.now() + totalMinRemaining * 60 * 1000);
+
+    return {
+      remainingStops: remaining.length,
+      avgMinPerStop: Math.round(avgMinPerStop * 10) / 10,
+      distanceToNextKm: distanceToNextKm != null ? Math.round(distanceToNextKm * 10) / 10 : null,
+      totalMinRemaining: Math.round(totalMinRemaining),
+      etaIso: etaTs.toISOString(),
+      completedStopsUsedForAvg: completed.length,
+    };
+  });
+
   // GET /driver/me/routes/:routeId/stops
   app.get('/me/routes/:routeId/stops', {
     preHandler: requireRole('driver'),
