@@ -327,6 +327,116 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  // GET /orgs/:orgId/tracking/live/stream — P-PERF13: SSE live map (replaces 15s polling)
+  // Pushes data only when driver positions change; heartbeat every 25s keeps connection alive through proxies
+  app.get('/live/stream', {
+    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId } = req.params as { orgId: string };
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no', // disable Nginx buffering
+    });
+    reply.raw.flushHeaders?.();
+
+    // Snapshot: driverId → { lat, lng, lastPingAt } — only push on change
+    let snapshot: Record<string, { lat: number | null; lng: number | null; lastPingAt: Date | null }> = {};
+
+    const fetchAndPush = async () => {
+      try {
+        // Re-use the same query as GET /live
+        const activeRoutes = await db
+          .select({
+            routeId: routes.id,
+            routeStatus: routes.status,
+            stopOrder: routes.stopOrder,
+            driverId: drivers.id,
+            driverName: drivers.name,
+            driverPhone: drivers.phone,
+            driverStatus: drivers.status,
+            currentLat: drivers.currentLat,
+            currentLng: drivers.currentLng,
+            lastPingAt: drivers.lastPingAt,
+          })
+          .from(routes)
+          .innerJoin(plans, and(eq(routes.planId, plans.id), eq(plans.orgId, orgId), isNull(plans.deletedAt)))
+          .innerJoin(drivers, and(eq(routes.driverId, drivers.id), eq(drivers.orgId, orgId)))
+          .where(and(eq(routes.status, 'active'), eq(drivers.status, 'on_route'), isNull(routes.deletedAt)));
+
+        // Diff check — only push if any driver position changed
+        let changed = activeRoutes.length !== Object.keys(snapshot).length;
+        if (!changed) {
+          for (const r of activeRoutes) {
+            const prev = snapshot[r.driverId];
+            if (!prev || prev.lat !== r.currentLat || prev.lng !== r.currentLng || prev.lastPingAt !== r.lastPingAt) {
+              changed = true; break;
+            }
+          }
+        }
+        if (!changed) return;
+
+        // Update snapshot
+        snapshot = {};
+        for (const r of activeRoutes) {
+          snapshot[r.driverId] = { lat: r.currentLat, lng: r.currentLng, lastPingAt: r.lastPingAt };
+        }
+
+        // Build full payload (same shape as GET /live activeRoutes array)
+        let totalStopsRemaining = 0;
+        const routeIds = activeRoutes.map(r => r.routeId);
+        const allStops = routeIds.length > 0 ? await db
+          .select({ id: stops.id, routeId: stops.routeId, status: stops.status, address: stops.address, recipientName: stops.recipientName, sequenceNumber: stops.sequenceNumber })
+          .from(stops)
+          .where(and(inArray(stops.routeId, routeIds), isNull(stops.deletedAt))) : [];
+
+        const stopsByRoute = allStops.reduce<Record<string, typeof allStops>>((acc, s) => {
+          if (!s.routeId) return acc;
+          (acc[s.routeId] ??= []).push(s);
+          return acc;
+        }, {});
+
+        const result = activeRoutes.map(r => {
+          const rs = stopsByRoute[r.routeId] ?? [];
+          const completed = rs.filter(s => ['completed', 'failed', 'rescheduled'].includes(s.status)).length;
+          const pending = rs.filter(s => !['completed', 'failed', 'rescheduled'].includes(s.status)).length;
+          totalStopsRemaining += pending;
+          const nextStop = rs.filter(s => !['completed', 'failed', 'rescheduled'].includes(s.status))
+            .sort((a, b) => (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0))[0] ?? null;
+          return {
+            routeId: r.routeId, driverId: r.driverId, driverName: r.driverName, driverPhone: r.driverPhone,
+            status: r.routeStatus, currentLat: r.currentLat, currentLng: r.currentLng, lastPingAt: r.lastPingAt,
+            stopsTotal: rs.length, stopsCompleted: completed, stopsPending: pending,
+            nextStop: nextStop ? { stopId: nextStop.id, address: nextStop.address, recipientName: hipaaName(nextStop.recipientName), status: nextStop.status } : null,
+            estimatedCompletion: new Date(Date.now() + pending * ETA_PER_STOP_MS).toISOString(),
+          };
+        });
+
+        const payload = JSON.stringify({ activeRoutes: result, summary: { activeDrivers: result.length, totalStopsRemaining, completedToday: 0 } });
+        if (!reply.raw.writableEnded) reply.raw.write(`data: ${payload}\n\n`);
+      } catch { /* non-fatal — next poll will retry */ }
+    };
+
+    // Initial push + poll every 8s
+    await fetchAndPush();
+    const pollInterval = setInterval(fetchAndPush, 8000);
+
+    // Heartbeat every 25s — keeps connection alive through proxies
+    const heartbeat = setInterval(() => {
+      if (!reply.raw.writableEnded) reply.raw.write(':\n\n');
+    }, 25000);
+
+    req.raw.on('close', () => {
+      clearInterval(pollInterval);
+      clearInterval(heartbeat);
+    });
+
+    // Keep Fastify from auto-closing the response
+    await new Promise<void>(resolve => req.raw.on('close', resolve));
+  });
+
   // POST /orgs/:orgId/tracking/ping — driver location ping
   app.post('/ping', {
     preHandler: requireOrgRole('driver'),

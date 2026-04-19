@@ -560,6 +560,19 @@ try {
   console.error('P-DEL21 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-PERF12: BRIN indexes — 10-50x smaller than B-tree for append-only time-series tables
+// CONCURRENTLY means no table lock; safe to run at startup against live data
+try {
+  await db.execute(sql`CREATE INDEX CONCURRENTLY IF NOT EXISTS location_recorded_at_brin_idx ON driver_location_history USING BRIN (recorded_at)`);
+  await db.execute(sql`CREATE INDEX CONCURRENTLY IF NOT EXISTS location_retention_brin_idx ON driver_location_history USING BRIN (retention_expires_at)`);
+  await db.execute(sql`CREATE INDEX CONCURRENTLY IF NOT EXISTS audit_created_brin_idx ON audit_logs USING BRIN (created_at)`);
+  // P-PERF11: composite keyset index for cursor pagination on audit_logs
+  await db.execute(sql`CREATE INDEX CONCURRENTLY IF NOT EXISTS audit_log_keyset_idx ON audit_logs (created_at DESC, id DESC)`);
+  console.log('P-PERF12/P-PERF11 BRIN + keyset indexes ensured');
+} catch (err) {
+  console.error('P-PERF12/P-PERF11 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

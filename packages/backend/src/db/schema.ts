@@ -358,7 +358,12 @@ export const driverLocationHistory = pgTable(
     // P-DEL9: PHI retention — driver route GPS traces contain patient address proximity data
     retentionExpiresAt: timestamp('retention_expires_at'),
   },
-  (t) => ({ driverIdx: index('location_driver_idx').on(t.driverId) }),
+  (t) => ({
+    driverIdx: index('location_driver_idx').on(t.driverId),
+    // P-PERF12: BRIN indexes — 10-50x smaller than B-tree for append-only time-series; PHI retention purge avoids full seq scan
+    recordedAtBrin: index('location_recorded_at_brin_idx').using('brin', t.recordedAt),
+    retentionBrin: index('location_retention_brin_idx').using('brin', t.retentionExpiresAt),
+  }),
 );
 
 // ─── Lead Finder ──────────────────────────────────────────────────────────────
@@ -449,6 +454,10 @@ export const auditLogs = pgTable('audit_logs', {
 }, (t) => ({
   orgIdx: index('audit_org_idx').on(t.orgId),
   createdIdx: index('audit_created_idx').on(t.createdAt),
+  // P-PERF12: BRIN for append-only audit log time-series — 10-50x smaller than B-tree
+  createdBrin: index('audit_created_brin_idx').using('brin', t.createdAt),
+  // P-PERF11: composite keyset index for cursor pagination — eliminates OFFSET full-table scan
+  keysetIdx: index('audit_log_keyset_idx').on(t.createdAt, t.id),
 }));
 
 export const complianceChecks = pgTable('compliance_checks', {

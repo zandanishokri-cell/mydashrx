@@ -95,6 +95,11 @@ export default function MapPage() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const staleCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  // P-PERF13: track whether SSE connected successfully; if not, fall back to polling
+  const sseFailedRef = useRef(false);
+
+  const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -112,28 +117,72 @@ export default function MapPage() {
     }
   }, [user]);
 
-  useEffect(() => {
+  const startPolling = useCallback(() => {
+    if (intervalRef.current) return;
     load();
     intervalRef.current = setInterval(load, 15000);
+  }, [load]);
+
+  const stopPolling = useCallback(() => {
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+  }, []);
+
+  // P-PERF13: SSE connection — replaces 15s polling (240 req/hr → push on change only)
+  useEffect(() => {
+    if (!user) return;
     tickRef.current = setInterval(() => setSecondsAgo((s) => s + 1), 1000);
 
-    // Pause polling when tab is hidden — resume + refresh immediately on return
+    const sseUrl = `${BASE}/api/v1/orgs/${user.orgId}/tracking/live/stream`;
+    const es = new EventSource(sseUrl, { withCredentials: true });
+    esRef.current = es;
+
+    es.onmessage = (e) => {
+      try {
+        const data: LiveData = JSON.parse(e.data);
+        setLiveData(data);
+        setError(false);
+        setLastRefresh(new Date());
+        setSecondsAgo(0);
+        setLoading(false);
+      } catch { /* malformed event — ignore */ }
+    };
+
+    es.onerror = () => {
+      // SSE failed (proxy doesn't support streaming, auth error, etc.) — fall back to polling
+      if (!sseFailedRef.current) {
+        sseFailedRef.current = true;
+        es.close();
+        esRef.current = null;
+        startPolling();
+      }
+    };
+
+    // Pause SSE when tab hidden — resume + refresh on return (saves server connections)
     const handleVisibility = () => {
       if (document.hidden) {
-        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+        es.close(); esRef.current = null;
+        stopPolling();
+      } else if (!sseFailedRef.current) {
+        // Reconnect SSE
+        const es2 = new EventSource(sseUrl, { withCredentials: true });
+        esRef.current = es2;
+        es2.onmessage = es.onmessage;
+        es2.onerror = es.onerror;
       } else {
-        load();
-        intervalRef.current = setInterval(load, 15000);
+        startPolling();
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      es.close();
+      esRef.current = null;
+      stopPolling();
       if (tickRef.current) clearInterval(tickRef.current);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [load]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Force re-render every 60s to catch stale-ping threshold crossings between data polls
   useEffect(() => {

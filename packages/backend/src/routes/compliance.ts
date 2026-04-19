@@ -146,18 +146,18 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ─── Audit Logs ───────────────────────────────────────────────────────────────
+  // P-PERF11: keyset cursor pagination — eliminates OFFSET full-table scan at deep pages
   app.get('/audit-logs', { preHandler: ADMIN_READ }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const {
       user: userFilter, action, resource, from, to,
-      page = '1', export: exportFormat,
+      cursor, export: exportFormat,
     } = req.query as {
       user?: string; action?: string; resource?: string;
-      from?: string; to?: string; page?: string; export?: string;
+      from?: string; to?: string; cursor?: string; export?: string;
     };
 
     const PAGE_SIZE = 50;
-    const pageNum = Math.max(1, parseInt(page, 10));
 
     const conditions = [eq(auditLogs.orgId, orgId)];
     if (userFilter) conditions.push(eq(auditLogs.userEmail, userFilter));
@@ -165,6 +165,14 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
     if (resource) conditions.push(eq(auditLogs.resource, resource));
     if (from) conditions.push(gte(auditLogs.createdAt, new Date(from)));
     if (to) conditions.push(lte(auditLogs.createdAt, new Date(to + 'T23:59:59')));
+
+    // Decode opaque cursor → keyset position
+    if (cursor) {
+      try {
+        const { created_at, id } = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { created_at: string; id: string };
+        conditions.push(sql`(${auditLogs.createdAt}, ${auditLogs.id}) < (${new Date(created_at)}::timestamptz, ${id}::uuid)`);
+      } catch { /* invalid cursor — ignore, return first page */ }
+    }
 
     const where = and(...conditions);
 
@@ -183,15 +191,18 @@ export const complianceRoutes: FastifyPluginAsync = async (app) => {
       return reply.send(csv);
     }
 
-    const [rows, totalRes] = await Promise.all([
-      db.select().from(auditLogs).where(where)
-        .orderBy(desc(auditLogs.createdAt))
-        .limit(PAGE_SIZE)
-        .offset((pageNum - 1) * PAGE_SIZE),
-      db.select({ total: sql<number>`count(*)::int` }).from(auditLogs).where(where),
-    ]);
+    const rows = await db.select().from(auditLogs).where(where)
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(PAGE_SIZE + 1); // fetch one extra to determine hasMore
 
-    return { rows, total: totalRes[0]?.total ?? 0, page: pageNum, pageSize: PAGE_SIZE };
+    const hasMore = rows.length > PAGE_SIZE;
+    const events = rows.slice(0, PAGE_SIZE);
+    const last = events[events.length - 1];
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ created_at: last.createdAt.toISOString(), id: last.id })).toString('base64url')
+      : null;
+
+    return { events, nextCursor, hasMore };
   });
 
   app.post('/audit-logs', { preHandler: ADMIN }, async (req, reply) => {

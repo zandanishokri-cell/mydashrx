@@ -19,11 +19,11 @@ interface AuditLog {
   createdAt: string;
 }
 
+// P-PERF11: keyset cursor pagination — no page numbers, no OFFSET
 interface AuditResponse {
-  rows: AuditLog[];
-  total: number;
-  page: number;
-  pageSize: number;
+  events: AuditLog[];
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 const defaultFrom = () => localDateStr(new Date(Date.now() - 7 * 86400000));
@@ -42,7 +42,10 @@ export default function AuditPage() {
   const [resourceFilter, setResourceFilter] = useState('');
   // Applied filters — only committed on Search click (prevents API storm on keystroke)
   const [applied, setApplied] = useState({ user: '', action: '', resource: '' });
-  const [page, setPage] = useState(1);
+  // P-PERF11: cursor stack — push on Next, pop on Back
+  const [cursors, setCursors] = useState<string[]>([]);
+  const currentCursor = cursors[cursors.length - 1] ?? null;
+  const pageNum = cursors.length + 1; // display only
   const [loadError, setLoadError] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -52,7 +55,8 @@ export default function AuditPage() {
     setLoading(true);
     setLoadError(false);
     try {
-      const params = new URLSearchParams({ page: String(page) });
+      const params = new URLSearchParams();
+      if (currentCursor) params.set('cursor', currentCursor);
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       if (applied.user) params.set('user', applied.user);
@@ -62,7 +66,7 @@ export default function AuditPage() {
       setData(result);
     } catch { setLoadError(true); }
     finally { setLoading(false); }
-  }, [user, page, from, to, applied]);
+  }, [user, currentCursor, from, to, applied]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -95,10 +99,16 @@ export default function AuditPage() {
 
   const applyFilters = () => {
     setApplied({ user: userFilter, action: actionFilter, resource: resourceFilter });
-    setPage(1);
+    setCursors([]); // reset to first page
   };
 
-  const totalPages = data ? Math.ceil(data.total / data.pageSize) : 0;
+  const goNext = () => {
+    if (data?.nextCursor) setCursors(prev => [...prev, data.nextCursor!]);
+  };
+
+  const goBack = () => {
+    setCursors(prev => prev.slice(0, -1));
+  };
 
   return (
     <div className="p-6 space-y-5">
@@ -180,7 +190,7 @@ export default function AuditPage() {
             <p className="text-gray-400 text-sm mb-4">Check your connection and try again.</p>
             <button onClick={load} className="text-sm bg-[#0F4C81] text-white px-4 py-2 rounded-lg hover:bg-blue-900">Retry</button>
           </div>
-        ) : !data || data.rows.length === 0 ? (
+        ) : !data || data.events.length === 0 ? (
           <div className="p-12 text-center">
             <p className="text-gray-400 text-sm mb-2">No audit events found</p>
             <p className="text-gray-400 text-xs">Events are recorded automatically as users interact with the system.</p>
@@ -197,7 +207,7 @@ export default function AuditPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {data.rows.map(row => (
+                  {data.events.map(row => (
                     <tr key={row.id} className="hover:bg-gray-50">
                       <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
                         {new Date(row.createdAt).toLocaleString()}
@@ -221,27 +231,27 @@ export default function AuditPage() {
               </table>
             </div>
 
-            {/* P-A11Y19: accessible pagination */}
-            {totalPages > 1 && (
+            {/* P-PERF11: cursor-based pagination — push/pop cursor stack for Back */}
+            {(cursors.length > 0 || data.hasMore) && (
               <nav aria-label="Audit log pagination" className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
-                <span className="text-xs text-gray-500">
-                  {data.total.toLocaleString()} total events · page {data.page} of {totalPages}
+                <span className="text-xs text-gray-500" aria-hidden="true">
+                  Page {pageNum}{data.hasMore ? '+' : ''}
                 </span>
+                <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+                  {`Page ${pageNum}`}
+                </div>
                 <div className="flex items-center gap-1">
-                  <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-                    {`Page ${page} of ${totalPages}`}
-                  </div>
                   <button
-                    disabled={page === 1}
-                    onClick={() => setPage(p => p - 1)}
+                    disabled={cursors.length === 0}
+                    onClick={goBack}
                     aria-label="Previous page"
                     className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 transition-colors"
                   >
                     <ChevronLeft size={14} />
                   </button>
                   <button
-                    disabled={page >= totalPages}
-                    onClick={() => setPage(p => p + 1)}
+                    disabled={!data.hasMore}
+                    onClick={goNext}
                     aria-label="Next page"
                     className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 transition-colors"
                   >

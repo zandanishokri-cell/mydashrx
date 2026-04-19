@@ -690,10 +690,11 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /admin/audit-log — filterable audit trail (HIPAA §164.312(b))
+  // P-PERF11: keyset cursor pagination — no OFFSET full-table scan
   app.get('/audit-log', { preHandler: auth }, async (req, reply) => {
-    const { eventTypes, actorEmail, from, to, format, limit: limitStr, offset: offsetStr } = req.query as {
+    const { eventTypes, actorEmail, from, to, format, limit: limitStr, cursor } = req.query as {
       eventTypes?: string; actorEmail?: string; from?: string; to?: string;
-      format?: string; limit?: string; offset?: string;
+      format?: string; limit?: string; cursor?: string;
     };
 
     const conditions: any[] = [];
@@ -712,15 +713,22 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       const toDate = new Date(to);
       if (!isNaN(toDate.getTime())) conditions.push(lte(adminAuditLogs.createdAt, toDate));
     }
+    if (cursor) {
+      try {
+        const { created_at, id } = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { created_at: string; id: string };
+        conditions.push(sql`(${adminAuditLogs.createdAt}, ${adminAuditLogs.id}) < (${new Date(created_at)}::timestamptz, ${id}::uuid)`);
+      } catch { /* invalid cursor — return first page */ }
+    }
 
     const pageLimit = Math.min(parseInt(limitStr ?? '100', 10), 500);
-    const pageOffset = parseInt(offsetStr ?? '0', 10);
 
     const rows = await db.select().from(adminAuditLogs)
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(adminAuditLogs.createdAt))
-      .limit(pageLimit)
-      .offset(pageOffset);
+      .limit(pageLimit + 1); // fetch extra to detect hasMore
+
+    const hasMore = rows.length > pageLimit;
+    const events = rows.slice(0, pageLimit);
 
     if (format === 'csv') {
       // P-SEC11: CSV export itself is an auditable event (HIPAA)
@@ -731,11 +739,11 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         action: 'audit_log_exported',
         targetId: actor.sub,
         targetName: actor.email,
-        metadata: { eventTypes: eventTypes ?? 'all', actorEmail: actorEmail ?? 'all', from: from ?? null, to: to ?? null, rowCount: rows.length },
+        metadata: { eventTypes: eventTypes ?? 'all', actorEmail: actorEmail ?? 'all', from: from ?? null, to: to ?? null, rowCount: events.length },
       }).catch(() => {});
 
       const csvHeader = 'id,action,actorEmail,targetName,createdAt,metadata\n';
-      const csvRows = rows.map(r =>
+      const csvRows = events.map(r =>
         `"${r.id}","${r.action}","${r.actorEmail}","${r.targetName}","${r.createdAt?.toISOString() ?? ''}","${JSON.stringify(r.metadata ?? {}).replace(/"/g, '""')}"`
       ).join('\n');
       reply.header('Content-Type', 'text/csv');
@@ -743,7 +751,12 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       return reply.send(csvHeader + csvRows);
     }
 
-    return rows;
+    const last = events[events.length - 1];
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ created_at: last.createdAt?.toISOString(), id: last.id })).toString('base64url')
+      : null;
+
+    return { events, nextCursor, hasMore };
   });
 
   // GET /admin/approvals/:orgId/approve-link — P-ADM11: HMAC-signed one-click approve URL
