@@ -9,7 +9,7 @@ import { fireTrigger } from '../services/automation.js';
 import { TERMINAL_STATUSES, type StopStatus } from '@mydash-rx/shared';
 import { ETA_PER_STOP_MS } from './tracking.js';
 import { filterStopsForRole } from '../lib/fieldPermissions.js';
-import { invalidateAnalytics } from '../lib/responseCache.js';
+import { invalidateAnalytics, invalidateDashboard } from '../lib/responseCache.js';
 import { encryptPhi, decryptPhi, encryptPhiArray, decryptPhiArray } from '../lib/phiCrypto.js';
 
 export async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
@@ -313,6 +313,8 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
 
     // P-PERF4: invalidate analytics cache on status change — data is now stale
     invalidateAnalytics(userOrgId);
+    // P-PERF14: invalidate dashboard combined cache — summary counts are now stale
+    invalidateDashboard(userOrgId);
 
     // Fire notifications async — don't await
     sendStopNotification(decryptedStop as typeof updated, status).catch(console.error);

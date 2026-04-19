@@ -6,9 +6,13 @@ import { getUser } from '@/lib/auth';
 import { Crown, Building2, Users, Truck, DollarSign, Plus, X, UserCheck, Mail, Activity } from 'lucide-react';
 
 interface OrgRow {
-  id: string; name: string; timezone: string; billingPlan: string;
-  hipaaBaaStatus: string; userCount: number; stopCount30d: number; createdAt: string;
+  id: string; name: string; billingPlan: string; pendingApproval: boolean;
+  approvedAt: string | null; createdAt: string; onboardingStep: number | null;
+  slaBreachedAt: string | null; escalationLevel: number; baaAcceptedAt: string | null;
+  npiNumber: string | null; riskScore: number | null; trustTier: string | null;
+  assignedReviewerId: string | null; firstDispatchedAt: string | null; lastDispatchedAt: string | null;
 }
+interface OrgListResponse { orgs: OrgRow[]; nextCursor: string | null; hasMore: boolean; }
 interface ActivationFunnel {
   signedUp: number; approved: number; hasDepot: number;
   hasDriver: number; hasPlan: number; hasDispatched: number;
@@ -65,6 +69,9 @@ export default function AdminPage() {
   // P-DEL27: latest TLS-RPT report entry from adminAuditLogs
   const [tlsHealth, setTlsHealth] = useState<{ failures: number; success: number; action: string; date: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [orgsNextCursor, setOrgsNextCursor] = useState<string | null>(null);
+  const [orgsHasMore, setOrgsHasMore] = useState(false);
+  const [orgsLoadingMore, setOrgsLoadingMore] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ name: '', timezone: 'America/New_York', adminName: '', adminEmail: '', adminPassword: '' });
   const [creating, setCreating] = useState(false);
@@ -80,7 +87,7 @@ export default function AdminPage() {
     try {
       const [s, o, f, rbacAudit, tlsAudit] = await Promise.all([
         api.get<Stats>('/admin/stats'),
-        api.get<OrgRow[]>('/admin/orgs'),
+        api.get<OrgListResponse>('/admin/orgs'),
         api.get<MagicLinkFunnel>('/admin/magic-link/funnel').catch(() => null),
         api.get<{ events: Array<{ action: string; metadata: Record<string, string>; createdAt: string }> }>(
           '/admin/audit-log?eventTypes=postmaster_spam_rate_alert,postmaster_spam_rate_ok&limit=20'
@@ -90,7 +97,7 @@ export default function AdminPage() {
           '/admin/audit-log?eventTypes=tls_rpt_failure,tls_rpt_clean&limit=1'
         ).catch(() => null),
       ]);
-      setStats(s); setOrgs(o); setFunnel(f);
+      setStats(s); setOrgs(o.orgs); setOrgsNextCursor(o.nextCursor); setOrgsHasMore(o.hasMore); setFunnel(f);
       // P-DEL27: parse latest TLS-RPT report for health indicator
       if (tlsAudit?.events?.length) {
         const e = tlsAudit.events[0];
@@ -133,7 +140,8 @@ export default function AdminPage() {
 
   const changeBaa = async (orgId: string, status: string) => {
     await api.patch(`/admin/orgs/${orgId}/baa`, { status });
-    setOrgs(prev => prev.map(o => o.id === orgId ? { ...o, hipaaBaaStatus: status } : o));
+    // Reflect BAA signed status locally via baaAcceptedAt field
+    setOrgs(prev => prev.map(o => o.id === orgId ? { ...o, baaAcceptedAt: status === 'signed' ? new Date().toISOString() : null } : o));
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -147,6 +155,18 @@ export default function AdminPage() {
     } catch (err: any) {
       setCreateErr(err.message ?? 'Failed to create org');
     } finally { setCreating(false); }
+  };
+
+  // P-PERF16: load next page of orgs via keyset cursor
+  const loadMoreOrgs = async () => {
+    if (!orgsNextCursor || orgsLoadingMore) return;
+    setOrgsLoadingMore(true);
+    try {
+      const more = await api.get<OrgListResponse>(`/admin/orgs?cursor=${orgsNextCursor}`);
+      setOrgs(prev => [...prev, ...more.orgs]);
+      setOrgsNextCursor(more.nextCursor);
+      setOrgsHasMore(more.hasMore);
+    } finally { setOrgsLoadingMore(false); }
   };
 
   if (!user || user.role !== 'super_admin') return null;
@@ -320,10 +340,10 @@ export default function AdminPage() {
           <div className="bg-white rounded-xl border border-purple-100 overflow-hidden">
             {/* P-A11Y14: table caption + scope=col (WCAG 1.3.1 Level A) */}
             <table className="w-full text-sm">
-              <caption className="sr-only">Organizations — plan, BAA status, user count, stop volume, and actions</caption>
+              <caption className="sr-only">Organizations — plan, BAA, onboarding step, SLA status, and actions</caption>
               <thead>
                 <tr className="bg-purple-50/60 border-b border-purple-100">
-                  {['Organization', 'Plan', 'BAA Status', 'Users', 'Stops / 30d', 'Created', 'Actions'].map(h => (
+                  {['Organization', 'Plan', 'BAA', 'Step', 'Status', 'Created', 'Actions'].map(h => (
                     <th key={h} scope="col" className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -338,12 +358,21 @@ export default function AdminPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${baaColors[org.hipaaBaaStatus] ?? 'bg-gray-100 text-gray-500'}`}>
-                        {org.hipaaBaaStatus.replace('_', ' ')}
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${org.baaAcceptedAt ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                        {org.baaAcceptedAt ? 'signed' : 'pending'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{org.userCount}</td>
-                    <td className="px-4 py-3 text-gray-600">{org.stopCount30d}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{org.onboardingStep ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      {org.slaBreachedAt
+                        ? <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">SLA BREACHED</span>
+                        : org.pendingApproval
+                          ? <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-medium">Pending</span>
+                          : org.approvedAt
+                            ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Approved</span>
+                            : <span className="text-xs text-gray-400">—</span>
+                      }
+                    </td>
                     <td className="px-4 py-3 text-gray-400 text-xs">
                       {new Date(org.createdAt).toLocaleDateString()}
                     </td>
@@ -357,16 +386,6 @@ export default function AdminPage() {
                         >
                           {['starter','growth','pro','enterprise'].map(p => (
                             <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
-                          ))}
-                        </select>
-                        <select
-                          aria-label={`BAA status for ${org.name}`}
-                          value={org.hipaaBaaStatus}
-                          onChange={e => changeBaa(org.id, e.target.value)}
-                          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-200 bg-white"
-                        >
-                          {['pending','signed','not_required','expired'].map(s => (
-                            <option key={s} value={s}>{s.replace('_', ' ')}</option>
                           ))}
                         </select>
                         {/* P-RBAC31: impersonation button */}
@@ -385,6 +404,18 @@ export default function AdminPage() {
             </table>
             {orgs.length === 0 && (
               <div className="text-center py-12 text-gray-400 text-sm">No organizations found</div>
+            )}
+            {/* P-PERF16: keyset pagination — load more button */}
+            {orgsHasMore && (
+              <div className="px-4 py-3 border-t border-purple-100 flex justify-center">
+                <button
+                  onClick={loadMoreOrgs}
+                  disabled={orgsLoadingMore}
+                  className="text-xs text-purple-600 hover:text-purple-800 font-medium disabled:opacity-50"
+                >
+                  {orgsLoadingMore ? 'Loading…' : 'Load more organizations'}
+                </button>
+              </div>
             )}
           </div>
         )}
