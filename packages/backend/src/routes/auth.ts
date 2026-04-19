@@ -128,7 +128,12 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(429).send({ error: `Account temporarily locked. Try again in ${secsLeft}s.` });
     }
 
-    if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    // P-SEC25: Constant-time — always run bcrypt even for unknown emails (prevents timing oracle)
+    const passwordValid = user
+      ? await verifyPassword(password, user.passwordHash)
+      : (await verifyPassword(password, '$2b$10$dummyhashtopreventtimingattacks.xxxxxXXXXXX').catch(() => false), false);
+
+    if (!user || !passwordValid) {
       // P-LCK1: Increment failed attempts on wrong password
       if (user) {
         const attempts = (user.failedLoginAttempts ?? 0) + 1;
@@ -172,8 +177,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     if (user.deletedAt) return reply.code(401).send({ error: 'Account deactivated' });
     if (user.pendingApproval) return reply.code(403).send({ pendingApproval: true, error: 'Your account is pending admin approval.' });
-    // P-ADM7: Check org rejection state
-    if (user.orgId) {
+    // P-ADM7: Check org rejection state (super_admin always bypasses — they manage orgs, not belong to one)
+    if (user.orgId && user.role !== 'super_admin') {
       const [org] = await db.select({ rejectedAt: organizations.rejectedAt, rejectionReason: organizations.rejectionReason })
         .from(organizations).where(eq(organizations.id, user.orgId)).limit(1);
       if (org?.rejectedAt) {

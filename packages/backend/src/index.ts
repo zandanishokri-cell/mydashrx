@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-// Build-15 live — P-SEC11-UI, P-ADM13, P-ADM14
+// Build-16 live — P-SEC23, P-SEC25-fix, P-ADM7-sa-bypass
 // Surface startup errors clearly before anything else runs
 process.on('uncaughtException', (err) => {
   console.error('STARTUP CRASH - uncaughtException:', err.message, err.stack);
@@ -13,6 +13,7 @@ process.on('unhandledRejection', (reason) => {
 
 import Fastify from 'fastify';
 import { captureError } from './services/errorMonitor.js';
+import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
@@ -64,6 +65,12 @@ try {
 }
 
 const app = Fastify({ logger: true, trustProxy: true });
+
+await app.register(helmet, {
+  contentSecurityPolicy: false,   // API server — no HTML served
+  crossOriginEmbedderPolicy: false,
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+});
 
 await app.register(cors, {
   origin: process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app',

@@ -11,9 +11,12 @@ function VerifyContent() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get('token');
+  const hintEmail = params.get('email') ?? '';
   const [status, setStatus] = useState<'validating' | 'valid' | 'confirming' | 'success' | 'error'>('validating');
   const [errorMsg, setErrorMsg] = useState('');
   const [validatedEmail, setValidatedEmail] = useState('');
+  const [resendEmail, setResendEmail] = useState(hintEmail);
+  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [showOtp, setShowOtp] = useState(!token);
   const [otpEmail, setOtpEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
@@ -51,7 +54,7 @@ function VerifyContent() {
       return msg;
     };
     api.get<{ valid: boolean; email: string; token: string }>(verifyUrl)
-      .then((res) => { setValidatedEmail(res.email); setStatus('valid'); })
+      .then((res) => { setValidatedEmail(res.email); setResendEmail(res.email); setStatus('valid'); })
       .catch(async (err: Error) => {
         const msg = parseErr(err);
         // If the error looks like a network/cold-start failure (not a specific API error),
@@ -243,6 +246,18 @@ function VerifyContent() {
     );
   }
 
+  // P-ML13: Expired/invalid link — inline one-click resend
+  const handleResend = async () => {
+    if (!resendEmail) return;
+    setResendStatus('sending');
+    try {
+      await api.post('/auth/magic-link/request', { email: resendEmail });
+      setResendStatus('sent');
+    } catch {
+      setResendStatus('idle');
+    }
+  };
+
   return (
     <div className="text-center">
       <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -252,11 +267,38 @@ function VerifyContent() {
       </div>
       <h2 className="text-base font-semibold text-gray-900 mb-2">Link expired or invalid</h2>
       <p className="text-gray-500 text-sm mb-4">{errorMsg}</p>
-      <button onClick={() => setShowOtp(true)} className="w-full bg-[#0F4C81] text-white rounded-lg px-5 py-2.5 text-sm font-medium hover:bg-[#0d3d69] transition-colors mb-3">
+
+      {resendStatus === 'sent' ? (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-3">
+          <p className="text-green-700 text-sm font-medium">New link sent — check your inbox.</p>
+          <p className="text-green-600 text-xs mt-1">Check spam if you don't see it in 30 seconds.</p>
+        </div>
+      ) : (
+        <div className="mb-3">
+          {!resendEmail && (
+            <input
+              type="email"
+              value={resendEmail}
+              onChange={e => setResendEmail(e.target.value)}
+              placeholder="your@email.com"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            />
+          )}
+          <button
+            onClick={handleResend}
+            disabled={resendStatus === 'sending' || !resendEmail}
+            className="w-full bg-[#0F4C81] text-white rounded-lg px-5 py-2.5 text-sm font-semibold hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
+          >
+            {resendStatus === 'sending' ? 'Sending…' : resendEmail ? `Resend link to ${resendEmail}` : 'Send new link'}
+          </button>
+        </div>
+      )}
+
+      <button onClick={() => setShowOtp(true)} className="w-full border border-gray-200 text-gray-600 rounded-lg px-5 py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors mb-2">
         Enter verification code instead
       </button>
-      <a href="/login" className="inline-block text-sm text-gray-400 hover:text-gray-600">
-        Request a new link
+      <a href="/login" className="inline-block text-xs text-gray-400 hover:text-gray-600">
+        Back to sign in
       </a>
     </div>
   );
