@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { setSession } from '@/lib/auth';
 import { Building2 } from 'lucide-react';
 
 export default function PharmacyLoginPage() {
@@ -21,9 +22,7 @@ export default function PharmacyLoginPage() {
         setError('This portal is for pharmacy staff only.');
         return;
       }
-      localStorage.setItem('accessToken', res.accessToken);
-      localStorage.setItem('refreshToken', res.refreshToken);
-      localStorage.setItem('user', JSON.stringify(res.user));
+      setSession(res); // P-SEC28: AT in-memory, RT in httpOnly cookie
       router.replace('/pharmacy');
     } catch {
       setError('Invalid email or password.');

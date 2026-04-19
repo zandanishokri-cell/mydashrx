@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { getAccessToken } from '@/lib/auth';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { enqueueAction } from '@/lib/offline-queue';
 import { PodCaptureModal } from '@/components/PodCaptureModal';
@@ -127,7 +128,7 @@ export default function StopDetailPage() {
     try {
       const form = new FormData();
       form.append('file', file);
-      const token = localStorage.getItem('accessToken');
+      const token = getAccessToken();
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/v1/driver/me/stops/${stopId}/photo`,
         { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form },

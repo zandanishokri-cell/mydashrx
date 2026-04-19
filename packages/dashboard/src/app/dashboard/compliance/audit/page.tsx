@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { getUser } from '@/lib/auth';
+import { getUser, getAccessToken } from '@/lib/auth';
 import { Download, Search, ChevronLeft, ChevronRight as ChevRight, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import { localDateStr } from '@/lib/dateUtils';
@@ -76,7 +76,7 @@ export default function AuditPage() {
     if (applied.user) params.set('user', applied.user);
     if (applied.action) params.set('action', applied.action);
     if (applied.resource) params.set('resource', applied.resource);
-    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
+    const token = getAccessToken();
     const url = `${BASE}/api/v1/orgs/${user.orgId}/compliance/audit-logs?${params}`;
     try {
       const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });

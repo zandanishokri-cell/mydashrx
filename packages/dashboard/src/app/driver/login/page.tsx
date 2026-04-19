@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { setSession } from '@/lib/auth';
 import { Truck } from 'lucide-react';
 
 export default function DriverLoginPage() {
@@ -25,9 +26,7 @@ export default function DriverLoginPage() {
         setError('This portal is for drivers only.');
         return;
       }
-      localStorage.setItem('accessToken', res.accessToken);
-      localStorage.setItem('refreshToken', res.refreshToken);
-      localStorage.setItem('user', JSON.stringify(res.user));
+      setSession(res); // P-SEC28: AT in-memory, RT in httpOnly cookie
       router.replace('/driver');
     } catch (err: any) {
       setError(err?.message ?? 'Something went wrong');

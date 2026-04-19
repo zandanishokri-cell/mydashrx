@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { getAccessToken } from '@/lib/auth';
 
 interface Session {
   jti: string;
@@ -34,7 +35,7 @@ export default function SessionsPage() {
 
   async function fetchSessions() {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/sessions`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` },
+      headers: { Authorization: `Bearer ${getAccessToken()}` },
     });
     if (!res.ok) { setError('Failed to load sessions'); setLoading(false); return; }
     setSessions(await res.json());
@@ -47,7 +48,7 @@ export default function SessionsPage() {
     setRevoking(jti);
     await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/sessions/${jti}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` },
+      headers: { Authorization: `Bearer ${getAccessToken()}` },
     });
     setSessions(s => s.filter(x => x.jti !== jti));
     setRevoking(null);
@@ -59,7 +60,7 @@ export default function SessionsPage() {
     setRevokingAll(true);
     await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/sessions/all`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` },
+      headers: { Authorization: `Bearer ${getAccessToken()}` },
     });
     setSessions(s => s.filter(x => x.isCurrent));
     setRevokingAll(false);

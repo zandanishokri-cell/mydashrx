@@ -125,6 +125,19 @@ async function seedRefreshToken(
   await enforceSessionCap(userId);
 }
 
+// P-SEC28: Set RT as httpOnly cookie to prevent XSS exfiltration.
+// AT stays in JSON body — frontend stores in module-level variable (not localStorage).
+// 90d expiry matches RT lifetime. path:/api/v1/auth/refresh limits cookie scope.
+function setRtCookie(reply: import('fastify').FastifyReply, rt: string) {
+  reply.setCookie('rt', rt, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    path: '/api/v1/auth/refresh',
+    maxAge: 90 * 24 * 60 * 60, // 90 days in seconds
+  });
+}
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
@@ -248,6 +261,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     await seedRefreshToken(user.id, familyId, jti, req);
     // P-SEC11: log login_success
     await logAuthEvent('login_success', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
+    // P-SEC28: set RT as httpOnly cookie; keep in body for zero-downtime dual-read migration
+    setRtCookie(reply, tokens.refreshToken);
     return reply.send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
@@ -293,6 +308,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       ...(driverId ? { driverId } : {}),
     };
     const tokens = signTokens(app, payload);
+    // P-SEC28: set RT as httpOnly cookie
+    setRtCookie(reply, tokens.refreshToken);
     return reply.code(201).send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, ...(driverId ? { driverId } : {}) },
@@ -300,12 +317,15 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/refresh', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    // P-SEC28: dual-read — accept RT from httpOnly cookie (new) OR body (legacy localStorage clients)
+    const cookieRt = (req as unknown as { cookies?: Record<string, string> }).cookies?.rt;
     const body = req.body as { refreshToken?: string };
-    if (!body.refreshToken) return reply.code(400).send({ error: 'refreshToken required' });
+    const refreshToken = cookieRt ?? body.refreshToken;
+    if (!refreshToken) return reply.code(400).send({ error: 'refreshToken required' });
 
     let decoded: { sub: string; type: string; tv?: number; jti?: string; familyId?: string };
     try {
-      decoded = app.jwt.verify(body.refreshToken) as typeof decoded;
+      decoded = app.jwt.verify(refreshToken) as typeof decoded;
       if (decoded.type !== 'refresh') throw new Error('wrong type');
     } catch {
       return reply.code(401).send({ error: 'Invalid refresh token' });
@@ -405,6 +425,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       });
 
       console.log(JSON.stringify({ event: 'rt_rotated', userId: user.id, familyId: txFamilyId, ip: req.ip, ts: now.toISOString() }));
+      // P-SEC28: set rotated RT as httpOnly cookie
+      setRtCookie(reply, tokens.refreshToken);
       return reply.send(tokens);
     }
 
@@ -430,6 +452,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         ...(driverId ? { driverId } : {}),
       }, user.tokenVersion, { jti: newJti, familyId: newFamilyId });
       await seedRefreshToken(user.id, newFamilyId, newJti, req);
+      // P-SEC28: set migrated RT as httpOnly cookie
+      setRtCookie(reply, tokens.refreshToken);
       return reply.send(tokens);
     } catch {
       return reply.code(401).send({ error: 'Invalid refresh token' });
@@ -437,7 +461,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/logout', async (req, reply) => {
-    const refreshToken = (req.body as { refreshToken?: string } | null | undefined)?.refreshToken;
+    // P-SEC28: accept RT from cookie (new) or body (legacy)
+    const cookieRt = (req as unknown as { cookies?: Record<string, string> }).cookies?.rt;
+    const bodyRt = (req.body as { refreshToken?: string } | null | undefined)?.refreshToken;
+    const refreshToken = cookieRt ?? bodyRt;
     if (refreshToken) {
       try {
         const decoded = app.jwt.verify(refreshToken) as { jti?: string; sub?: string };
@@ -452,6 +479,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         }
       } catch { /* invalid token — no-op, silent */ }
     }
+    // P-SEC28: clear RT cookie on logout
+    reply.clearCookie('rt', { path: '/api/v1/auth/refresh' });
     return reply.code(204).send();
   });
 
@@ -629,6 +658,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     await seedRefreshToken(user.id, mlFamilyId, mlJti, req);
     // P-SEC11: log magic_link_used
     await logAuthEvent('magic_link_used', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
+    // P-SEC28: set RT as httpOnly cookie
+    setRtCookie(reply, tokens.refreshToken);
     return reply.send({
       ...tokens,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },
@@ -689,6 +720,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         ...(driverId ? { driverId } : {}),
       }, user.tokenVersion, { jti: mlJti, familyId: mlFamilyId });
       await seedRefreshToken(user.id, mlFamilyId, mlJti, req);
+      // P-SEC28: set RT as httpOnly cookie
+      setRtCookie(reply, tokens.refreshToken);
       return reply.send({
         ...tokens,
         user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds, mustChangePassword: user.mustChangePassword, ...(driverId ? { driverId } : {}) },

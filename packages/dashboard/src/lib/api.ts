@@ -1,5 +1,5 @@
 'use client';
-import { clearSession } from './auth';
+import { clearSession, getAccessToken, setAccessToken } from './auth';
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -11,28 +11,26 @@ function decodeExp(token: string): number {
   catch { return 0; }
 }
 
+// P-SEC28: AT refreshed from httpOnly RT cookie via credentials:include — no JS-readable RT needed
 async function attemptSilentRefresh(): Promise<string | null> {
-  const rt = typeof window !== 'undefined' ? localStorage.getItem('refreshToken') : null;
-  if (!rt) return null;
   try {
     const res = await fetch(`${BASE}/api/v1/auth/refresh`, {
       method: 'POST',
+      credentials: 'include', // sends RT httpOnly cookie automatically
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: rt }),
+      // No body — RT comes from httpOnly cookie (dual-read: backend also accepts body for legacy)
     });
     if (!res.ok) return null;
     const data = await res.json();
-    localStorage.setItem('accessToken', data.accessToken);
-    if (data.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
-    // P-SES8: broadcast new tokens to all other open tabs
+    setAccessToken(data.accessToken ?? null);
+    // P-SES8: broadcast new AT to all other open tabs
     try {
       new BroadcastChannel('mydashrx_auth').postMessage({
         type: 'token_refreshed',
         accessToken: data.accessToken,
-        refreshToken: data.refreshToken,
       });
     } catch { /* SSR/worker context */ }
-    return data.accessToken;
+    return data.accessToken ?? null;
   } catch { return null; }
 }
 
@@ -53,7 +51,8 @@ async function refreshAndRetry<T>(retryFn: (newToken: string) => Promise<T>): Pr
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
+  // P-SEC28: read AT from in-memory variable (not localStorage)
+  let token = getAccessToken();
 
   // P-SES7: proactive refresh if AT expires within 60s
   if (token && !_isRefreshing) {
@@ -66,6 +65,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const res = await fetch(`${BASE}/api/v1${path}`, {
     ...init,
+    credentials: 'include', // P-SEC28: include RT cookie on all requests (needed for refresh)
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -95,18 +95,20 @@ export const api = {
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   upload: async <T>(path: string, formData: FormData): Promise<T> => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
+    const token = getAccessToken(); // P-SEC28: in-memory AT
     const res = await fetch(`${BASE}/api/v1${path}`, {
       method: 'POST',
+      credentials: 'include', // P-SEC28
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
     });
     if (!res.ok) {
       if (res.status === 401 && typeof window !== 'undefined') {
-        // P-SES9: upload now uses same single-flight guard as request()
+        // P-SES9: upload uses same single-flight guard as request()
         return refreshAndRetry(async (newToken) => {
           const retry = await fetch(`${BASE}/api/v1${path}`, {
             method: 'POST',
+            credentials: 'include',
             headers: { Authorization: `Bearer ${newToken}` },
             body: formData,
           });

@@ -64,6 +64,7 @@ import { reportRoutes } from './routes/reports.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { notificationRoutes } from './routes/notifications.js';
 import { userSettingsRoutes } from './routes/userSettings.js';
+import { twilioWebhookRoutes } from './routes/twilioWebhook.js';
 import { phiFilterHook } from './middleware/phiFilter.js';
 import { phiAuditHook } from './middleware/phiAuditHook.js';
 import { sendDailyReport } from './services/dailyReport.js';
@@ -192,6 +193,8 @@ await app.register(reportRoutes, { prefix: '/api/v1/orgs/:orgId/reports' });
 await app.register(dashboardRoutes, { prefix: '/api/v1/orgs/:orgId/dashboard' });
 await app.register(notificationRoutes, { prefix: '/api/v1/orgs/:orgId/notifications' });
 await app.register(userSettingsRoutes, { prefix: '/api/v1/orgs/:orgId' });
+// P-SEC30: Twilio webhook signature verification — protect delivery record integrity
+await app.register(twilioWebhookRoutes, { prefix: '/api/v1/twilio' });
 
 // Public: list depots for pharmacy registration
 app.get('/api/v1/public/depots', async () => {
