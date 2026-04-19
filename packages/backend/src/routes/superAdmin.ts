@@ -830,7 +830,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     // ── 3. Upsert test users ─────────────────────────────────────────────────
     const TEST_ACCOUNTS = [
       { email: 'test-sa@mydashrx-test.com',         role: 'super_admin'    as const, name: 'Test Super Admin',    depotIds: [] as string[] },
-      { email: 'test-pharmacy@mydashrx-test.com',   role: 'pharmacy_admin' as const, name: 'Test Pharmacy Admin', depotIds: [] as string[] },
+      { email: 'test-pharmacy@mydashrx-test.com',   role: 'pharmacy_admin' as const, name: 'Test Pharmacy Admin', depotIds: [depotId] },
       { email: 'test-dispatcher@mydashrx-test.com', role: 'dispatcher'     as const, name: 'Test Dispatcher',     depotIds: [depotId] },
       { email: 'test-driver@mydashrx-test.com',     role: 'driver'         as const, name: 'Test Driver',         depotIds: [] as string[] },
     ];
