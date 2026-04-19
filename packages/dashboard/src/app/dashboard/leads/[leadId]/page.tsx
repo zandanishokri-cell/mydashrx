@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useState, useCallback, use, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useState, useCallback, Suspense } from 'react';
+import { useRouter, useSearchParams, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
@@ -532,8 +532,8 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
   );
 }
 
-export default function LeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
-  const { leadId } = use(params);
+export default function LeadDetailPage() {
+  const { leadId } = useParams<{ leadId: string }>();
   return (
     <Suspense fallback={
       <div className="p-6 space-y-4">

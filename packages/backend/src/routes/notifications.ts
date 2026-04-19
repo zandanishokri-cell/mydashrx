@@ -67,10 +67,10 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
     const { orgId } = req.params as { orgId: string };
 
     // Look up caller's notification preferences
-    const callerPayload = req.user as { id: string };
+    const callerPayload = req.user as { sub: string };
     const [callerUser] = await db.select({ notificationPreferences: users.notificationPreferences })
       .from(users)
-      .where(eq(users.id, callerPayload.id));
+      .where(eq(users.id, callerPayload.sub));
     const prefs = (callerUser?.notificationPreferences ?? { route_completed: true, stop_failed: true, stop_assigned: true }) as Record<string, boolean>;
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);

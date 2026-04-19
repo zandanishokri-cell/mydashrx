@@ -63,7 +63,12 @@ export function AddStopModal({ routeId, orgId, onClose, onSaved }: Props) {
     setSaving(true);
     setError('');
     try {
-      const coords = await geocode(form.address);
+      let coords: { lat: number; lng: number };
+      try {
+        coords = await geocode(form.address);
+      } catch {
+        throw new Error('Could not geocode address — check the address and try again, or use a more specific address.');
+      }
       const body: StopBody = {
         orgId,
         recipientName: form.recipientName,
