@@ -3,8 +3,11 @@ import 'dotenv/config';
 // Build-17 — env validation, deploy monitoring
 // Validate ALL required env vars before anything else — prints every missing var at once
 const REQUIRED_ENV: [string, string][] = [
-  ['DATABASE_URL',  'PostgreSQL connection string (Render: link to mydashrx-db)'],
-  ['JWT_SECRET',    'HS256 signing secret, min 32 chars (generate: openssl rand -hex 64)'],
+  ['DATABASE_URL',    'PostgreSQL connection string (Render: link to mydashrx-db)'],
+  ['JWT_SECRET',      'HS256 signing secret, min 32 chars (generate: openssl rand -hex 64)'],
+  ['RESEND_API_KEY',  'Resend API key — required for magic link emails'],
+  ['SENDER_DOMAIN',   'Email sender domain, e.g. cartana.life'],
+  ['DASHBOARD_URL',   'Frontend URL for magic link redirect, e.g. https://...vercel.app'],
 ];
 const missing = REQUIRED_ENV.filter(([k]) => !process.env[k]);
 if (missing.length > 0) {
