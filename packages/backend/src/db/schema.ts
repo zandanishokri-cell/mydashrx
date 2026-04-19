@@ -12,6 +12,7 @@ import {
   index,
   uniqueIndex,
   time,
+  date,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
@@ -752,4 +753,15 @@ export const trustedDevices = pgTable('trusted_devices', {
 }, (t) => ({
   userIdx: index('trusted_devices_user_idx').on(t.userId),
   fpIdx: index('trusted_devices_fp_idx').on(t.fingerprint),
+}));
+
+// P-DEL21: Per-subdomain daily send + bounce tracking for warm-up caps + circuit breaker
+export const emailDailyCounts = pgTable('email_daily_counts', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  subdomain: text('subdomain').notNull(),           // 'auth' | 'mail' | 'outreach'
+  date: date('date').notNull(),                      // 'YYYY-MM-DD'
+  sent: integer('sent').notNull().default(0),
+  bounced: integer('bounced').notNull().default(0),
+}, (t) => ({
+  subdomainDateIdx: uniqueIndex('email_daily_counts_subdomain_date_idx').on(t.subdomain, t.date),
 }));

@@ -1,0 +1,4 @@
+version: STSv1
+mode: testing
+mx: feedback-smtp.us-east-1.amazonses.com
+max_age: 604800

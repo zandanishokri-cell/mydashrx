@@ -77,7 +77,7 @@ import { sendDailyReport } from './services/dailyReport.js';
 import { deleteFromStorage } from './services/storage.js';
 import { runAutoApproval } from './lib/autoApproval.js';
 import { db, client } from './db/connection.js';
-import { organizations, magicLinkTokens, signupIntents, users, roleEscalations, refreshTokens, adminAuditLogs, auditLogs } from './db/schema.js';
+import { organizations, magicLinkTokens, signupIntents, users, roleEscalations, refreshTokens, adminAuditLogs, auditLogs, emailDailyCounts } from './db/schema.js';
 import { sendAbandonmentEmail } from './lib/emailHelpers.js';
 import { isNull, isNotNull, and, or, lt, sql, eq, desc, inArray } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
@@ -540,6 +540,24 @@ try {
   console.log('P-RBAC32 platform defaults seeded');
 } catch (err) {
   console.error('P-RBAC32 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-DEL21: email_daily_counts — per-subdomain daily send + bounce tracking for warm-up + circuit breaker
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS email_daily_counts (
+      id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      subdomain text NOT NULL,
+      date date NOT NULL,
+      sent integer NOT NULL DEFAULT 0,
+      bounced integer NOT NULL DEFAULT 0,
+      CONSTRAINT email_daily_counts_subdomain_date_uniq UNIQUE (subdomain, date)
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS email_daily_counts_subdomain_idx ON email_daily_counts(subdomain)`);
+  console.log('P-DEL21 email_daily_counts table ensured');
+} catch (err) {
+  console.error('P-DEL21 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
 const app = Fastify({ logger: true, trustProxy: true });

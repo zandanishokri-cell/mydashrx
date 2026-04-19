@@ -5,6 +5,7 @@ import { eq, and, isNull, ilike, or, sql, desc } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { generateOutreachDraft } from '../services/aiDraft.js';
 import { outreachSender } from '../lib/emailHelpers.js';
+import { checkAndIncrementSend, getOutreachBounceRate } from '../lib/emailWarmup.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface GooglePlaceResult {
@@ -320,6 +321,16 @@ export const leadFinderRoutes: FastifyPluginAsync = async (app) => {
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) return reply.code(503).send({ error: 'Email service not configured' });
+
+    // P-DEL21: warm-up cap + bounce circuit breaker — must pass before any outreach send
+    try {
+      await getOutreachBounceRate('outreach'); // throws if >= 1.8%
+      await checkAndIncrementSend('outreach'); // throws if daily cap reached
+    } catch (err: any) {
+      const msg = err?.message ?? 'email_warmup_blocked';
+      app.log.warn({ msg }, '[outreach] warmup/circuit-breaker blocked send');
+      return reply.code(429).send({ error: msg });
+    }
 
     const payload = req.user as { sub?: string };
     const sentBy = payload?.sub ?? null;

@@ -10,6 +10,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { db } from '../db/connection.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
+import { recordBounce } from '../lib/emailWarmup.js';
 
 // Svix signature verification — Resend uses Svix under the hood
 // Headers: svix-id, svix-timestamp, svix-signature
@@ -90,6 +91,13 @@ export const resendWebhookRoutes: FastifyPluginAsync = async (app) => {
 
     if (eventType === 'email.bounced' || eventType === 'email.complained') {
       const bounceStatus = eventType === 'email.complained' ? 'complaint' : 'hard';
+
+      // P-DEL21: increment bounce counter on outreach subdomain for circuit breaker
+      const from = (event?.data as any)?.from as string | undefined;
+      const outreachDomain = process.env.OUTREACH_SENDER_DOMAIN ?? process.env.SENDER_DOMAIN;
+      if (outreachDomain && from?.includes(outreachDomain)) {
+        recordBounce('outreach').catch(() => {}); // fire-and-forget, non-blocking
+      }
 
       for (const address of toAddresses) {
         const email = address.toLowerCase().trim();
