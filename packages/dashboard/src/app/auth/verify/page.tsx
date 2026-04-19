@@ -12,9 +12,13 @@ function VerifyContent() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get('token');
+  const isProtected = params.get('protected') === '1';
   const hintEmail = params.get('email') ?? '';
+  // P-ML22: protected mode — show human-confirmation buffer before proceeding
+  const [protectedReady, setProtectedReady] = useState(!isProtected);
   const [status, setStatus] = useState<'validating' | 'valid' | 'confirming' | 'success' | 'error'>('validating');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isOutlookHint, setIsOutlookHint] = useState(false);
   const [validatedEmail, setValidatedEmail] = useState('');
   const [resendEmail, setResendEmail] = useState(hintEmail);
   const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent'>('idle');
@@ -75,26 +79,47 @@ function VerifyContent() {
   }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    // P-ML22: don't verify until human has clicked through the protected buffer page
+    if (!protectedReady) return;
     if (!token) { setStatus('error'); setErrorMsg('No sign-in token found. Please request a new link.'); return; }
     const verifyUrl = `/auth/magic-link/verify?token=${encodeURIComponent(token)}`;
     const parseErr = (err: Error) => {
       const raw = err.message ?? '';
       const match = raw.match(/\{.*\}/s);
       let msg = 'This link is invalid or has expired.';
-      if (match) { try { const p = JSON.parse(match[0]); msg = p.error ?? msg; } catch { /* ignore */ } }
+      if (match) {
+        try {
+          const p = JSON.parse(match[0]);
+          // P-ML22: Outlook scanner consumed token — show resend hint
+          if (p.alreadyUsed && p.isOutlook) setIsOutlookHint(true);
+          msg = p.error ?? msg;
+        } catch { /* ignore */ }
+      }
       return msg;
     };
-    api.get<{ valid: boolean; email: string; token: string }>(verifyUrl)
-      .then((res) => { setValidatedEmail(res.email); setResendEmail(res.email); setStatus('valid'); })
+    api.get<{ valid?: boolean; status?: string; email?: string; token?: string }>(verifyUrl)
+      .then((res) => {
+        // P-ML22: scanner detected by backend — stay in validating until human confirms
+        if (res.status === 'valid' && !res.email) {
+          // Re-poll after 1s — the human is expected to navigate here manually
+          setTimeout(() => {
+            api.get<{ valid?: boolean; status?: string; email?: string; token?: string }>(verifyUrl)
+              .then((r2) => {
+                if (r2.email) { setValidatedEmail(r2.email); setResendEmail(r2.email); setStatus('valid'); }
+              }).catch(() => {});
+          }, 1000);
+          return;
+        }
+        if (res.email) { setValidatedEmail(res.email); setResendEmail(res.email); setStatus('valid'); }
+      })
       .catch(async (err: Error) => {
         const msg = parseErr(err);
-        // If the error looks like a network/cold-start failure (not a specific API error),
-        // wait 35s for Render to wake up and retry once.
         if (msg === 'This link is invalid or has expired.') {
           await new Promise(r => setTimeout(r, 35_000));
           try {
-            const res = await api.get<{ valid: boolean; email: string; token: string }>(verifyUrl);
-            setValidatedEmail(res.email); setStatus('valid'); return;
+            const res = await api.get<{ valid?: boolean; email?: string }>(verifyUrl);
+            if (res.email) { setValidatedEmail(res.email); setStatus('valid'); }
+            return;
           } catch (retryErr: unknown) {
             setErrorMsg(parseErr(retryErr as Error));
             setStatus('error'); return;
@@ -103,7 +128,7 @@ function VerifyContent() {
         setErrorMsg(msg);
         setStatus('error');
       });
-  }, [token]);
+  }, [token, protectedReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleCancel() {
     if (!token || cancelStatus !== 'idle') return;
@@ -188,6 +213,30 @@ function VerifyContent() {
       router.replace(dest);
     }
   };
+
+  // P-ML22: Protected buffer page — defeats email scanner pre-click by requiring human interaction
+  if (!protectedReady) {
+    return (
+      <div className="text-center">
+        <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg className="w-6 h-6 text-[#0F4C81]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+        </div>
+        <h2 className="text-base font-semibold text-gray-900 mb-2">One more step</h2>
+        <p className="text-gray-500 text-sm mb-5">
+          Click below to complete your sign-in. This extra step ensures your email scanner doesn't accidentally consume your link.
+        </p>
+        <button
+          onClick={() => setProtectedReady(true)}
+          className="w-full bg-[#0F4C81] text-white rounded-lg px-5 py-3 text-sm font-semibold hover:bg-[#0d3d69] transition-colors"
+        >
+          Continue to sign in
+        </button>
+        <p className="text-xs text-gray-400 mt-3">This protected link requires manual confirmation to prevent scanner interference.</p>
+      </div>
+    );
+  }
 
   if (showPasskeyModal) {
     return (
@@ -402,6 +451,14 @@ function VerifyContent() {
       </div>
       <h2 className="text-base font-semibold text-gray-900 mb-2">Link expired or invalid</h2>
       <p className="text-gray-500 text-sm mb-4">{errorMsg}</p>
+
+      {/* P-ML22: Outlook scanner consumed link — show specific guidance */}
+      {isOutlookHint && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 text-left">
+          <p className="text-amber-800 text-sm font-medium mb-1">Outlook may have scanned your link</p>
+          <p className="text-amber-700 text-xs">Your email scanner may have automatically clicked this link before you could. Request a new link — it will include a scanner-safe version that requires one manual click.</p>
+        </div>
+      )}
 
       {resendStatus === 'sent' ? (
         <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-3">

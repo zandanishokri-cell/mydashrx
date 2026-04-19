@@ -572,6 +572,15 @@ try {
   console.error('P-DEL21 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-ML21: sentAt + confirmedAt columns on magic_link_tokens — funnel metrics (HIPAA §164.308(a)(6)(ii))
+try {
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS sent_at timestamptz`);
+  await db.execute(sql`ALTER TABLE magic_link_tokens ADD COLUMN IF NOT EXISTS confirmed_at timestamptz`);
+  console.log('P-ML21 magic_link_tokens.sent_at + confirmed_at columns ensured');
+} catch (err) {
+  console.error('P-ML21 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-PERF12: BRIN indexes — 10-50x smaller than B-tree for append-only time-series tables
 // CONCURRENTLY means no table lock; safe to run at startup against live data
 try {

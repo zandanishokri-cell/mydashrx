@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, setImpersonateOrgId } from '@/lib/api';
 import { getUser } from '@/lib/auth';
-import { Crown, Building2, Users, Truck, TrendingUp, DollarSign, Plus, X, UserCheck } from 'lucide-react';
+import { Crown, Building2, Users, Truck, DollarSign, Plus, X, UserCheck, Mail, Activity } from 'lucide-react';
 
 interface OrgRow {
   id: string; name: string; timezone: string; billingPlan: string;
@@ -13,6 +13,12 @@ interface Stats {
   totalOrgs: number; activeOrgs: number; totalDrivers: number;
   totalStops30d: number; totalStopsAllTime: number; revenueEstimate: number;
   topOrgs: { orgId: string; orgName: string; stops30d: number }[];
+}
+// P-ML21: magic link funnel metrics
+interface MagicLinkFunnel {
+  funnel: { sent: number; clicked: number; confirmed: number; sentToClickedRate: number | null; clickedToConfirmedRate: number | null; sentToConfirmedRate: number | null };
+  latency: { p50SendClickMs: number | null; p95SendClickMs: number | null; p50SendConfirmMs: number | null; p95SendConfirmMs: number | null };
+  byProvider: { provider: string; sent: number; clicked: number; confirmed: number; confirmRate: number | null }[];
 }
 
 const planColors: Record<string, string> = {
@@ -48,6 +54,7 @@ export default function AdminPage() {
   const user = getUser();
   const [stats, setStats] = useState<Stats | null>(null);
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
+  const [funnel, setFunnel] = useState<MagicLinkFunnel | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ name: '', timezone: 'America/New_York', adminName: '', adminEmail: '', adminPassword: '' });
@@ -62,11 +69,12 @@ export default function AdminPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, o] = await Promise.all([
+      const [s, o, f] = await Promise.all([
         api.get<Stats>('/admin/stats'),
         api.get<OrgRow[]>('/admin/orgs'),
+        api.get<MagicLinkFunnel>('/admin/magic-link/funnel').catch(() => null),
       ]);
-      setStats(s); setOrgs(o);
+      setStats(s); setOrgs(o); setFunnel(f);
     } finally { setLoading(false); }
   };
 
@@ -132,6 +140,50 @@ export default function AdminPage() {
           </div>
         )}
       </div>
+
+      {/* P-ML21: Delivery Health card */}
+      {funnel && (
+        <div className="px-6 py-3 border-b border-purple-100 bg-white/60 shrink-0">
+          <div className="flex items-center gap-2 mb-3">
+            <Mail size={14} className="text-purple-500" />
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Magic Link Delivery Health (30d)</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-purple-50 rounded-lg px-4 py-3">
+              <p className="text-xs text-gray-400 mb-1">Confirmation Rate</p>
+              <p className="text-lg font-bold text-gray-900">
+                {funnel.funnel.sentToConfirmedRate != null ? `${funnel.funnel.sentToConfirmedRate}%` : '—'}
+              </p>
+              <p className="text-xs text-gray-400">{funnel.funnel.sent} sent · {funnel.funnel.confirmed} confirmed</p>
+            </div>
+            <div className="bg-purple-50 rounded-lg px-4 py-3">
+              <p className="text-xs text-gray-400 mb-1">p50 Click Latency</p>
+              <p className="text-lg font-bold text-gray-900">
+                {funnel.latency.p50SendClickMs != null ? `${(funnel.latency.p50SendClickMs / 1000).toFixed(1)}s` : '—'}
+              </p>
+              <p className="text-xs text-gray-400">p95: {funnel.latency.p95SendClickMs != null ? `${(funnel.latency.p95SendClickMs / 1000).toFixed(0)}s` : '—'}</p>
+            </div>
+            <div className="bg-purple-50 rounded-lg px-4 py-3">
+              <p className="text-xs text-gray-400 mb-1">Sent → Clicked</p>
+              <p className="text-lg font-bold text-gray-900">
+                {funnel.funnel.sentToClickedRate != null ? `${funnel.funnel.sentToClickedRate}%` : '—'}
+              </p>
+              <p className="text-xs text-gray-400">{funnel.funnel.clicked} clicked</p>
+            </div>
+            <div className="bg-purple-50 rounded-lg px-4 py-3">
+              <p className="text-xs text-gray-400 mb-2">By Provider</p>
+              {funnel.byProvider.slice(0, 3).map(p => (
+                <div key={p.provider} className="flex items-center justify-between text-xs mb-1">
+                  <span className="text-gray-600 capitalize">{p.provider}</span>
+                  <span className={`font-medium ${(p.confirmRate ?? 0) >= 70 ? 'text-green-600' : (p.confirmRate ?? 0) >= 40 ? 'text-amber-600' : 'text-red-500'}`}>
+                    {p.confirmRate != null ? `${p.confirmRate}%` : '—'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Orgs table */}
       <div className="flex-1 overflow-auto px-6 py-4">

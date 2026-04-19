@@ -625,6 +625,9 @@ export const magicLinkTokens = pgTable('magic_link_tokens', {
   expiresAt: timestamp('expires_at').notNull(),
   usedAt: timestamp('used_at'),
   firstClickedAt: timestamp('first_clicked_at'),
+  // P-ML21: funnel metrics — sentAt set after Resend 200, confirmedAt set before signTokens in /confirm
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (t) => ({
   emailIdx: index('magic_link_email_idx').on(t.email),

@@ -759,7 +759,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       const otpDisplay = `${otpPlain.slice(0, 3)} ${otpPlain.slice(3)}`;
 
       if (resendKey) {
-        const { randomUUID } = await import('crypto');
+        const dashUrlProtected = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+        const protectedUrl = `${dashUrlProtected}/auth/verify?token=${token}&protected=1`;
+        // P-ML22: secondary ?protected=1 link for Outlook/scanner-prone clients — routes through human-confirmation buffer
         fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
@@ -782,8 +784,17 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
                   <p style="color:#999;font-size:11px;margin:8px 0 0">Works on any device &bull; Expires in 15 min</p>
                 </div>
                 <p style="color:#9ca3af;font-size:12px;margin-top:24px">If you didn't request this, you can safely ignore this email.</p>
+                <p style="color:#c0c7d0;font-size:11px;margin-top:12px;border-top:1px solid #f0f0f0;padding-top:12px">
+                  Using Outlook or having trouble? <a href="${protectedUrl}" style="color:#0F4C81;">Use the protected link instead</a> (requires one extra click to defeat email scanners).
+                </p>
               </div>`,
           }),
+        }).then(async (res) => {
+          // P-ML21: set sentAt only after confirmed Resend 200 (not before, not on failure)
+          if (res.ok) {
+            db.update(magicLinkTokens).set({ sentAt: new Date() })
+              .where(eq(magicLinkTokens.tokenHash, tokenHash)).catch(() => {});
+          }
         }).catch((e: unknown) => { console.error('[Resend] magic-link email failed:', e); });
       }
     }
@@ -791,6 +802,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     await minResponse();
     return reply.send(ok);
   });
+
+  // P-ML22: Scanner detection — returns true for empty/bot UAs or sub-5s click after sentAt
+  function isScannerRequest(ua: string | undefined | null, sentAt: Date | null): boolean {
+    if (!ua || ua.trim() === '') return true;
+    if (/Go-http-client|Python-urllib|MSRPC|curl\/|wget\/|Googlebot|bingbot|SemrushBot/i.test(ua)) return true;
+    if (sentAt && Date.now() - sentAt.getTime() < 5000) return true;
+    return false;
+  }
 
   // P-ML2: Step 1 — GET validates token and records first click, does NOT consume it
   // Scanners pre-fetch GET links; consuming on GET means scanner eats the token before user sees it.
@@ -804,17 +823,27 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const [record] = await db.select().from(magicLinkTokens)
       .where(eq(magicLinkTokens.tokenHash, tokenHash)).limit(1);
     if (!record) {
-      // P-ML17: log invalid token attempt
       logAuthEvent('magic_link_failed', { email: 'unknown', ip: req.ip, metadata: { reason: 'invalid_token' } }).catch(() => {});
       return reply.code(400).send({ error: 'This link is invalid. Please request a new one.' });
     }
     if (record.usedAt) {
       logAuthEvent('magic_link_failed', { email: record.email, ip: req.ip, metadata: { reason: 'already_used' } }).catch(() => {});
-      return reply.code(400).send({ error: 'This link has already been used. Please request a new one.' });
+      // P-ML22: if Outlook provider detected + already_used, signal frontend to show resend hint
+      const isOutlook = /outlook|hotmail|live\.com/i.test(record.email);
+      return reply.code(400).send({ error: 'This link has already been used. Please request a new one.', alreadyUsed: true, isOutlook });
     }
     if (record.expiresAt <= new Date()) {
       logAuthEvent('magic_link_failed', { email: record.email, ip: req.ip, metadata: { reason: 'expired' } }).catch(() => {});
       return reply.code(400).send({ error: 'This link has expired. Please request a new one.' });
+    }
+
+    const ua = req.headers['user-agent'] as string | undefined;
+
+    // P-ML22: Scanner pre-fetch detection — return {status:'valid'} WITHOUT consuming firstClickedAt
+    // Token stays unconsumed for the human's genuine click
+    if (isScannerRequest(ua, record.sentAt)) {
+      logAuthEvent('magic_link_scanner_pre_fetch', { email: record.email, ip: req.ip, metadata: { ua: ua ?? '', sentAt: record.sentAt?.toISOString() ?? null } }).catch(() => {});
+      return reply.send({ status: 'valid' });
     }
 
     // P-ML17: Detect email scanner pre-fetch (link already clicked = likely bot/scanner consuming token)
@@ -857,7 +886,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'This link has expired. Please request a new one.' });
     }
 
-    await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
+    // P-ML21: confirmedAt set before signTokens — funnel metric for send→confirm latency
+    await db.update(magicLinkTokens).set({ usedAt: new Date(), confirmedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
 
     const user = await findUserByEmail(record.email);
     if (!user || user.deletedAt) return reply.code(404).send({ error: 'No account found for this email.' });

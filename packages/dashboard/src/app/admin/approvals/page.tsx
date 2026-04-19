@@ -121,6 +121,8 @@ function DetailDrawer({
   const [holdSaving, setHoldSaving] = useState(false);
   const [notesLoaded, setNotesLoaded] = useState(false);
   const [assignSaving, setAssignSaving] = useState(false);
+  // P-ML23: magic link audit modal
+  const [showMlAudit, setShowMlAudit] = useState(false);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -429,24 +431,135 @@ function DetailDrawer({
         </div>
 
         {/* Footer actions */}
-        <div className="px-5 py-4 border-t border-gray-100 flex gap-3">
-          <button
-            onClick={() => onApprove(org.id)}
-            disabled={!!acting[org.id]}
-            className="flex-1 bg-green-600 text-white text-sm font-semibold rounded-xl py-2.5 hover:bg-green-700 disabled:opacity-50 transition-colors"
-          >
-            {acting[org.id] === 'approving' ? 'Approving…' : 'Approve'}
-          </button>
-          <button
-            onClick={() => onReject(org.id)}
-            disabled={!!acting[org.id]}
-            className="flex-1 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl py-2.5 hover:bg-gray-50 disabled:opacity-50 transition-colors"
-          >
-            Reject
-          </button>
+        <div className="px-5 py-4 border-t border-gray-100 space-y-2">
+          <div className="flex gap-3">
+            <button
+              onClick={() => onApprove(org.id)}
+              disabled={!!acting[org.id]}
+              className="flex-1 bg-green-600 text-white text-sm font-semibold rounded-xl py-2.5 hover:bg-green-700 disabled:opacity-50 transition-colors"
+            >
+              {acting[org.id] === 'approving' ? 'Approving…' : 'Approve'}
+            </button>
+            <button
+              onClick={() => onReject(org.id)}
+              disabled={!!acting[org.id]}
+              className="flex-1 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl py-2.5 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            >
+              Reject
+            </button>
+          </div>
+          {/* P-ML23: magic link audit button — shows lifecycle for admin email */}
+          {admin?.email && (
+            <button
+              onClick={() => setShowMlAudit(true)}
+              className="w-full text-xs text-[#0F4C81] border border-blue-100 rounded-xl py-2 hover:bg-blue-50 transition-colors"
+            >
+              View magic link history for {admin.email}
+            </button>
+          )}
         </div>
       </div>
+      {showMlAudit && admin?.email && (
+        <MagicLinkAuditModal email={admin.email} onClose={() => setShowMlAudit(false)} />
+      )}
     </>
+  );
+}
+
+// P-ML23: MagicLinkAuditModal — lifecycle audit view for a specific email
+function MagicLinkAuditModal({ email, onClose }: { email: string; onClose: () => void }) {
+  type AuditToken = { id: string; requestedAt: string; sentAt: string | null; firstClickedAt: string | null; confirmedAt: string | null; usedAt: string | null; expiresAt: string; isExpired: boolean; isUsed: boolean };
+  type ScannerEvent = { detectedAt: string; metadata: unknown };
+  const [data, setData] = useState<{ tokens: AuditToken[]; scannerEvents: ScannerEvent[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+
+  useEffect(() => {
+    api.get<{ tokens: AuditToken[]; scannerEvents: ScannerEvent[] }>(`/admin/magic-link/audit?email=${encodeURIComponent(email)}`)
+      .then(d => setData(d))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [email, onClose]);
+
+  const resendProtected = async () => {
+    setResendStatus('sending');
+    try {
+      await api.post('/admin/magic-link/resend-protected', { email });
+      setResendStatus('sent');
+    } catch { setResendStatus('error'); }
+  };
+
+  const fmt = (d: string | null) => d ? new Date(d).toLocaleString() : '—';
+  const delta = (a: string | null, b: string | null) => {
+    if (!a || !b) return null;
+    const ms = new Date(b).getTime() - new Date(a).getTime();
+    return ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${(ms / 60000).toFixed(1)}m`;
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Magic link audit">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden border border-gray-100">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div>
+            <h2 className="font-semibold text-gray-900 text-sm">Magic Link Audit</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{email}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={resendProtected}
+              disabled={resendStatus !== 'idle'}
+              className="text-xs px-3 py-1.5 bg-[#0F4C81] text-white rounded-lg hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
+            >
+              {resendStatus === 'sending' ? 'Sending…' : resendStatus === 'sent' ? 'Sent!' : resendStatus === 'error' ? 'Error' : 'Send protected link'}
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+          {loading && <div className="text-center py-8 text-gray-400 text-sm">Loading…</div>}
+          {!loading && !data && <div className="text-center py-8 text-red-400 text-sm">Failed to load audit data</div>}
+          {data && (
+            <>
+              {data.scannerEvents.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                  <p className="text-xs font-semibold text-amber-800 mb-1">Scanner pre-fetch events detected ({data.scannerEvents.length})</p>
+                  {data.scannerEvents.slice(0, 3).map((e, i) => (
+                    <p key={i} className="text-xs text-amber-700">{fmt(e.detectedAt)}</p>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-3">
+                {data.tokens.map((t, i) => (
+                  <div key={t.id} className={`rounded-xl border px-4 py-3 ${i === 0 ? 'border-blue-200 bg-blue-50/40' : 'border-gray-100 bg-gray-50/30'}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-gray-600">Token #{data.tokens.length - i}</span>
+                      <div className="flex gap-1.5">
+                        {t.isUsed && <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">Used</span>}
+                        {t.isExpired && !t.isUsed && <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600">Expired</span>}
+                        {!t.isExpired && !t.isUsed && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Active</span>}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <div><span className="text-gray-400">Requested:</span> <span className="text-gray-700">{fmt(t.requestedAt)}</span></div>
+                      <div><span className="text-gray-400">Sent:</span> <span className="text-gray-700">{fmt(t.sentAt)}</span></div>
+                      <div><span className="text-gray-400">First clicked:</span> <span className="text-gray-700">{fmt(t.firstClickedAt)}{t.sentAt && t.firstClickedAt ? ` (+${delta(t.sentAt, t.firstClickedAt)})` : ''}</span></div>
+                      <div><span className="text-gray-400">Confirmed:</span> <span className="text-gray-700">{fmt(t.confirmedAt)}{t.sentAt && t.confirmedAt ? ` (+${delta(t.sentAt, t.confirmedAt)})` : ''}</span></div>
+                      <div><span className="text-gray-400">Expires:</span> <span className="text-gray-700">{fmt(t.expiresAt)}</span></div>
+                    </div>
+                  </div>
+                ))}
+                {data.tokens.length === 0 && <p className="text-sm text-gray-400 text-center py-4">No magic link tokens found for this email</p>}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

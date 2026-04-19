@@ -1426,4 +1426,185 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     else invalidateOrgRole(null, row.role);
     return reply.code(204).send();
   });
+
+  // P-ML21: GET /admin/magic-link/funnel — delivery health metrics (super_admin only)
+  // HIPAA §164.308(a)(6)(ii) — magic link analytics without exposing PHI
+  app.get('/magic-link/funnel', { preHandler: auth }, async (_req, reply) => {
+    // Use raw SQL for PERCENTILE_CONT (not available in Drizzle DSL)
+    const [funnelRow] = await db.execute<{
+      total_sent: string;
+      total_clicked: string;
+      total_confirmed: string;
+      p50_send_click_ms: number | null;
+      p95_send_click_ms: number | null;
+      p50_send_confirm_ms: number | null;
+      p95_send_confirm_ms: number | null;
+    }>(sql`
+      SELECT
+        COUNT(*) FILTER (WHERE sent_at IS NOT NULL) AS total_sent,
+        COUNT(*) FILTER (WHERE first_clicked_at IS NOT NULL) AS total_clicked,
+        COUNT(*) FILTER (WHERE confirmed_at IS NOT NULL) AS total_confirmed,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (first_clicked_at - sent_at)) * 1000)
+          FILTER (WHERE sent_at IS NOT NULL AND first_clicked_at IS NOT NULL) AS p50_send_click_ms,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (first_clicked_at - sent_at)) * 1000)
+          FILTER (WHERE sent_at IS NOT NULL AND first_clicked_at IS NOT NULL) AS p95_send_click_ms,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (confirmed_at - sent_at)) * 1000)
+          FILTER (WHERE sent_at IS NOT NULL AND confirmed_at IS NOT NULL) AS p50_send_confirm_ms,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (confirmed_at - sent_at)) * 1000)
+          FILTER (WHERE sent_at IS NOT NULL AND confirmed_at IS NOT NULL) AS p95_send_confirm_ms
+      FROM magic_link_tokens
+      WHERE created_at > NOW() - INTERVAL '30 days'
+    `);
+
+    // Per-provider breakdown — parse email domain
+    const providerRows = await db.execute<{ provider: string; sent: string; clicked: string; confirmed: string }>(sql`
+      SELECT
+        CASE
+          WHEN email ILIKE '%@gmail.com' OR email ILIKE '%@googlemail.com' THEN 'gmail'
+          WHEN email ILIKE '%@outlook.com' OR email ILIKE '%@hotmail.com' OR email ILIKE '%@live.com' OR email ILIKE '%@msn.com' THEN 'outlook'
+          WHEN email ILIKE '%@yahoo.com' OR email ILIKE '%@ymail.com' THEN 'yahoo'
+          ELSE 'corporate'
+        END AS provider,
+        COUNT(*) FILTER (WHERE sent_at IS NOT NULL) AS sent,
+        COUNT(*) FILTER (WHERE first_clicked_at IS NOT NULL) AS clicked,
+        COUNT(*) FILTER (WHERE confirmed_at IS NOT NULL) AS confirmed
+      FROM magic_link_tokens
+      WHERE created_at > NOW() - INTERVAL '30 days'
+      GROUP BY 1
+      ORDER BY sent DESC
+    `);
+
+    const sent = Number(funnelRow?.total_sent ?? 0);
+    const clicked = Number(funnelRow?.total_clicked ?? 0);
+    const confirmed = Number(funnelRow?.total_confirmed ?? 0);
+
+    return reply.send({
+      window: '30d',
+      funnel: {
+        sent,
+        clicked,
+        confirmed,
+        sentToClickedRate: sent > 0 ? Math.round((clicked / sent) * 1000) / 10 : null,
+        clickedToConfirmedRate: clicked > 0 ? Math.round((confirmed / clicked) * 1000) / 10 : null,
+        sentToConfirmedRate: sent > 0 ? Math.round((confirmed / sent) * 1000) / 10 : null,
+      },
+      latency: {
+        p50SendClickMs: funnelRow?.p50_send_click_ms ? Math.round(Number(funnelRow.p50_send_click_ms)) : null,
+        p95SendClickMs: funnelRow?.p95_send_click_ms ? Math.round(Number(funnelRow.p95_send_click_ms)) : null,
+        p50SendConfirmMs: funnelRow?.p50_send_confirm_ms ? Math.round(Number(funnelRow.p50_send_confirm_ms)) : null,
+        p95SendConfirmMs: funnelRow?.p95_send_confirm_ms ? Math.round(Number(funnelRow.p95_send_confirm_ms)) : null,
+      },
+      byProvider: (providerRows as unknown as { provider: string; sent: string; clicked: string; confirmed: string }[]).map(r => ({
+        provider: r.provider,
+        sent: Number(r.sent),
+        clicked: Number(r.clicked),
+        confirmed: Number(r.confirmed),
+        confirmRate: Number(r.sent) > 0 ? Math.round((Number(r.confirmed) / Number(r.sent)) * 1000) / 10 : null,
+      })),
+    });
+  });
+
+  // P-ML23: GET /admin/magic-link/audit?email= — lifecycle audit view for a specific email
+  // Returns last 10 tokens with full timeline. Logs magic_link_audit_viewed (HIPAA §164.312(b))
+  app.get('/magic-link/audit', { preHandler: auth }, async (req, reply) => {
+    const { email } = req.query as { email?: string };
+    if (!email) return reply.code(400).send({ error: 'email query param required' });
+
+    const actor = req.user as { sub: string; email: string };
+
+    // HIPAA §164.312(b): log every audit view
+    await logAuditAction(actor.sub, actor.email, 'magic_link_audit_viewed', email, email, { queriedEmail: email });
+
+    // Fetch last 10 tokens for this email with scanner events from audit_logs
+    const tokens = await db.execute<{
+      id: string; email: string; created_at: string; sent_at: string | null;
+      first_clicked_at: string | null; confirmed_at: string | null;
+      used_at: string | null; expires_at: string;
+    }>(sql`
+      SELECT id, email, created_at, sent_at, first_clicked_at, confirmed_at, used_at, expires_at
+      FROM magic_link_tokens
+      WHERE email = ${email}
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+
+    // Fetch scanner pre-fetch events for these token emails in last 30d
+    const scannerEvents = await db.execute<{ created_at: string; metadata: unknown }>(sql`
+      SELECT created_at, metadata
+      FROM audit_logs
+      WHERE action = 'magic_link_scanner_pre_fetch'
+        AND user_email = ${email}
+        AND created_at > NOW() - INTERVAL '30 days'
+      ORDER BY created_at DESC
+      LIMIT 20
+    `);
+
+    return reply.send({
+      email,
+      tokens: (tokens as unknown as { id: string; email: string; created_at: string; sent_at: string | null; first_clicked_at: string | null; confirmed_at: string | null; used_at: string | null; expires_at: string }[]).map(t => ({
+        id: t.id,
+        requestedAt: t.created_at,
+        sentAt: t.sent_at,
+        firstClickedAt: t.first_clicked_at,
+        confirmedAt: t.confirmed_at,
+        usedAt: t.used_at,
+        expiresAt: t.expires_at,
+        isExpired: new Date(t.expires_at) <= new Date(),
+        isUsed: !!t.used_at,
+      })),
+      scannerEvents: (scannerEvents as unknown as { created_at: string; metadata: unknown }[]).map(e => ({
+        detectedAt: e.created_at,
+        metadata: e.metadata,
+      })),
+    });
+  });
+
+  // P-ML23: POST /admin/magic-link/resend-protected — issue new ?protected=1 token on demand
+  app.post('/magic-link/resend-protected', { preHandler: auth }, async (req, reply) => {
+    const { email } = req.body as { email?: string };
+    if (!email) return reply.code(400).send({ error: 'email required' });
+
+    const actor = req.user as { sub: string; email: string };
+    await logAuditAction(actor.sub, actor.email, 'magic_link_resend_protected', email, email, { initiatedBy: actor.email });
+
+    const resendKey = process.env.RESEND_API_KEY;
+    if (!resendKey) return reply.code(503).send({ error: 'Email service not configured' });
+
+    const { randomBytes: rb, createHmac: ch } = await import('crypto');
+    const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRET ?? '';
+    const token = rb(32).toString('hex');
+    const tokenHash = ch('sha256', MAGIC_LINK_SECRET).update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + 30 * 60_000);
+    const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+    const protectedUrl = `${dashUrl}/auth/verify?token=${token}&protected=1`;
+
+    await db.insert(magicLinkTokens).values({ email, tokenHash, expiresAt });
+
+    fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+      body: JSON.stringify({
+        from: (await import('../lib/emailHelpers.js')).authSender(),
+        to: email,
+        subject: 'Your protected MyDashRx login link',
+        headers: { 'Feedback-ID': 'magic-link-protected:mydashrx:resend:auth' },
+        track_clicks: false,
+        track_opens: false,
+        html: `
+          <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+            <h2 style="color:#0F4C81;margin:0 0 8px">Protected Sign-in Link</h2>
+            <p style="color:#374151;margin:0 0 24px;font-size:15px">This link requires one manual click to complete sign-in, preventing email scanner interference.</p>
+            <a href="${protectedUrl}" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Sign in securely →</a>
+            <p style="color:#9ca3af;font-size:12px;margin-top:24px">Expires in 30 minutes. If you didn't request this, ignore this email.</p>
+          </div>`,
+      }),
+    }).then(async (res) => {
+      if (res.ok) {
+        db.update(magicLinkTokens).set({ sentAt: new Date() })
+          .where(eq(magicLinkTokens.tokenHash, tokenHash)).catch(() => {});
+      }
+    }).catch(() => {});
+
+    return reply.send({ ok: true, email, expiresAt });
+  });
 };
