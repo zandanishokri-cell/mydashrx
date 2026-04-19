@@ -4,9 +4,19 @@ import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
-import { TrendingUp, TrendingDown, Download, Award, Lightbulb, Clock, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { TrendingUp, TrendingDown, Download, Award, Lightbulb, Clock, CheckCircle2, AlertCircle, RefreshCw, Target, Zap } from 'lucide-react';
 
 interface DriverStat { driverId: string; driverName: string; total: number; completed: number; failed: number; completionRate?: number; }
+
+interface DeliveryPerf {
+  fadr: number | null;
+  failureRate: number | null;
+  terminalCounts: { completed: number; failed: number; rescheduled: number; total: number };
+  failureBreakdown: { reason: string; count: number; pct: number }[];
+  milestones: { avgDispatchToArriveSec: number | null; avgArriveToCompleteSec: number | null; avgTotalCycleTimeSec: number | null };
+  sla: { onTime: number; late: number; total: number; slaRate: number | null };
+  driverFadr: { driverId: string | null; driverName: string; completed: number; failed: number; total: number; fadr: number | null }[];
+}
 
 interface AnalyticsData {
   summary: {
@@ -147,9 +157,23 @@ function DailyBars({ data }: { data: { date: string; total: number; completed: n
   );
 }
 
+// Format seconds into "Xm Ys" or "—"
+function fmtSec(sec: number | null): string {
+  if (sec == null) return '—';
+  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+// FADR color: ≥95 green, ≥80 amber, <80 red
+function fadrColor(rate: number | null): string {
+  if (rate == null) return 'text-gray-900';
+  return rate >= 95 ? 'text-green-600' : rate >= 80 ? 'text-amber-600' : 'text-red-600';
+}
+
 export default function AnalyticsPage() {
   const [user] = useState(getUser);
   const [data, setData] = useState<AnalyticsData | null>(null);
+  const [perf, setPerf] = useState<DeliveryPerf | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [depotId, setDepotId] = useState('');
@@ -164,8 +188,12 @@ export default function AnalyticsPage() {
       if (dateRange.from) params.set('from', dateRange.from);
       if (dateRange.to) params.set('to', dateRange.to);
       if (depotId) params.set('depotId', depotId);
-      const result = await api.get<AnalyticsData>(`/orgs/${user.orgId}/analytics?${params}`);
+      const [result, perfResult] = await Promise.all([
+        api.get<AnalyticsData>(`/orgs/${user.orgId}/analytics?${params}`),
+        api.get<DeliveryPerf>(`/orgs/${user.orgId}/analytics/delivery-performance?${params}`).catch(() => null),
+      ]);
       setData(result);
+      setPerf(perfResult);
     } catch { setLoadError(true); }
     finally { setLoading(false); }
   }, [user, depotId, dateRange]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -313,6 +341,90 @@ export default function AnalyticsPage() {
               </div>
             </div>
           </div>
+
+          {/* P-COMP10: FADR Delivery Performance Panel */}
+          {perf && (
+            <div className="bg-white rounded-xl border border-gray-100 p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Target size={16} className="text-[#0F4C81]" />
+                <h2 className="text-sm font-semibold text-gray-700">First-Attempt Delivery Rate (FADR)</h2>
+                <span className="ml-auto text-xs text-gray-400">{perf.terminalCounts.total} terminal stops</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-0.5">FADR</p>
+                  <p className={`text-2xl font-bold ${fadrColor(perf.fadr)}`} style={{ fontFamily: 'var(--font-sora)' }}>
+                    {perf.fadr != null ? `${perf.fadr}%` : '—'}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">{perf.terminalCounts.completed} completed</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-0.5">Failure Rate</p>
+                  <p className={`text-2xl font-bold ${perf.failureRate != null && perf.failureRate > 20 ? 'text-red-600' : 'text-gray-900'}`} style={{ fontFamily: 'var(--font-sora)' }}>
+                    {perf.failureRate != null ? `${perf.failureRate}%` : '—'}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">{perf.terminalCounts.failed} failed</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-0.5">SLA Compliance</p>
+                  <p className={`text-2xl font-bold ${perf.sla.slaRate != null ? (perf.sla.slaRate >= 90 ? 'text-green-600' : perf.sla.slaRate >= 70 ? 'text-amber-600' : 'text-red-600') : 'text-gray-500'}`} style={{ fontFamily: 'var(--font-sora)' }}>
+                    {perf.sla.slaRate != null ? `${perf.sla.slaRate}%` : '—'}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">{perf.sla.total} windowed stops</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-0.5">Avg Cycle Time</p>
+                  <p className="text-2xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>
+                    {fmtSec(perf.milestones.avgTotalCycleTimeSec)}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">dispatch → complete</p>
+                </div>
+              </div>
+
+              {/* Milestones */}
+              <div className="flex gap-4 mb-4 text-xs text-gray-500">
+                <span className="flex items-center gap-1.5">
+                  <Zap size={11} className="text-[#0F4C81]" />
+                  Dispatch → Arrive: <strong className="text-gray-700">{fmtSec(perf.milestones.avgDispatchToArriveSec)}</strong>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <Zap size={11} className="text-[#00B8A9]" />
+                  Arrive → Complete: <strong className="text-gray-700">{fmtSec(perf.milestones.avgArriveToCompleteSec)}</strong>
+                </span>
+              </div>
+
+              {/* Failure breakdown + per-driver FADR side by side */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {perf.failureBreakdown.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 mb-2">Failure Reasons</p>
+                    <div className="space-y-2">
+                      {perf.failureBreakdown.slice(0, 6).map(r => (
+                        <HBar key={r.reason} label={r.reason.replace(/_/g, ' ')} pct={r.pct} value={`${r.pct}%`} color="#ef4444" />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {perf.driverFadr.filter(d => d.total > 0).length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 mb-2">Per-Driver FADR</p>
+                    <div className="space-y-1.5">
+                      {perf.driverFadr.filter(d => d.total > 0).slice(0, 6).map(d => (
+                        <div key={d.driverId ?? d.driverName} className="flex items-center gap-2 text-xs">
+                          <span className="w-28 truncate text-gray-600 shrink-0">{d.driverName}</span>
+                          <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                            <div className="h-1.5 rounded-full" style={{ width: `${d.fadr ?? 0}%`, background: (d.fadr ?? 0) >= 95 ? '#10b981' : (d.fadr ?? 0) >= 80 ? '#f59e0b' : '#ef4444' }} />
+                          </div>
+                          <span className={`w-10 text-right font-medium shrink-0 ${fadrColor(d.fadr)}`}>{d.fadr != null ? `${d.fadr}%` : '—'}</span>
+                          <span className="text-gray-400 shrink-0">{d.completed}/{d.total}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Completion rate trend sparkline */}
           <TrendSparkline data={data.daily} />

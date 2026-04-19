@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
 import { Button } from '@/components/ui/Button';
@@ -8,11 +9,14 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { AddStopModal } from '@/components/AddStopModal';
 import { StopDetailModal } from '@/components/StopDetailModal';
-import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle, CheckCircle2, CheckSquare, Square } from 'lucide-react';
+import { ArrowLeft, Plus, Zap, Send, Trash2, UserPlus, MoveRight, GripVertical, AlertTriangle, CheckCircle2, CheckSquare, Square, Map } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import type { MapStop } from '@/components/ui/LeafletMap';
+
+const LeafletMap = dynamic(() => import('@/components/ui/LeafletMap'), { ssr: false });
 
 interface Plan { id: string; date: string; status: string; depotId: string; }
 interface Route { id: string; driverId: string; status: string; stopOrder: string[]; estimatedDuration: number | null; totalDistance: number | null; }
@@ -24,7 +28,7 @@ interface Stop {
   rxNumbers: string[]; packageCount: number; deliveryNotes?: string;
   codAmount?: number; trackingToken?: string; arrivedAt?: string;
   completedAt?: string; failureReason?: string; failureNote?: string;
-  priority?: string;
+  priority?: string; lat?: number | null; lng?: number | null;
 }
 interface Driver { id: string; name: string; vehicleType: string; status: string; }
 interface DistributePreviewRoute { routeId: string; driverName: string; currentStopCount: number; previewStopCount: number; }
@@ -68,6 +72,8 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   const [bulkMoving, setBulkMoving] = useState(false);
   const [bulkMoveError, setBulkMoveError] = useState('');
   const [removingRoute, setRemovingRoute] = useState(false);
+  // P-DEL10: per-route map toggle
+  const [mapOpenRoutes, setMapOpenRoutes] = useState<Set<string>>(new Set());
 
   const loadPlan = useCallback(async () => {
     if (!user) return;
@@ -401,6 +407,20 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                     <button onClick={() => setShowAddStop(route.id)} className="flex items-center gap-1 text-xs text-[#0F4C81] hover:underline">
                       <Plus size={12} /> Add Stop
                     </button>
+                    {/* P-DEL10: toggle route map */}
+                    {stops.some(s => s.lat != null && s.lng != null) && (
+                      <button
+                        onClick={() => setMapOpenRoutes(prev => {
+                          const next = new Set(prev);
+                          next.has(route.id) ? next.delete(route.id) : next.add(route.id);
+                          return next;
+                        })}
+                        className={`flex items-center gap-1 text-xs transition-colors ${mapOpenRoutes.has(route.id) ? 'text-[#0F4C81]' : 'text-gray-400 hover:text-[#0F4C81]'}`}
+                        title="View route map"
+                      >
+                        <Map size={13} />
+                      </button>
+                    )}
                     <button onClick={() => setConfirmRemoveRouteId(route.id)} className="text-gray-300 hover:text-red-500 transition-colors">
                       <Trash2 size={14} />
                     </button>
@@ -448,6 +468,32 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                     </SortableContext>
                   </DndContext>
                 )}
+
+                {/* P-DEL10: Multi-stop route map — numbered DivIcons + polyline */}
+                {mapOpenRoutes.has(route.id) && (() => {
+                  const mapStops: MapStop[] = stops
+                    .filter(s => s.lat != null && s.lng != null)
+                    .map(s => ({
+                      id: s.id,
+                      lat: s.lat as number,
+                      lng: s.lng as number,
+                      address: s.address,
+                      recipientName: s.recipientName,
+                      status: s.status,
+                      sequenceNumber: s.sequenceNumber,
+                    }));
+                  if (mapStops.length === 0) return null;
+                  return (
+                    <div className="border-t border-gray-50 px-4 pb-4 pt-3">
+                      <p className="text-xs text-gray-400 mb-2 flex items-center gap-1">
+                        <Map size={11} /> Route map · {mapStops.length} stop{mapStops.length !== 1 ? 's' : ''} with GPS
+                      </p>
+                      <div className="h-52 rounded-xl overflow-hidden">
+                        <LeafletMap stops={mapStops} />
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
