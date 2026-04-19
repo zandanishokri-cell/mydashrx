@@ -273,7 +273,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     if (failureReason) updates.failureReason = failureReason;
     if (failureNote) updates.failureNote = failureNote;
 
-    const [updated] = await db.update(stops).set(updates).where(eq(stops.id, stopId)).returning();
+    const [updated] = await db.update(stops).set(updates).where(and(eq(stops.id, stopId), eq(stops.orgId, userOrgId))).returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
 
     // Fire notifications async — don't await
@@ -321,10 +321,11 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req, reply) => {
     const { routeId, stopId } = req.params as { routeId: string; stopId: string };
-    // Scope delete to the route to prevent cross-org/cross-route deletion
+    const { orgId: userOrgId } = req.user as { orgId: string };
+    // Scope delete to route AND org to prevent cross-org deletion
     const result = await db.update(stops)
       .set({ deletedAt: new Date() })
-      .where(and(eq(stops.id, stopId), eq(stops.routeId, routeId), isNull(stops.deletedAt)))
+      .where(and(eq(stops.id, stopId), eq(stops.routeId, routeId), eq(stops.orgId, userOrgId), isNull(stops.deletedAt)))
       .returning({ id: stops.id });
     if (result.length === 0) return reply.code(404).send({ error: 'Stop not found' });
     return reply.code(204).send();
