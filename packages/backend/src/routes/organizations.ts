@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import crypto from 'crypto';
 import { db } from '../db/connection.js';
-import { organizations, users, drivers, adminAuditLogs, depots, refreshTokens, stops, stopNotes } from '../db/schema.js';
+import { organizations, users, drivers, adminAuditLogs, auditLogs, depots, refreshTokens, stops, stopNotes } from '../db/schema.js';
 import { eq, isNull, and, sql, inArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import bcrypt from 'bcryptjs';
@@ -528,6 +528,76 @@ export const organizationRoutes: FastifyPluginAsync = async (app) => {
     }
     await db.update(stopNotes).set({ deletedAt: new Date() }).where(eq(stopNotes.id, noteId));
     return reply.code(204).send();
+  });
+
+  // P-DISP3: POST /orgs/:orgId/stops/:stopId/retry — create retry stop from a failed stop
+  // Chain-of-custody for controlled substances. HIPAA audit logged.
+  app.post('/:orgId/stops/:stopId/retry', {
+    preHandler: requireRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+  }, async (req, reply) => {
+    const { orgId, stopId } = req.params as { orgId: string; stopId: string };
+    const actor = req.user as { sub: string; orgId: string; role: string; email: string };
+    if (actor.role !== 'super_admin' && actor.orgId !== orgId) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    const { targetRouteId } = req.body as { targetRouteId?: string };
+
+    // Fetch the failed stop — must belong to this org
+    const [original] = await db.select().from(stops)
+      .where(and(eq(stops.id, stopId), eq(stops.orgId, orgId), isNull(stops.deletedAt)))
+      .limit(1);
+    if (!original) return reply.code(404).send({ error: 'Stop not found' });
+    if (original.status !== 'failed') return reply.code(400).send({ error: 'Only failed stops can be retried' });
+
+    // Clone the stop, clear all outcome fields, link to original
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const retryValues: any = {
+      orgId,
+      routeId: targetRouteId ?? null,
+      recipientName: original.recipientName,
+      recipientPhone: original.recipientPhone,
+      recipientEmail: original.recipientEmail,
+      address: original.address,
+      unit: original.unit,
+      deliveryNotes: original.deliveryNotes,
+      lat: original.lat,
+      lng: original.lng,
+      rxNumbers: original.rxNumbers,
+      packageCount: original.packageCount,
+      requiresRefrigeration: original.requiresRefrigeration,
+      controlledSubstance: original.controlledSubstance,
+      codAmount: original.codAmount,
+      requiresSignature: original.requiresSignature,
+      requiresPhoto: original.requiresPhoto,
+      requiresAgeVerification: original.requiresAgeVerification,
+      windowStart: original.windowStart,
+      windowEnd: original.windowEnd,
+      priority: original.priority,
+      sequenceNumber: 0,
+      status: 'pending',
+      retriedFromStopId: stopId,
+    };
+    const [retryStop] = await db.insert(stops).values(retryValues).returning();
+
+    // HIPAA audit — chain-of-custody for controlled substances
+    db.insert(auditLogs).values({
+      orgId,
+      action: 'stop_retry_created',
+      resource: 'stop',
+      resourceId: retryStop.id,
+      userEmail: actor.email,
+      metadata: {
+        originalStopId: stopId,
+        retriedFromStopId: stopId,
+        recipientName: original.recipientName,
+        controlledSubstance: original.controlledSubstance,
+        targetRouteId: targetRouteId ?? null,
+        actorId: actor.sub,
+        hipaaNote: original.controlledSubstance ? 'Controlled substance retry — chain-of-custody maintained' : null,
+      },
+    }).catch((e: unknown) => { console.error('[AuditLog] stop_retry_created failed:', e); });
+
+    return reply.code(201).send(retryStop);
   });
 
   // GET /orgs/:orgId/baa/status — P-COMP11: BAA acceptance status for compliance tab

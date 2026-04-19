@@ -373,6 +373,14 @@ try {
   console.error('P-DRV3 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-DISP3: retried_from_stop_id — chain-of-custody for failed stop retries (HIPAA controlled substance)
+try {
+  await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS retried_from_stop_id uuid REFERENCES stops(id)`);
+  console.log('P-DISP3 retried_from_stop_id column ensured');
+} catch (err) {
+  console.error('P-DISP3 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-SES22: trusted_devices table — device trust fingerprint for 30-day remember
 try {
   await db.execute(sql`

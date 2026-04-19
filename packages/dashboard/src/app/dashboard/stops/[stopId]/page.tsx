@@ -146,6 +146,13 @@ function StopDetailContent({ stopId }: { stopId: string }) {
   const [dispNoteVisible, setDispNoteVisible] = useState(true);
   const [addingNote, setAddingNote] = useState(false);
   const [noteError, setNoteError] = useState('');
+  // P-DISP3: retry failed stop
+  const [showRetry, setShowRetry] = useState(false);
+  const [retryRoutes, setRetryRoutes] = useState<{ id: string; driverName: string | null; planDate: string | null; stopCount: number }[]>([]);
+  const [retryTargetId, setRetryTargetId] = useState('');
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState('');
+  const [retryLoadingRoutes, setRetryLoadingRoutes] = useState(false);
 
   const loadDispNotes = useCallback(async () => {
     if (!user) return;
@@ -189,6 +196,31 @@ function StopDetailContent({ stopId }: { stopId: string }) {
     await api.del(`/orgs/${user.orgId}/stops/${stopId}/notes/${noteId}`)
       .then(() => setDispNotes(n => n.filter(x => x.id !== noteId)))
       .catch(() => {});
+  };
+
+  const openRetry = async () => {
+    if (!user) return;
+    setRetryLoadingRoutes(true); setRetryError('');
+    try {
+      const data = await api.get<{ routes: { id: string; driverName: string | null; planDate: string | null; depotName: string | null; stopCount: number }[] }>(`/orgs/${user.orgId}/routes`);
+      setRetryRoutes(data.routes ?? []);
+      setRetryTargetId(data.routes?.[0]?.id ?? '');
+      setShowRetry(true);
+    } catch { setRetryError('Failed to load routes'); }
+    finally { setRetryLoadingRoutes(false); }
+  };
+
+  const confirmRetry = async () => {
+    if (!stop || !user) return;
+    setRetrying(true); setRetryError('');
+    try {
+      const newStop = await api.post<{ id: string }>(`/orgs/${user.orgId}/stops/${stop.id}/retry`, {
+        targetRouteId: retryTargetId || undefined,
+      });
+      setShowRetry(false);
+      router.push(`/dashboard/stops/${newStop.id}`);
+    } catch { setRetryError('Failed to create retry stop. Please try again.'); }
+    finally { setRetrying(false); }
   };
 
   const saveNotes = async () => {
@@ -699,6 +731,18 @@ function StopDetailContent({ stopId }: { stopId: string }) {
               )}
             </div>
           )}
+          {stop.status === 'failed' && user && ['dispatcher', 'pharmacy_admin', 'super_admin'].includes(user.role) && (
+            <div className="flex flex-col gap-1.5">
+              <button
+                onClick={openRetry}
+                disabled={retryLoadingRoutes}
+                className="flex items-center gap-2 px-4 py-2 border border-orange-200 text-orange-700 rounded-xl text-sm font-medium hover:bg-orange-50 disabled:opacity-50 transition-colors"
+              >
+                <RotateCcw size={15} /> {retryLoadingRoutes ? 'Loading…' : 'Create Retry Stop'}
+              </button>
+              {retryError && !showRetry && <p className="text-xs text-red-600">{retryError}</p>}
+            </div>
+          )}
           {!stop.routeId && !['completed', 'failed', 'rescheduled'].includes(stop.status) &&
            user && user.role !== 'driver' && user.role !== 'pharmacist' && (
             <>
@@ -791,6 +835,57 @@ function StopDetailContent({ stopId }: { stopId: string }) {
                   className="flex-1 px-4 py-2 bg-[#0F4C81] text-white rounded-xl text-sm font-medium hover:bg-[#0d3d69] disabled:opacity-50 transition-colors"
                 >
                   {assigning ? 'Assigning…' : 'Assign'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* P-DISP3: Retry Stop Modal */}
+        {showRetry && stop && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-4" onClick={() => setShowRetry(false)}>
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-base font-semibold text-gray-900">Create Retry Stop</h3>
+                <button onClick={() => setShowRetry(false)} className="p-1 text-gray-400 hover:text-gray-600"><X size={16} /></button>
+              </div>
+              <p className="text-sm text-gray-500 mb-1">A new pending stop will be created copying all fields from this failed stop.</p>
+              {stop.controlledSubstance && (
+                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-3">
+                  <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-800">Controlled substance — chain-of-custody will be logged to HIPAA audit trail.</p>
+                </div>
+              )}
+              <div className="mb-4">
+                <p className="text-xs font-medium text-gray-700 mb-1">Recipient: <span className="font-normal">{stop.recipientName}</span></p>
+                <p className="text-xs font-medium text-gray-700 mb-3">Address: <span className="font-normal">{stop.address}</span></p>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Assign to route (optional)</label>
+                {retryRoutes.length === 0 ? (
+                  <p className="text-xs text-gray-400">No active routes — stop will be created unassigned.</p>
+                ) : (
+                  <select
+                    value={retryTargetId}
+                    onChange={e => setRetryTargetId(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/20"
+                  >
+                    <option value="">No route — unassigned</option>
+                    {retryRoutes.map(r => (
+                      <option key={r.id} value={r.id}>
+                        {r.driverName ?? 'Unassigned'} · {r.planDate ?? 'No date'} · {r.stopCount} stops
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              {retryError && <p className="text-xs text-red-600 mb-3 flex items-center gap-1"><AlertCircle size={12} />{retryError}</p>}
+              <div className="flex gap-2">
+                <button onClick={() => setShowRetry(false)} className="flex-1 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-sm hover:bg-gray-50">Cancel</button>
+                <button
+                  onClick={confirmRetry}
+                  disabled={retrying}
+                  className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-xl text-sm font-medium hover:bg-orange-700 disabled:opacity-50 transition-colors"
+                >
+                  {retrying ? 'Creating…' : 'Create Retry Stop'}
                 </button>
               </div>
             </div>

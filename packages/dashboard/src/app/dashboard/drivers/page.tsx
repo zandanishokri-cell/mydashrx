@@ -19,6 +19,12 @@ interface Driver {
 
 interface BulkPerf { [driverId: string]: { completionRate: number; totalStops: number } }
 
+const RANK_BADGE: Record<number, { label: string; cls: string }> = {
+  1: { label: '🥇 #1', cls: 'bg-yellow-100 text-yellow-800 border border-yellow-300' },
+  2: { label: '🥈 #2', cls: 'bg-gray-100 text-gray-700 border border-gray-300' },
+  3: { label: '🥉 #3', cls: 'bg-orange-100 text-orange-700 border border-orange-200' },
+};
+
 const STATUS_DOT: Record<string, string> = {
   available: 'bg-emerald-500',
   on_route: 'bg-blue-500',
@@ -30,6 +36,8 @@ export default function DriversPage() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [filtered, setFiltered] = useState<Driver[]>([]);
   const [perfMap, setPerfMap] = useState<Record<string, number>>({});
+  const [rankMap, setRankMap] = useState<Record<string, number>>({});
+  const [sortBy, setSortBy] = useState<'name' | 'rate'>('name');
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editDriver, setEditDriver] = useState<Driver | null>(null);
@@ -58,6 +66,13 @@ export default function DriversPage() {
               map[id] = perf.totalStops > 0 ? perf.completionRate : -1;
             }
             setPerfMap(map);
+            // Compute rank: top 3 by completion rate (only drivers with >0 stops)
+            const ranked = Object.entries(map)
+              .filter(([, r]) => r >= 0)
+              .sort(([, a], [, b]) => b - a);
+            const rm: Record<string, number> = {};
+            ranked.forEach(([id], i) => { rm[id] = i + 1; });
+            setRankMap(rm);
           })
           .catch(() => { /* perf data optional — don't block UI */ });
       }
@@ -81,8 +96,15 @@ export default function DriversPage() {
         d.phone.includes(q)
       );
     }
+    if (sortBy === 'rate') {
+      result = [...result].sort((a, b) => {
+        const ra = perfMap[a.id] ?? -2;
+        const rb = perfMap[b.id] ?? -2;
+        return rb - ra;
+      });
+    }
     setFiltered(result);
-  }, [search, statusFilter, drivers]);
+  }, [search, statusFilter, drivers, sortBy, perfMap]);
 
   const requestDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -201,6 +223,17 @@ export default function DriversPage() {
         />
       </div>
 
+      {/* Sort control */}
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs text-gray-400">Sort:</span>
+        {(['name', 'rate'] as const).map(s => (
+          <button key={s} onClick={() => setSortBy(s)}
+            className={`text-xs px-2.5 py-1 rounded-full transition-colors ${sortBy === s ? 'bg-[#0F4C81] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+            {s === 'name' ? 'Name' : 'Completion Rate'}
+          </button>
+        ))}
+      </div>
+
       {/* Status filter tabs */}
       <div className="flex items-center gap-1 mb-4">
         {([
@@ -282,7 +315,14 @@ export default function DriversPage() {
                         {driver.name?.[0] ?? '?'}
                       </div>
                       <div>
-                        <div className="font-medium text-gray-900">{driver.name}</div>
+                        <div className="font-medium text-gray-900 flex items-center gap-1.5">
+                          {driver.name}
+                          {rankMap[driver.id] && rankMap[driver.id] <= 3 && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold hidden sm:inline ${RANK_BADGE[rankMap[driver.id]].cls}`}>
+                              {RANK_BADGE[rankMap[driver.id]].label}
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-gray-400">{driver.phone}</div>
                       </div>
                       {driver.drugCapable && (

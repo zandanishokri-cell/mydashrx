@@ -12,6 +12,7 @@ import {
   index,
   uniqueIndex,
   time,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -273,6 +274,8 @@ export const stops = pgTable(
     priority: text('priority').notNull().default('normal'),
     // P-DRV3: Idempotency-Key for offline queue retry deduplication
     idempotencyKey: text('idempotency_key'),
+    // P-DISP3: chain-of-custody — links retry stop back to failed original
+    retriedFromStopId: uuid('retried_from_stop_id').references((): AnyPgColumn => stops.id),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },

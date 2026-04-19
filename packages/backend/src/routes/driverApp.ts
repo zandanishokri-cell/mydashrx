@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory } from '../db/schema.js';
+import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory, auditLogs } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { sendStopNotification, sendTwilioSms } from '../services/notifications.js';
@@ -9,6 +9,7 @@ import { fireTrigger } from '../services/automation.js';
 import { uploadBuffer } from '../services/storage.js';
 import type { StopStatus } from '@mydash-rx/shared';
 import { todayInTz } from '../utils/date.js';
+import sharp from 'sharp';
 
 async function resolveDriverId(
   user: { driverId?: string; email: string; orgId: string },
@@ -304,8 +305,22 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const allowed = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowed.includes(data.mimetype)) return reply.code(400).send({ error: 'JPEG/PNG/WEBP only' });
 
-    const buffer = await data.toBuffer();
-    const { key, url } = await uploadBuffer(buffer, data.mimetype, `pod/${stopId}`);
+    const rawBuffer = await data.toBuffer();
+    // P-DEL14: HIPAA 164.514(b) — strip ALL EXIF/GPS metadata before upload.
+    // iPhone JPEGs embed patient home GPS coordinates in EXIF — PHI minimum-necessary violation.
+    const buffer = await sharp(rawBuffer).withMetadata({ exif: {} }).jpeg({ quality: 85, mozjpeg: true }).toBuffer();
+    const { key, url } = await uploadBuffer(buffer, 'image/jpeg', `pod/${stopId}`);
+    // HIPAA audit: log that EXIF was stripped for this POD upload
+    const [stopForAudit] = await db.select({ orgId: stops.orgId }).from(stops).where(eq(stops.id, stopId)).limit(1);
+    if (stopForAudit) {
+      db.insert(auditLogs).values({
+        orgId: stopForAudit.orgId,
+        action: 'pod_photo_exif_stripped',
+        resource: 'stop',
+        resourceId: stopId,
+        metadata: { key, hipaaRule: '164.514(b)', detail: 'EXIF/GPS metadata stripped before S3 upload' },
+      }).catch(() => {});
+    }
 
     // Upsert POD record
     const [existing] = await db.select().from(proofOfDeliveries).where(eq(proofOfDeliveries.stopId, stopId)).limit(1);

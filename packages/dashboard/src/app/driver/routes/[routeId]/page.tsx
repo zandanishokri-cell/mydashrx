@@ -10,6 +10,7 @@ interface Stop {
   requiresRefrigeration: boolean; controlledSubstance: boolean;
   requiresSignature: boolean; rxNumbers: string[]; packageCount: number;
   deliveryNotes?: string; priority?: string;
+  windowEnd?: string | null;
 }
 
 interface EtaData {
@@ -298,6 +299,16 @@ export default function DriverRoutePage() {
                       {stop.requiresRefrigeration && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">❄ Cold</span>}
                       {stop.controlledSubstance && <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full font-medium">⚠ Ctrl</span>}
                       {stop.requiresSignature && <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full font-medium">✍ Sig</span>}
+                      {stop.windowEnd && stop.status !== 'completed' && stop.status !== 'failed' && (() => {
+                        const minLeft = Math.floor((new Date(stop.windowEnd).getTime() - Date.now()) / 60000);
+                        if (minLeft < -60) return null;
+                        const missed = minLeft < 0;
+                        const cls = missed ? 'bg-gray-100 text-gray-500'
+                          : minLeft < 15 ? 'bg-red-100 text-red-600'
+                          : minLeft < 60 ? 'bg-amber-100 text-amber-700'
+                          : 'bg-green-100 text-green-700';
+                        return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cls}`}>{missed ? 'Window closed' : minLeft < 60 ? `${minLeft}m` : `${Math.floor(minLeft/60)}h`}</span>;
+                      })()}
                     </div>
                   </div>
                 </button>

@@ -19,6 +19,7 @@ interface Stop {
   failureReason?: string; failureNote?: string;
   barcodesScanned?: string[]; packageConfirmed?: boolean;
   returnedAt?: string | null;
+  windowStart?: string | null; windowEnd?: string | null;
 }
 
 const FAILURE_REASONS = [
@@ -228,6 +229,33 @@ export default function StopDetailPage() {
       </div>
 
       <div className="px-4 py-4 space-y-4">
+        {/* P-DEL18: Delivery window countdown — Michigan R 338.3162 compliance */}
+        {stop.windowEnd && !isDone && (() => {
+          const now = Date.now();
+          const end = new Date(stop.windowEnd).getTime();
+          const minLeft = Math.floor((end - now) / 60000);
+          if (minLeft < -60) return null; // expired >1hr ago — no banner
+          const missed = minLeft < 0;
+          const color = missed ? 'bg-gray-100 border-gray-200 text-gray-600'
+            : minLeft < 15 ? 'bg-red-50 border-red-200 text-red-700'
+            : minLeft < 60 ? 'bg-amber-50 border-amber-200 text-amber-800'
+            : 'bg-green-50 border-green-200 text-green-800';
+          const label = missed
+            ? `Delivery window closed ${Math.abs(minLeft)}min ago`
+            : minLeft < 60
+              ? `${minLeft}min left in delivery window`
+              : `${Math.floor(minLeft / 60)}h ${minLeft % 60}min left in window`;
+          return (
+            <div className={`border rounded-2xl px-4 py-3 flex items-center gap-3 ${color}`}>
+              <Clock size={16} className="shrink-0" />
+              <div>
+                <p className="text-sm font-semibold">{label}</p>
+                {stop.windowStart && <p className="text-xs mt-0.5 opacity-70">Window: {new Date(stop.windowStart).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} – {new Date(stop.windowEnd).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</p>}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Age verification banner — only when required and not yet done */}
         {stop.requiresAgeVerification && !isDone && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
