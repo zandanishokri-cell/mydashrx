@@ -64,6 +64,7 @@ import { dashboardRoutes } from './routes/dashboard.js';
 import { notificationRoutes } from './routes/notifications.js';
 import { userSettingsRoutes } from './routes/userSettings.js';
 import { phiFilterHook } from './middleware/phiFilter.js';
+import { phiAuditHook } from './middleware/phiAuditHook.js';
 import { sendDailyReport } from './services/dailyReport.js';
 import { runAutoApproval } from './lib/autoApproval.js';
 import { db, client } from './db/connection.js';
@@ -115,6 +116,7 @@ await app.register(multipart, {
 });
 
 app.addHook('onSend', phiFilterHook);
+app.addHook('onRequest', phiAuditHook); // P-RBAC21: PHI read-event audit for HIPAA §164.312(b)
 
 // 1 MB limit for JSON payloads (multipart handles its own)
 app.addHook('preValidation', async (request, reply) => {

@@ -3,10 +3,12 @@ import { db } from '../db/connection.js';
 import { stops, routes, plans, depots, drivers } from '../db/schema.js';
 import { eq, and, isNull, gte, lte, sql, inArray } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
+import { requireDepotAccess } from '../middleware/requireDepotAccess.js';
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
+  // P-RBAC20: depot-scoped guard — dispatchers with depotId query param must have access to that depot
   app.get('/', {
-    preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    preHandler: [requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'), requireDepotAccess()],
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { depotId, from, to } = req.query as { depotId?: string; from?: string; to?: string };

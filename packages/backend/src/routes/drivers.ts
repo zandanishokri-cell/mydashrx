@@ -4,6 +4,7 @@ import { db } from '../db/connection.js';
 import { drivers, stops, routes, plans, users, magicLinkTokens } from '../db/schema.js';
 import { eq, and, isNull, sql, gte, lte, inArray } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
+import { requireDepotAccess } from '../middleware/requireDepotAccess.js';
 import { hashPassword } from '../services/auth.js';
 import { checkDriverLimit } from '../utils/usageLimits.js';
 import { todayInTz } from '../utils/date.js';
@@ -12,8 +13,9 @@ const MAGIC_LINK_SECRET = process.env.MAGIC_LINK_SECRET ?? process.env.JWT_SECRE
 const signToken = (t: string) => createHmac('sha256', MAGIC_LINK_SECRET).update(t).digest('hex');
 
 export const driverRoutes: FastifyPluginAsync = async (app) => {
+  // P-RBAC20: depot-scoped guard — dispatchers scoped to depot(s) only see relevant data
   app.get('/', {
-    preHandler: requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin'),
+    preHandler: [requireOrgRole('pharmacy_admin', 'dispatcher', 'super_admin'), requireDepotAccess()],
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     // Include total stop count (all time) and today's stop count
