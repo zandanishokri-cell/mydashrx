@@ -11,6 +11,7 @@ type PendingOrg = {
     approvalReminderSentAt?: Record<string, string> | null;
     onHold?: boolean; holdReason?: string | null; holdRequestedAt?: string | null;
     noteCount?: number;
+    npiNumber?: string | null; npiVerified?: boolean | null; npiVerifiedAt?: string | null; // P-ADM16
   };
   admin: { id: string; name: string; email: string; createdAt: string } | null;
 };
@@ -231,6 +232,24 @@ function DetailDrawer({
             <DetailRow label="Applied" value={new Date(org.createdAt).toLocaleString()} />
             {org.hipaaBaaStatus && <DetailRow label="HIPAA BAA" value={org.hipaaBaaStatus} />}
             {org.billingPlan && <DetailRow label="Plan" value={org.billingPlan} />}
+            {/* P-ADM16: NPI verification badge */}
+            {org.npiNumber && (
+              <div className="flex items-start justify-between py-1.5 border-b border-gray-50 last:border-0">
+                <span className="text-xs text-gray-400 w-24 shrink-0">NPI</span>
+                <div className="flex items-center gap-2 text-right">
+                  <span className="text-sm text-gray-800">{org.npiNumber}</span>
+                  {org.npiVerified ? (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded bg-green-50 text-green-700 border border-green-200">
+                      ✓ Verified
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium rounded bg-gray-100 text-gray-500 border border-gray-200">
+                      Unverified
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Admin contact */}
@@ -622,6 +641,11 @@ export default function ApprovalsPage() {
                     {org.noteCount != null && org.noteCount > 0 && (
                       <span className="px-1.5 py-0.5 text-xs text-gray-400 bg-gray-100 rounded-full">
                         {org.noteCount} note{org.noteCount !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {org.npiVerified && (
+                      <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-green-50 text-green-700 border border-green-200">
+                        ✓ NPI
                       </span>
                     )}
                     {org.riskFlags && org.riskFlags.length > 0 && (

@@ -7,6 +7,7 @@ import { sendStopNotification, sendDriverArrivalEmail, sendRouteCompleteSummaryE
 import { fireTrigger } from '../services/automation.js';
 import { TERMINAL_STATUSES, type StopStatus } from '@mydash-rx/shared';
 import { ETA_PER_STOP_MS } from './tracking.js';
+import { filterStopsForRole } from '../lib/fieldPermissions.js';
 
 export async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
   const [route] = await db.select({ completedAt: routes.completedAt, driverId: routes.driverId })
@@ -137,11 +138,13 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
         .limit(1);
       if (!routePlan || !(depotIds as string[]).includes(routePlan.depotId)) return [];
     }
-    return db
+    // P-RBAC17: HIPAA minimum-necessary — strip PHI for limited roles (driver)
+    const raw = await db
       .select()
       .from(stops)
       .where(and(eq(stops.routeId, routeId), eq(stops.orgId, userOrgId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
+    return filterStopsForRole(raw as Record<string, unknown>[], role);
   });
 
   app.post('/', {
