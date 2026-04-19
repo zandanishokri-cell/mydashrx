@@ -102,6 +102,23 @@ try {
   console.error('P-SES18 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-SES29: idempotent DDL for RT grace window columns (rotated_at + grace_expires_at)
+try {
+  await db.execute(sql`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS rotated_at TIMESTAMPTZ`);
+  await db.execute(sql`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS grace_expires_at TIMESTAMPTZ`);
+  console.log('P-SES29 rotated_at + grace_expires_at columns ensured');
+} catch (err) {
+  console.error('P-SES29 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-SES31: partial index for RT cleanup query performance
+try {
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS rt_cleanup_idx ON refresh_tokens (status, created_at) WHERE status IN ('used', 'revoked')`);
+  console.log('P-SES31 rt_cleanup_idx ensured');
+} catch (err) {
+  console.error('P-SES31 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-PERF1: idempotent DDL for performance indexes on stops table
 try {
   await db.execute(sql`CREATE INDEX IF NOT EXISTS stops_org_created_idx ON stops(org_id, created_at)`);

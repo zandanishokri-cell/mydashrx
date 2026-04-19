@@ -424,8 +424,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     // --- Stateful path: jti present = token was seeded on login ---
     if (decoded.jti) {
       const jti = decoded.jti;
-      let txStatus: 'not_found' | 'used' | 'revoked' | 'active' = 'not_found';
+      // eslint-disable-next-line prefer-const
+      let txStatus: string = 'not_found'; // 'not_found' | 'used' | 'revoked' | 'active' | 'grace_reuse' (P-SES29)
       let txFamilyId = '';
+      let txGraceSuccessorJti: string | null = null; // P-SES29: set when grace window retry detected
 
       let txStoredIp: string | null = null;
       let txStoredUa: string | null = null;
@@ -448,9 +450,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
       await db.transaction(async (tx) => {
         const rows = await tx.execute(
-          sql`SELECT id, family_id, status, ip, user_agent, last_used_at, absolute_expires_at FROM refresh_tokens WHERE jti = ${jti} FOR UPDATE`
+          sql`SELECT id, family_id, status, ip, user_agent, last_used_at, absolute_expires_at, rotated_at, grace_expires_at FROM refresh_tokens WHERE jti = ${jti} FOR UPDATE`
         );
-        const row = (rows as unknown as Array<{ id: string; family_id: string; status: string; ip: string | null; user_agent: string | null; last_used_at: string | null; absolute_expires_at: string | null }>)[0];
+        const row = (rows as unknown as Array<{ id: string; family_id: string; status: string; ip: string | null; user_agent: string | null; last_used_at: string | null; absolute_expires_at: string | null; rotated_at: string | null; grace_expires_at: string | null }>)[0];
         if (!row) return;
         // P-SES16: idle + absolute expiry — evaluated under lock to prevent race conditions
         // P-SES27: role-adaptive idle limit — look up user role + trusted device status inside tx
@@ -480,9 +482,25 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
           return;
         }
         if (row.status === 'used') {
+          // P-SES29: Grace window — check if this token was just rotated in the last 30 seconds
+          const graceExpires = row.grace_expires_at ? new Date(row.grace_expires_at).getTime() : 0;
+          const withinGrace = Date.now() < graceExpires;
+          if (withinGrace && row.rotated_at) {
+            // Idempotent retry: find successor token issued from this rotation
+            const successorRows = await tx.execute(
+              sql`SELECT jti FROM refresh_tokens WHERE family_id = ${row.family_id} AND status = 'active' AND created_at > ${new Date(row.rotated_at).toISOString()} ORDER BY created_at ASC LIMIT 1`
+            ) as unknown as Array<{ jti: string }>;
+            if (successorRows.length > 0) {
+              txStatus = 'grace_reuse';
+              txFamilyId = row.family_id;
+              txGraceSuccessorJti = successorRows[0].jti;
+              console.log(JSON.stringify({ event: 'rt_grace_reuse', userId: decoded.sub, familyId: row.family_id, ip: req.ip, ts: new Date().toISOString() }));
+              return;
+            }
+          }
           txStatus = 'used';
           await tx.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.familyId, row.family_id));
-          console.warn(JSON.stringify({ event: 'rt_replay_detected', familyId: row.family_id, ip: req.ip, ua: req.headers['user-agent'], ts: new Date().toISOString() }));
+          console.warn(JSON.stringify({ event: 'rt_replay_detected', familyId: row.family_id, withinGrace, ip: req.ip, ua: req.headers['user-agent'], ts: new Date().toISOString() }));
           return;
         }
         if (row.status === 'revoked') { txStatus = 'revoked'; return; }
@@ -490,7 +508,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         txFamilyId = row.family_id;
         txStoredIp = row.ip;
         txStoredUa = row.user_agent;
-        await tx.update(refreshTokens).set({ status: 'used', usedAt: new Date() }).where(eq(refreshTokens.jti, jti));
+        // P-SES29: set rotatedAt + graceExpiresAt (30s grace window for network retry scenarios)
+        await tx.update(refreshTokens).set({ status: 'used', usedAt: new Date(), rotatedAt: new Date(), graceExpiresAt: new Date(Date.now() + 30_000) }).where(eq(refreshTokens.jti, jti));
       });
 
       if (txIdleExpired) {
@@ -499,6 +518,18 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send({ error: 'Session expired due to inactivity. Please log in again.' });
       }
       if (txAbsoluteExpired) return reply.code(401).send({ error: 'Session maximum lifetime reached. Please log in again.' });
+
+      // P-SES29: Grace window idempotent response — re-issue AT against successor RT (no new rotation)
+      if (txStatus === 'grace_reuse' && txGraceSuccessorJti) {
+        const graceUser = await findUserById(decoded.sub);
+        if (!graceUser || graceUser.deletedAt) return reply.code(401).send({ error: 'User not found' });
+        const freshAT = signTokens(app, {
+          sub: graceUser.id, email: graceUser.email, role: graceUser.role, orgId: graceUser.orgId,
+          depotIds: graceUser.depotIds as string[],
+          ...(graceUser.mustChangePassword ? { mustChangePw: true } : {}),
+        }, graceUser.tokenVersion, { jti: txGraceSuccessorJti, familyId: txFamilyId }).accessToken;
+        return reply.send({ accessToken: freshAT, refreshToken: txGraceSuccessorJti, grace: true });
+      }
 
       if (txStatus === 'not_found') return reply.code(401).send({ error: 'Unknown token' });
       if (txStatus === 'used') return reply.code(401).send({ error: 'Token reuse detected. All sessions revoked.' });
@@ -546,6 +577,24 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       });
 
       console.log(JSON.stringify({ event: 'rt_rotated', userId: user.id, familyId: txFamilyId, ip: req.ip, ts: now.toISOString() }));
+
+      // P-SES32: RT family velocity alerting — detect multi-IP rapid refresh (async, zero latency impact)
+      setImmediate(async () => {
+        try {
+          const tenMinAgo = new Date(Date.now() - 10 * 60_000);
+          const [velocityRow] = await db.execute(
+            sql`SELECT COUNT(DISTINCT ip)::int AS ip_count, array_agg(DISTINCT ip) AS ips FROM refresh_tokens WHERE family_id = ${txFamilyId} AND created_at > ${tenMinAgo.toISOString()} AND ip IS NOT NULL`
+          ) as unknown as Array<{ ip_count: number; ips: string[] }>;
+          const ipCount = velocityRow?.ip_count ?? 0;
+          if (ipCount >= 3) {
+            console.warn(JSON.stringify({ event: 'rt_velocity_anomaly', severity: 'HIGH', userId: user.id, familyId: txFamilyId, distinctIPs: ipCount, ips: velocityRow.ips, windowMinutes: 10, ts: new Date().toISOString() }));
+            if (ipCount >= 5) {
+              await db.update(refreshTokens).set({ status: 'revoked' }).where(eq(refreshTokens.familyId, txFamilyId));
+              console.warn(JSON.stringify({ event: 'rt_velocity_auto_revoked', userId: user.id, familyId: txFamilyId, distinctIPs: ipCount, ts: new Date().toISOString() }));
+            }
+          }
+        } catch { /* non-fatal — never block refresh */ }
+      });
 
       // P-SES26: concurrent multi-geo RT anomaly detection — fire-and-forget, never blocks refresh
       lookupCountry(req.ip).then(async (refreshCountry) => {

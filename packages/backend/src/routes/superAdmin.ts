@@ -444,6 +444,13 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       .set({ pendingApproval: false, rejectedAt: new Date(), rejectionReason: reason ?? null, rejectionNote: note ?? null, activeReviewerId: null, activeReviewClaimedAt: null }) // P-ADM43: clear claim on reject
       .where(eq(organizations.id, orgId));
 
+    // P-SES30: Bump tokenVersion for all users in rejected org — invalidates all active ATs/RTs immediately
+    // Closes HIPAA §164.312(a)(1) gap: rejected pharmacy_admin retains AT access up to 15min post-rejection
+    await db.update(users)
+      .set({ tokenVersion: sql`token_version + 1` })
+      .where(eq(users.orgId, orgId));
+    console.log(JSON.stringify({ event: 'org_rejected_token_version_bumped', orgId, adminId: (req.user as { sub: string }).sub, ts: new Date().toISOString() }));
+
     // P-ONB47: cancel pending drip emails on rejection
     cancelPendingDrip(orgId).catch((e: unknown) => { console.error('[P-ONB47] cancelPendingDrip on reject failed:', e); });
 
@@ -576,6 +583,11 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       await db.update(organizations)
         .set({ pendingApproval: false, rejectedAt: now, rejectionReason: reason ?? null, rejectionNote: note ?? null })
         .where(inArray(organizations.id, foundIds));
+      // P-SES30: bump tokenVersion for all users in batch-rejected orgs
+      await db.update(users)
+        .set({ tokenVersion: sql`token_version + 1` })
+        .where(inArray(users.orgId, foundIds));
+      console.log(JSON.stringify({ event: 'batch_org_rejected_token_version_bumped', orgIds: foundIds, adminId: actor.sub, ts: now.toISOString() }));
     }
 
     // Fetch admins for emails in one query
@@ -978,6 +990,27 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     seedOrgDefaults(orgId).catch((e: unknown) => { console.error('[P-RBAC23] seedOrgDefaults on link-approve failed:', e); });
     const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
     return reply.redirect(`${dashUrl}/admin/approvals?approved=${orgId}`);
+  });
+
+  // DELETE /admin/users/:userId/revoke-sessions — P-SES30: admin force-revoke all sessions for a user
+  // Bumps tokenVersion (invalidates all active ATs immediately) + revokes all active RTs. HIPAA §164.312(a)(1).
+  app.delete('/users/:userId/revoke-sessions', { preHandler: auth }, async (req, reply) => {
+    const { userId } = req.params as { userId: string };
+    const actor = req.user as { sub: string; email: string; role: string };
+    if (actor.role !== 'super_admin') return reply.code(403).send({ error: 'super_admin required' });
+
+    const [target] = await db.select({ id: users.id, email: users.email, orgId: users.orgId }).from(users).where(eq(users.id, userId)).limit(1);
+    if (!target) return reply.code(404).send({ error: 'User not found' });
+
+    // Bump tokenVersion — invalidates all cached ATs (15min gap closed)
+    await db.update(users).set({ tokenVersion: sql`token_version + 1` }).where(eq(users.id, userId));
+    // Revoke all active RTs
+    const revoked = await db.update(refreshTokens).set({ status: 'revoked' }).where(and(eq(refreshTokens.userId, userId), eq(refreshTokens.status, 'active'))).returning({ jti: refreshTokens.jti });
+
+    console.log(JSON.stringify({ event: 'admin_force_revoke_sessions', targetUserId: userId, targetEmail: target.email, revokedCount: revoked.length, adminId: actor.sub, ts: new Date().toISOString() }));
+    await db.insert(adminAuditLogs).values({ actorId: actor.sub, actorEmail: actor.email, action: 'admin_force_revoke_sessions', targetId: userId, targetName: target.email, metadata: { revokedCount: revoked.length } });
+
+    return { success: true, userId, revokedSessions: revoked.length };
   });
 
   // GET /admin/users/zero-scope — P-RBAC7: dispatchers/pharmacists with no depot assignments

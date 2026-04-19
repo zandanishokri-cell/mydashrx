@@ -726,6 +726,8 @@ export const refreshTokens = pgTable('refresh_tokens', {
   userAgent: text('user_agent'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   usedAt: timestamp('used_at'),
+  rotatedAt: timestamp('rotated_at'),       // P-SES29: when this token was rotated (used to issue successor)
+  graceExpiresAt: timestamp('grace_expires_at'), // P-SES29: reuse allowed until this time (rotated_at + 30s)
   lastUsedAt: timestamp('last_used_at'), // P-SES16: updated on each rotation for idle expiry tracking
   absoluteExpiresAt: timestamp('absolute_expires_at'), // P-SES16: hard upper bound (90d) regardless of activity
   deviceName: text('device_name'), // P-SES18: stable device label stored at RT creation (not re-parsed on each view)
