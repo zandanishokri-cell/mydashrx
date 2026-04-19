@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
+import { SignupTrustBlock } from '@/components/SignupTrustBlock';
 
 type Step = 1 | 2;
 
@@ -55,6 +56,11 @@ export default function PharmacySignupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  // P-CNV12: NPI field state
+  const [npiNumber, setNpiNumber] = useState('');
+  const [npiStatus, setNpiStatus] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle');
+  // P-CNV15: approval tier from backend
+  const [approvalTier, setApprovalTier] = useState<'auto_approve' | 'manual'>('manual');
 
   useEffect(() => {
     try {
@@ -84,12 +90,26 @@ export default function PharmacySignupPage() {
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [key]: e.target.value }));
 
+  // P-CNV12: NPPES NPI verification (fail-open — never block submission)
+  const verifyNpi = async (npi: string) => {
+    if (!/^\d{10}$/.test(npi)) { setNpiStatus('invalid'); return; }
+    setNpiStatus('checking');
+    try {
+      const res = await fetch(`https://npiregistry.cms.hhs.gov/api/?number=${npi}&version=2.1`);
+      const data = await res.json();
+      setNpiStatus(data?.result_count > 0 ? 'valid' : 'invalid');
+    } catch { setNpiStatus('idle'); } // fail-open on network error
+  };
+
   const submit = async () => {
     setLoading(true);
     setError('');
     try {
-      await api.post('/signup/pharmacy', form);
+      const body: Record<string, string> = { ...form };
+      if (npiNumber) body.npiNumber = npiNumber;
+      const resp = await api.post('/signup/pharmacy', body) as { tier?: string };
       localStorage.removeItem(DRAFT_KEY);
+      if (resp?.tier === 'auto_approve') setApprovalTier('auto_approve');
       setSubmitted(true);
     } catch (err: any) {
       const raw = (err as Error).message ?? '';
@@ -115,9 +135,16 @@ export default function PharmacySignupPage() {
           <p className="text-gray-500 text-sm mb-1">
             We&apos;ve received your application for <strong>{form.orgName}</strong>.
           </p>
-          <p className="text-gray-500 text-sm mb-5">
-            Our team will review it and contact <strong>{form.adminEmail}</strong> within 2–4 business hours.
-          </p>
+          {/* P-CNV15: tier-aware approval timeline */}
+          {approvalTier === 'auto_approve' ? (
+            <p className="text-green-700 text-sm font-medium bg-green-50 rounded-lg px-3 py-2 mb-5">
+              Your NPI verified — your account is being approved automatically. Check your email at <strong>{form.adminEmail}</strong> in a few minutes.
+            </p>
+          ) : (
+            <p className="text-gray-500 text-sm mb-5">
+              Our team will review it and contact <strong>{form.adminEmail}</strong> within 2–4 business hours.
+            </p>
+          )}
 
           <div className="bg-blue-50 rounded-xl p-4 text-left mb-5">
             <p className="text-xs font-semibold text-blue-800 mb-2">While you wait</p>
@@ -142,7 +169,10 @@ export default function PharmacySignupPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F7F8FC] py-10">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+      {/* P-CNV13: Trust block above form — drives conversion before first keystroke */}
+      <div className="flex flex-col items-center w-full max-w-lg">
+      <SignupTrustBlock />
+      <div className="w-full bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
         <div className="flex items-center justify-between mb-6">
           <a href="/login" className="text-xs text-gray-400 hover:text-gray-600">← Back to sign in</a>
           {draftSaved && <span className="text-xs text-gray-400">Draft saved</span>}
@@ -186,6 +216,28 @@ export default function PharmacySignupPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Address <span className="text-gray-400 font-normal">(optional)</span></label>
               <input value={form.orgAddress} onChange={set('orgAddress')} placeholder="123 Main St, Detroit, MI 48201" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
               <p className="text-xs text-gray-400 mt-1">You can add this in Settings after approval</p>
+            </div>
+            {/* P-CNV12: NPI field with NPPES inline verification */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Pharmacy NPI <span className="text-gray-400 font-normal">(optional — speeds up approval)</span>
+              </label>
+              <div className="relative">
+                <input
+                  value={npiNumber}
+                  onChange={e => { setNpiNumber(e.target.value.replace(/\D/g, '').slice(0, 10)); setNpiStatus('idle'); }}
+                  onBlur={() => npiNumber && verifyNpi(npiNumber)}
+                  placeholder="10-digit NPI number"
+                  className={`w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 pr-24 ${npiStatus === 'valid' ? 'border-green-400 focus:ring-green-100' : npiStatus === 'invalid' ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-200'}`}
+                />
+                {npiStatus !== 'idle' && (
+                  <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium ${npiStatus === 'checking' ? 'text-gray-400' : npiStatus === 'valid' ? 'text-green-600' : 'text-red-500'}`}>
+                    {npiStatus === 'checking' ? 'Verifying…' : npiStatus === 'valid' ? '✓ Verified' : '✗ Not found'}
+                  </span>
+                )}
+              </div>
+              {npiStatus === 'valid' && <p className="text-xs text-green-600 mt-1">NPI verified — eligible for faster approval</p>}
+              {npiStatus === 'invalid' && <p className="text-xs text-red-500 mt-1">NPI not found in NPPES registry — you can still submit without it</p>}
             </div>
             <button
               onClick={() => setStep(2)}
@@ -250,15 +302,6 @@ export default function PharmacySignupPage() {
         )}
       </div>
 
-      {/* Trust signals */}
-      <div className="w-full max-w-lg mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-400">
-        <span>🔒 HIPAA-compliant</span>
-        <span>·</span>
-        <span>BAA available on request</span>
-        <span>·</span>
-        <span>Reviewed in 2–4 hours</span>
-        <span>·</span>
-        <span>Trusted by independent pharmacies nationwide</span>
       </div>
     </div>
   );

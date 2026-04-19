@@ -202,7 +202,10 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
     notifySuperAdmins(orgName, adminEmail).catch((e: unknown) => { console.error('[Resend] pharmacy signup notify failed:', e); });
     sendApplicantConfirmation(orgName, adminEmail, adminName).catch((e: unknown) => { console.error('[Resend] applicant confirmation failed:', e); });
 
-    return reply.code(201).send({ message: 'Application submitted. You will hear from us within 2–4 business hours.' });
+    // P-CNV15: return tier so frontend can show correct approval timeline
+    // Never surface 'block' — treat as 'manual' to avoid tipping off bad actors
+    const displayTier = trustTier === 'auto_approve' ? 'auto_approve' : 'manual';
+    return reply.code(201).send({ message: 'Application submitted. You will hear from us within 2–4 business hours.', tier: displayTier });
   });
 
   // ─── Driver Signup ────────────────────────────────────────────────────────
