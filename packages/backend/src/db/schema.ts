@@ -667,3 +667,19 @@ export const stopNotes = pgTable('stop_notes', {
   stopIdx: index('stop_notes_stop_idx').on(t.stopId),
   orgIdx: index('stop_notes_org_idx').on(t.orgId),
 }));
+
+// P-SES22: Device trust — "Remember this device for 30 days" after magic link verify
+export const trustedDevices = pgTable('trusted_devices', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  fingerprint: text('fingerprint').notNull(), // SHA-256(ua + acceptLang + tz)
+  deviceName: text('device_name').notNull(),
+  trustedAt: timestamp('trusted_at').notNull().defaultNow(),
+  trustedUntil: timestamp('trusted_until').notNull(),
+  isRevoked: boolean('is_revoked').notNull().default(false),
+  lastSeenAt: timestamp('last_seen_at'),
+  ip: text('ip'),
+}, (t) => ({
+  userIdx: index('trusted_devices_user_idx').on(t.userId),
+  fpIdx: index('trusted_devices_fp_idx').on(t.fingerprint),
+}));

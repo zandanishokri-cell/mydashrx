@@ -373,6 +373,28 @@ try {
   console.error('P-DRV3 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-SES22: trusted_devices table — device trust fingerprint for 30-day remember
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS trusted_devices (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      fingerprint text NOT NULL,
+      device_name text NOT NULL,
+      trusted_at timestamptz NOT NULL DEFAULT now(),
+      trusted_until timestamptz NOT NULL,
+      is_revoked boolean NOT NULL DEFAULT false,
+      last_seen_at timestamptz,
+      ip text
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS trusted_devices_user_idx ON trusted_devices(user_id)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS trusted_devices_fp_idx ON trusted_devices(fingerprint)`);
+  console.log('P-SES22 trusted_devices table ensured');
+} catch (err) {
+  console.error('P-SES22 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

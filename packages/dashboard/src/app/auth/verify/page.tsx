@@ -25,6 +25,9 @@ function VerifyContent() {
   const [secsLeft, setSecsLeft] = useState(LINK_EXPIRY_SECS);
   // P-ML9: cancel + device context state
   const [cancelStatus, setCancelStatus] = useState<'idle' | 'cancelling' | 'cancelled'>('idle');
+  // P-SES22: Trust device prompt shown after successful confirm
+  const [showTrustPrompt, setShowTrustPrompt] = useState(false);
+  const [trustDestination, setTrustDestination] = useState('');
   const deviceLabel = typeof navigator !== 'undefined'
     ? (/mobile/i.test(navigator.userAgent) ? 'Mobile device' : /tablet|ipad/i.test(navigator.userAgent) ? 'Tablet' : 'Desktop / Laptop')
     : 'Unknown device';
@@ -98,7 +101,14 @@ function VerifyContent() {
         setStatus('success');
         const u = tokens.user as any;
         const dest = resolveNext(u.role, u.org?.pendingApproval);
-        router.replace(u.mustChangePassword ? '/change-password' : dest);
+        const finalDest = u.mustChangePassword ? '/change-password' : dest;
+        // P-SES22: Show trust prompt before redirecting (skip for pending approval / password change)
+        if (!u.mustChangePassword && !u.org?.pendingApproval) {
+          setTrustDestination(finalDest);
+          setShowTrustPrompt(true);
+        } else {
+          router.replace(finalDest);
+        }
       })
       .catch((err: Error) => {
         const raw = err.message ?? '';
@@ -141,6 +151,36 @@ function VerifyContent() {
     } finally {
       setOtpLoading(false);
     }
+  }
+
+  // P-SES22: Trust device prompt after successful verify
+  if (showTrustPrompt) {
+    const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com';
+    const trustDevice = async () => {
+      try {
+        const { getAccessToken } = await import('@/lib/auth');
+        await fetch(`${API}/api/v1/auth/trust-device`, {
+          method: 'POST', credentials: 'include',
+          headers: { Authorization: `Bearer ${getAccessToken()}` },
+        });
+      } catch { /* non-fatal */ }
+      router.replace(trustDestination);
+    };
+    return (
+      <div className="text-center">
+        <div className="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Signed in!</h2>
+        <p className="text-gray-500 text-sm mb-5">Trust this device for 30 days? You won&apos;t need a link next time.</p>
+        <div className="flex gap-3 justify-center">
+          <button onClick={trustDevice} className="px-5 py-2.5 bg-[#0F4C81] text-white rounded-lg text-sm font-semibold hover:bg-[#0d3d69]">Yes, trust it</button>
+          <button onClick={() => router.replace(trustDestination)} className="px-5 py-2.5 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200">No thanks</button>
+        </div>
+      </div>
+    );
   }
 
   if (showOtp) {

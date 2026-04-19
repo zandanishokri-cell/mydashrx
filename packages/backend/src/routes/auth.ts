@@ -21,7 +21,7 @@ async function hasMxRecord(email: string): Promise<boolean> {
   }
 }
 import { db } from '../db/connection.js';
-import { users, organizations, drivers, magicLinkTokens, refreshTokens, adminAuditLogs } from '../db/schema.js';
+import { users, organizations, drivers, magicLinkTokens, refreshTokens, adminAuditLogs, trustedDevices } from '../db/schema.js';
 import { eq, and, isNull, gt, count, desc, asc, inArray, ne } from 'drizzle-orm';
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
@@ -91,6 +91,12 @@ async function enforceSessionCap(userId: string): Promise<void> {
       .set({ status: 'revoked' })
       .where(inArray(refreshTokens.jti, lru.map(r => r.jti)));
   }
+}
+
+// P-SES22: SHA-256 device fingerprint — server-side signals only (not canvas/WebGL)
+function buildDeviceFingerprint(ua: string | null, acceptLang: string | null, tz: string | null): string {
+  const raw = `${ua ?? ''}|${acceptLang ?? ''}|${tz ?? ''}`;
+  return createHash('sha256').update(raw).digest('hex');
 }
 
 // P-SES18: stable device label stored once at RT creation
@@ -665,6 +671,33 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const user = await findUserByEmail(email);
     if (user && !user.deletedAt) {
+      // P-SES22: Check if device is trusted — skip email, issue tokens directly
+      const ua = (req.headers['user-agent'] as string | undefined) ?? null;
+      const acceptLang = (req.headers['accept-language'] as string | undefined) ?? null;
+      const tz = (req.headers['x-timezone'] as string | undefined) ?? null;
+      const fingerprint = buildDeviceFingerprint(ua, acceptLang, tz);
+      const [trust] = await db.select({ id: trustedDevices.id }).from(trustedDevices)
+        .where(and(
+          eq(trustedDevices.userId, user.id),
+          eq(trustedDevices.fingerprint, fingerprint),
+          eq(trustedDevices.isRevoked, false),
+          gt(trustedDevices.trustedUntil, new Date()),
+        )).limit(1);
+
+      if (trust) {
+        // Trusted device — issue AT+RT directly without email
+        await db.update(trustedDevices).set({ lastSeenAt: new Date() }).where(eq(trustedDevices.id, trust.id));
+        const jti = randomUUID(); const familyId = randomUUID();
+        const payload = { sub: user.id, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds as string[] };
+        const tokens = signTokens(app, payload, user.tokenVersion, { jti, familyId });
+        await seedRefreshToken(user.id, familyId, jti, req as Parameters<typeof seedRefreshToken>[3]);
+        logAuthEvent('trusted_device_login', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined, metadata: { fingerprint, deviceName: buildDeviceName(ua) } }).catch(() => {});
+        setRtCookie(reply, tokens.refreshToken);
+        await minResponse();
+        return reply.send({ ...tokens, user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds } });
+      }
+      // Not trusted — fall through to email send
+
       const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
       const magicUrl = `${dashUrl}/auth/verify?token=${token}`;
       const resendKey = process.env.RESEND_API_KEY;
@@ -1031,6 +1064,39 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     // Mark as used (cancelled) without creating a session
     await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(eq(magicLinkTokens.id, record.id));
     return reply.send({ cancelled: true, message: 'Link cancelled. Please request a new magic link from your intended device.' });
+  });
+
+  // POST /auth/trust-device — P-SES22: mark current device trusted for 30 days
+  app.post('/trust-device', async (req, reply) => {
+    try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
+    const payload = req.user as { sub: string; email: string; orgId?: string };
+    const ua = (req.headers['user-agent'] as string | undefined) ?? null;
+    const acceptLang = (req.headers['accept-language'] as string | undefined) ?? null;
+    const tz = (req.headers['x-timezone'] as string | undefined) ?? null;
+    const fingerprint = buildDeviceFingerprint(ua, acceptLang, tz);
+    const trustedUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    // Upsert: remove old entry for same fingerprint, insert fresh
+    await db.delete(trustedDevices).where(and(eq(trustedDevices.userId, payload.sub), eq(trustedDevices.fingerprint, fingerprint)));
+    await db.insert(trustedDevices).values({
+      userId: payload.sub, fingerprint,
+      deviceName: buildDeviceName(ua), trustedUntil, ip: req.ip, lastSeenAt: new Date(),
+    });
+    logAuthEvent('device_trusted', { userId: payload.sub, email: payload.email, ip: req.ip, orgId: payload.orgId, metadata: { deviceName: buildDeviceName(ua) } }).catch(() => {});
+    return { trusted: true, trustedUntil };
+  });
+
+  // DELETE /auth/trust-device — P-SES22: revoke trust for current device
+  app.delete('/trust-device', async (req, reply) => {
+    try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'Unauthorized' }); }
+    const payload = req.user as { sub: string; email: string; orgId?: string };
+    const ua = (req.headers['user-agent'] as string | undefined) ?? null;
+    const acceptLang = (req.headers['accept-language'] as string | undefined) ?? null;
+    const tz = (req.headers['x-timezone'] as string | undefined) ?? null;
+    const fingerprint = buildDeviceFingerprint(ua, acceptLang, tz);
+    await db.update(trustedDevices).set({ isRevoked: true })
+      .where(and(eq(trustedDevices.userId, payload.sub), eq(trustedDevices.fingerprint, fingerprint)));
+    logAuthEvent('device_trust_revoked', { userId: payload.sub, email: payload.email, ip: req.ip, orgId: payload.orgId }).catch(() => {});
+    return reply.code(204).send();
   });
 
   // GET /auth/org-status — approval state for authenticated user (P-ADM7)
