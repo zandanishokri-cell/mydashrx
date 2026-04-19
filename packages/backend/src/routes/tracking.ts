@@ -19,7 +19,9 @@ export const ETA_PER_STOP_MS = 8 * 60 * 1000;
 export const trackingRoutes: FastifyPluginAsync = async (app) => {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  app.get('/:token', async (req, reply) => {
+  app.get('/:token', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
     const { token } = req.params as { token: string };
 
     if (!UUID_RE.test(token)) return reply.code(404).send({ error: 'Not found' });
@@ -27,6 +29,7 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
     const [stopRaw] = await db
       .select({
         id: stops.id,
+        orgId: stops.orgId,
         routeId: stops.routeId,
         status: stops.status,
         recipientName: stops.recipientName,
@@ -39,6 +42,22 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(stops.trackingToken, token as any))
       .limit(1);
     if (!stopRaw) return reply.code(404).send({ error: 'Not found' });
+
+    // P-SEC45: expire tracking link 48 hr after delivery completion
+    if (stopRaw.completedAt) {
+      const expiry = new Date(stopRaw.completedAt.getTime() + 48 * 60 * 60 * 1000);
+      if (new Date() > expiry) return reply.code(410).send({ error: 'Tracking link expired' });
+    }
+
+    // P-SEC45: HIPAA audit log every tracking page access
+    db.insert(auditLogs).values({
+      orgId: stopRaw.orgId,
+      action: 'track_page_accessed',
+      resource: 'stop',
+      resourceId: stopRaw.id,
+      metadata: { token, ip: (req.headers['x-forwarded-for'] ?? (req.socket?.remoteAddress ?? 'unknown')) },
+    }).catch(() => {});
+
     // P-SEC40: decrypt PHI — expose first name only
     const stop = { ...stopRaw, recipientName: decryptPhi(stopRaw.recipientName ?? '') };
 

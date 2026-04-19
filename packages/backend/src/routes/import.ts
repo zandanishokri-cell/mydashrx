@@ -6,6 +6,7 @@ import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { todayInTz } from '../utils/date.js';
 import { geocodeAddress } from '../utils/geocode.js';
 import { checkStopLimit } from '../utils/usageLimits.js';
+import { encryptPhi, encryptPhiArray } from '../lib/phiCrypto.js';
 
 function parseCsv(text: string): Array<Record<string, string>> {
   const lines = text.trim().split('\n');
@@ -85,13 +86,13 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
       toInsert.push({
         routeId,
         orgId,
-        recipientName: row.recipientname,
-        recipientPhone: row.recipientphone ?? '',
+        recipientName: encryptPhi(row.recipientname),
+        recipientPhone: encryptPhi(row.recipientphone ?? ''),
         address: row.address,
         deliveryNotes: row.notes || undefined,
         lat,
         lng,
-        rxNumbers: row.rxnumber ? [row.rxnumber] : [],
+        rxNumbers: row.rxnumber ? encryptPhiArray([row.rxnumber]) as any : [],
         controlledSubstance: row.iscontrolled === 'true' || row.iscontrolled === '1',
         windowStart: row.windowstart ? new Date(row.windowstart) : undefined,
         windowEnd: row.windowend ? new Date(row.windowend) : undefined,

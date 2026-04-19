@@ -4,6 +4,7 @@ import { recurringDeliveries, stops, routes, plans, depots } from '../db/schema.
 import { eq, and, isNull, lte, inArray } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { geocodeAddress } from '../utils/geocode.js';
+import { encryptPhi, decryptPhi } from '../lib/phiCrypto.js';
 
 // All date arithmetic is done in UTC ms to avoid local-timezone drift.
 // Weekly/biweekly use pure millisecond offsets; monthly uses setUTCMonth with day clamping.
@@ -40,9 +41,14 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
-    return db.select().from(recurringDeliveries)
+    const rows = await db.select().from(recurringDeliveries)
       .where(and(eq(recurringDeliveries.orgId, orgId), isNull(recurringDeliveries.deletedAt)))
       .orderBy(recurringDeliveries.createdAt);
+    return rows.map(r => ({
+      ...r,
+      recipientName: decryptPhi(r.recipientName ?? ''),
+      recipientPhone: r.recipientPhone ? decryptPhi(r.recipientPhone) : r.recipientPhone,
+    }));
   });
 
   // Create
@@ -94,11 +100,11 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
 
     const [rec] = await db.insert(recurringDeliveries).values({
       orgId,
-      recipientName: body.recipientName,
+      recipientName: encryptPhi(body.recipientName),
       address: body.address,
       lat,
       lng,
-      recipientPhone: body.recipientPhone,
+      recipientPhone: body.recipientPhone ? encryptPhi(body.recipientPhone) : body.recipientPhone,
       recipientEmail: body.recipientEmail,
       notes: body.notes,
       schedule: body.schedule ?? 'weekly',
@@ -116,7 +122,11 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
       depotId: body.depotId,
     }).returning();
 
-    return reply.code(201).send(rec);
+    return reply.code(201).send({
+      ...rec,
+      recipientName: decryptPhi(rec.recipientName ?? ''),
+      recipientPhone: rec.recipientPhone ? decryptPhi(rec.recipientPhone) : rec.recipientPhone,
+    });
   });
 
   // Update — scoped to orgId to prevent cross-org mutation
@@ -153,11 +163,20 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (Object.keys(updates).length === 0) return reply.code(400).send({ error: 'No valid fields' });
+
+    // Encrypt PHI fields on update
+    if (typeof updates.recipientName === 'string') updates.recipientName = encryptPhi(updates.recipientName);
+    if (typeof updates.recipientPhone === 'string') updates.recipientPhone = encryptPhi(updates.recipientPhone);
+
     const [updated] = await db.update(recurringDeliveries).set(updates)
       .where(and(eq(recurringDeliveries.id, id), eq(recurringDeliveries.orgId, orgId), isNull(recurringDeliveries.deletedAt)))
       .returning();
     if (!updated) return reply.code(404).send({ error: 'Not found' });
-    return updated;
+    return {
+      ...updated,
+      recipientName: decryptPhi(updated.recipientName ?? ''),
+      recipientPhone: updated.recipientPhone ? decryptPhi(updated.recipientPhone) : updated.recipientPhone,
+    };
   });
 
   // Soft delete — scoped to orgId to prevent cross-org deletion
@@ -243,11 +262,12 @@ export const recurringRoutes: FastifyPluginAsync = async (app) => {
     }
 
     type StopInsert = typeof stops.$inferInsert;
+    // rec.recipientName / rec.recipientPhone are already encrypted in recurring_deliveries — pass through as-is
     const stopValues: StopInsert[] = due.map(rec => ({
       routeId: routeId!,
       orgId,
-      recipientName: rec.recipientName,
-      recipientPhone: rec.recipientPhone ?? '',
+      recipientName: rec.recipientName,   // already encrypted — do NOT re-encrypt
+      recipientPhone: rec.recipientPhone ?? '',  // already encrypted — do NOT re-encrypt
       recipientEmail: rec.recipientEmail ?? undefined,
       address: rec.address,
       lat: rec.lat ?? 0,
