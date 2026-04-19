@@ -1,18 +1,25 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { attemptSilentBootstrap } from '@/lib/auth';
 import Link from 'next/link';
 import { LayoutDashboard, ClipboardList, LogOut } from 'lucide-react';
 
 export default function PharmacyLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const user = (() => { try { return JSON.parse(localStorage.getItem('user') ?? 'null'); } catch { return null; } })();
-    if (!user) { router.replace('/pharmacy/login'); return; }
-    if (user.role !== 'pharmacist') { router.replace('/pharmacy/login'); }
+    // P-SES23: bootstrap AT from RT cookie before auth check
+    attemptSilentBootstrap().then(() => {
+      const user = (() => { try { return JSON.parse(localStorage.getItem('user') ?? 'null'); } catch { return null; } })();
+      if (!user || user.role !== 'pharmacist') { router.replace('/pharmacy/login'); return; }
+      setReady(true);
+    });
   }, [router]);
+
+  if (!ready) return null;
 
   const signOut = () => { localStorage.clear(); router.replace('/pharmacy/login'); };
 

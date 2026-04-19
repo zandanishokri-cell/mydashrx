@@ -110,6 +110,7 @@ export const users = pgTable(
     failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
     lockedUntil: timestamp('locked_until'),
     tokenVersion: integer('token_version').notNull().default(0),
+    lastKnownCountry: text('last_known_country'), // P-SES15: ISO country code from last login IP
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },

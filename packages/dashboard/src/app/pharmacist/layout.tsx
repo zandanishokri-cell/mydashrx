@@ -1,19 +1,27 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { attemptSilentBootstrap } from '@/lib/auth';
 import Link from 'next/link';
 import { FlaskConical, ListOrdered, BarChart2, LogOut } from 'lucide-react';
 
 export default function PharmacistLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const user = (() => { try { return JSON.parse(localStorage.getItem('user') ?? 'null'); } catch { return null; } })();
-    if (!user) { router.replace('/pharmacist/login'); return; }
-    const allowed = ['pharmacist', 'pharmacy_admin', 'super_admin'];
-    if (!allowed.includes(user.role)) router.replace('/pharmacist/login');
+    // P-SES23: bootstrap AT from RT cookie before auth check
+    attemptSilentBootstrap().then(() => {
+      const user = (() => { try { return JSON.parse(localStorage.getItem('user') ?? 'null'); } catch { return null; } })();
+      if (!user) { router.replace('/pharmacist/login'); return; }
+      const allowed = ['pharmacist', 'pharmacy_admin', 'super_admin'];
+      if (!allowed.includes(user.role)) { router.replace('/pharmacist/login'); return; }
+      setReady(true);
+    });
   }, [router]);
+
+  if (!ready) return null;
 
   const signOut = () => { localStorage.clear(); router.replace('/pharmacist/login'); };
 

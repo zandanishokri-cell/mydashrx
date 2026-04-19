@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { stops, routes, drivers, plans } from '../db/schema.js';
+import { stops, routes, drivers, plans, adminAuditLogs } from '../db/schema.js';
 import { eq, and, isNull, inArray, notInArray } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { requirePermission } from '../lib/rbacPolicy.js';
@@ -247,6 +247,18 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
     const estimatedDuration = activeStopCount * 8 * 60; // seconds, 8 min/stop
 
     await db.update(routes).set({ stopOrder: stopIds, estimatedDuration }).where(eq(routes.id, routeId));
+
+    // P-DEL7: audit log for DEA CS delivery routing traceability
+    const jwtUser = req.user as { id: string; email: string; orgId: string; role: string };
+    db.insert(adminAuditLogs).values({
+      action: 'stop_reorder',
+      actorId: jwtUser.id,
+      actorEmail: jwtUser.email,
+      targetId: routeId,
+      targetName: `route:${routeId}`,
+      metadata: { stopCount: stopIds.length, newOrder: stopIds },
+    }).catch(() => {});
+
     return { stopOrder: stopIds, estimatedDuration, activeStopCount };
   });
 

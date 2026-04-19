@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { isAuthenticated, clearSession, getUser } from '@/lib/auth';
+import { isAuthenticated, clearSession, getUser, attemptSilentBootstrap } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { LayoutDashboard, Route, Map, Users, LogOut, Search, BarChart2, Target, Shield, Scale, Menu, X, Zap, CreditCard, Settings2, ChevronDown, Crown, RefreshCw, TrendingUp } from 'lucide-react';
 import NotificationPanel from '@/components/NotificationPanel';
@@ -61,10 +61,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [pendingCount, setPendingCount] = useState(0);
   const profileRef = useRef<HTMLDivElement>(null);
   const onboardingChecked = useRef(false);
+  // P-SES23: bootstrapped=false until silent refresh resolves — prevents flash redirect on reload
+  const [bootstrapped, setBootstrapped] = useState(false);
   // useState(null) ensures server and client render identically (no hydration mismatch).
   // useEffect sets the real user after hydration completes.
   const [user, setUser] = useState<ReturnType<typeof getUser>>(null);
-  useEffect(() => { setUser(getUser()); }, []);
+  useEffect(() => {
+    attemptSilentBootstrap().then(() => {
+      setUser(getUser());
+      setBootstrapped(true);
+    });
+  }, []);
 
   const { showWarning, extendSession, countdown } = useIdleTimeout();
 
@@ -81,9 +88,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     ] : []),
   ];
 
+  // P-SES23: only redirect after bootstrap completes — avoids false logout on reload
   useEffect(() => {
+    if (!bootstrapped) return;
     if (!isAuthenticated()) router.replace('/login');
-  }, [router]);
+  }, [bootstrapped, router]);
 
   useEffect(() => {
     if (user && (user as any).mustChangePassword) {
@@ -149,6 +158,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       })
       .catch(() => { /* non-blocking */ });
   }, [user, pathname, router]);
+
+  // P-SES23: show blank while bootstrap is pending — avoids flash of redirect
+  if (!bootstrapped) return null;
 
   const handleSignOut = () => { clearSession(); router.replace('/login'); };
 

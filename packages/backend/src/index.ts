@@ -140,6 +140,14 @@ try {
   console.error('P-DEL9 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-SES15: idempotent DDL for lastKnownCountry column on users
+try {
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_known_country text`);
+  console.log('P-SES15 lastKnownCountry column ensured');
+} catch (err) {
+  console.error('P-SES15 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

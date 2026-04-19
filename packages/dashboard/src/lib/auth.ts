@@ -7,6 +7,49 @@ let _accessToken: string | null = null;
 export function getAccessToken(): string | null { return _accessToken; }
 export function setAccessToken(at: string | null) { _accessToken = at; }
 
+// P-SES23: Bootstrap hydration — on page reload _accessToken resets to null despite valid RT cookie.
+// Call attemptSilentBootstrap() in protected layouts before checking isAuthenticated().
+// Returns true if AT was restored (user stays), false if no valid RT (redirect to login).
+let _bootstrapPromise: Promise<boolean> | null = null;
+export function attemptSilentBootstrap(): Promise<boolean> {
+  if (_bootstrapPromise) return _bootstrapPromise;
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  if (_accessToken) return Promise.resolve(true);
+  const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  _bootstrapPromise = fetch(`${BASE}/api/v1/auth/refresh`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+  }).then(async res => {
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (!data.accessToken) return false;
+    _accessToken = data.accessToken;
+    // Rebuild user from AT payload so localStorage stays fresh after silent refresh
+    try {
+      const payload = JSON.parse(atob(data.accessToken.split('.')[1])) as {
+        sub: string; email: string; role: string; orgId: string;
+        name?: string; mustChangePw?: boolean; depotIds?: string[];
+      };
+      const existing = (() => { try { return JSON.parse(localStorage.getItem('user') ?? 'null'); } catch { return null; } })();
+      // Merge: preserve extra fields from localStorage; AT payload is authoritative for auth fields
+      const merged = {
+        ...(existing ?? {}),
+        id: payload.sub,
+        email: payload.email,
+        role: payload.role,
+        orgId: payload.orgId,
+        name: payload.name ?? existing?.name ?? '',
+        mustChangePassword: payload.mustChangePw ?? false,
+        depotIds: payload.depotIds ?? existing?.depotIds ?? [],
+      };
+      localStorage.setItem('user', JSON.stringify(merged));
+    } catch { /* AT decode failed — user in localStorage may be stale but still usable */ }
+    return true;
+  }).catch(() => false);
+  return _bootstrapPromise;
+}
+
 export function getUser(): User | null {
   if (typeof window === 'undefined') return null;
   try {

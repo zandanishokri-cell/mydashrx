@@ -25,6 +25,7 @@ import { users, organizations, drivers, magicLinkTokens, refreshTokens, adminAud
 import { eq, and, isNull, gt, count, desc, asc, inArray, ne } from 'drizzle-orm';
 
 import { findUserByEmail, findUserById, verifyPassword, signTokens, hashPassword } from '../services/auth.js';
+import { lookupCountry } from '../lib/geoLookup.js';
 import { sql } from 'drizzle-orm';
 import { createHash } from 'crypto';
 
@@ -261,6 +262,36 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     await seedRefreshToken(user.id, familyId, jti, req);
     // P-SEC11: log login_success
     await logAuthEvent('login_success', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
+
+    // P-SES15: country-change detection — fire-and-forget, never blocks login
+    lookupCountry(req.ip).then(async (newCountry) => {
+      if (!newCountry) return;
+      const prevCountry = user.lastKnownCountry;
+      if (prevCountry && prevCountry !== newCountry) {
+        // Log HIPAA §164.308(a)(5)(ii)(C) login_new_country event
+        await logAuthEvent('login_new_country', {
+          userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined,
+          metadata: { prevCountry, newCountry },
+        }).catch(() => {});
+        // Send security email via Resend
+        const resendKey = process.env.RESEND_API_KEY;
+        if (resendKey) {
+          fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+            body: JSON.stringify({
+              from: 'security@mydashrx.com',
+              to: user.email,
+              subject: 'Security alert: New country login detected',
+              html: `<p>Hi ${user.name},</p><p>We detected a login from a new country: <strong>${newCountry}</strong> (previously ${prevCountry}).</p><p>If this was you, no action is needed. If you don't recognize this login, please contact support immediately.</p><p>– MyDashRx Security</p>`,
+            }),
+          }).catch(() => {});
+        }
+      }
+      // Update lastKnownCountry
+      await db.update(users).set({ lastKnownCountry: newCountry }).where(eq(users.id, user.id)).catch(() => {});
+    }).catch(() => {});
+
     // P-SEC28: set RT as httpOnly cookie; keep in body for zero-downtime dual-read migration
     setRtCookie(reply, tokens.refreshToken);
     return reply.send({
