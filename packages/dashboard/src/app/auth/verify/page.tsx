@@ -137,7 +137,7 @@ function VerifyContent() {
             </svg>
           </div>
           <h2 className="text-base font-semibold text-gray-900 mb-1">Enter your verification code</h2>
-          <p className="text-gray-500 text-sm">Enter the 6-digit code from your email.</p>
+          <p id="otp-hint" className="text-gray-500 text-sm">Enter the 6-digit code from your email.</p>
         </div>
         <form onSubmit={handleOtpSubmit} className="space-y-3">
           <div>
@@ -156,8 +156,15 @@ function VerifyContent() {
             <input
               type="text"
               inputMode="numeric"
+              autoComplete="one-time-code"
+              aria-label="6-digit verification code"
+              aria-describedby="otp-hint"
               value={otpCode}
               onChange={e => setOtpCode(e.target.value.replace(/[^\d\s]/g, ''))}
+              onPaste={e => {
+                const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+                if (pasted) { e.preventDefault(); setOtpCode(pasted.slice(0,3) + (pasted.length > 3 ? ' ' + pasted.slice(3) : '')); }
+              }}
               placeholder="123 456"
               maxLength={7}
               required
