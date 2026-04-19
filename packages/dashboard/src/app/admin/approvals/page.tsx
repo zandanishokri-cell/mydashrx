@@ -17,6 +17,9 @@ type PendingOrg = {
     // P-ADM37: assigned reviewer
     assignedReviewerId?: string | null; assignedAt?: string | null;
     assignee?: { name: string; email: string } | null;
+    // P-ADM40: SLA breach tracking
+    slaBreachedAt?: string | null;
+    escalationLevel?: number | null;
   };
   admin: { id: string; name: string; email: string; createdAt: string } | null;
 };
@@ -215,9 +218,16 @@ function DetailDrawer({
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           {/* Status badges */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${aging.badge}`}>
-              {aging.label}
-            </span>
+            {/* P-ADM40: permanent SLA BREACHED badge — HIPAA §164.308(a)(1)(ii)(A) */}
+            {org.slaBreachedAt ? (
+              <span className="px-2 py-0.5 text-xs font-semibold rounded-full border bg-red-600 text-white border-red-700">
+                ⚠ SLA BREACHED
+              </span>
+            ) : (
+              <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${aging.badge}`}>
+                {aging.label}
+              </span>
+            )}
             <SlaCountdown createdAt={org.createdAt} />
             {/* P-ADM22: Risk score + trust tier badge */}
             {org.riskScore != null && (
@@ -712,6 +722,10 @@ export default function ApprovalsPage() {
     pendingOver24h: number; avgHoursToApproval: number | null;
   } | null>(null);
 
+  // P-ADM41: vim-style keyboard navigation state
+  const [kbSelectedIdx, setKbSelectedIdx] = useState<number>(-1);
+  const [showHelpOverlay, setShowHelpOverlay] = useState(false);
+
   useEffect(() => {
     if (!user || user.role !== 'super_admin') router.replace('/dashboard');
   }, []);
@@ -739,6 +753,32 @@ export default function ApprovalsPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  // P-ADM39: SSE live approval queue — replaces 60s setInterval polling
+  useEffect(() => {
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com/api/v1';
+    const token = getAccessToken() ?? '';
+    // EventSource doesn't support Authorization header — pass as query param (backend reads it)
+    let es: EventSource | null = null;
+    let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+
+    const connect = () => {
+      es = new EventSource(`${backendUrl}/admin/approvals/stream?token=${encodeURIComponent(token)}`);
+      es.onmessage = () => { load(); };
+      es.onerror = () => {
+        es?.close();
+        es = null;
+        // onerror fallback: poll every 60s
+        if (!fallbackTimer) fallbackTimer = setInterval(load, 60_000);
+      };
+    };
+
+    connect();
+    return () => {
+      es?.close();
+      if (fallbackTimer) clearInterval(fallbackTimer);
+    };
+  }, []);
 
   const approve = async (orgId: string) => {
     setActing(a => ({ ...a, [orgId]: 'approving' }));
@@ -866,6 +906,27 @@ export default function ApprovalsPage() {
       return new Date(a.org.createdAt).getTime() - new Date(b.org.createdAt).getTime(); // oldest first
     });
 
+  // P-ADM41: vim-style keyboard navigation — must be after filteredPending, approve, openRejectModal
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+      if (e.key === '?') { setShowHelpOverlay(p => !p); return; }
+      if (e.key === 'j') { setKbSelectedIdx(i => Math.min(i + 1, filteredPending.length - 1)); return; }
+      if (e.key === 'k') { setKbSelectedIdx(i => Math.max(i - 1, 0)); return; }
+      const idx = kbSelectedIdx;
+      if (idx < 0 || idx >= filteredPending.length) return;
+      const item = filteredPending[idx];
+      if (!item) return;
+      if (e.key === 'Enter') { setSelectedOrg(item); return; }
+      if (e.key === 'a') { approve(item.org.id); return; }
+      if (e.key === 'r') { openRejectModal(item.org.id); return; }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [kbSelectedIdx, filteredPending]);
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
@@ -873,6 +934,16 @@ export default function ApprovalsPage() {
           <h1 className="text-xl font-bold text-gray-900">Pending Approvals</h1>
           <p className="text-sm text-gray-500 mt-0.5">New pharmacy accounts awaiting review</p>
         </div>
+        <div className="flex items-center gap-2">
+        {/* P-ADM41: keyboard shortcuts hint button */}
+        <button
+          onClick={() => setShowHelpOverlay(true)}
+          className="flex items-center gap-1 px-2.5 py-2 text-sm text-gray-400 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+          title="Keyboard shortcuts (?)"
+          aria-label="Show keyboard shortcuts"
+        >
+          <kbd className="font-mono text-xs">?</kbd>
+        </button>
         {/* P-ADM36: Export CSV for HIPAA audit evidence */}
         <button
           onClick={exportCsv}
@@ -885,6 +956,7 @@ export default function ApprovalsPage() {
           </svg>
           {csvExporting ? 'Exporting…' : 'Export CSV'}
         </button>
+        </div>
       </div>
 
       {/* P-ADM29: Approval ops analytics card */}
@@ -1002,6 +1074,7 @@ export default function ApprovalsPage() {
           {filteredPending.map(({ org, admin }, rowIdx) => {
             const aging = getAgingClass(org.createdAt);
             const isSelected = selectedOrg?.org.id === org.id;
+            const isKbSelected = kbSelectedIdx === rowIdx; // P-ADM41
             return (
               <div
                 key={org.id}
@@ -1010,16 +1083,17 @@ export default function ApprovalsPage() {
                 aria-selected={isSelected}
                 tabIndex={0}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedOrg({ org, admin }); } }}
-                className={`bg-white rounded-xl border p-4 flex items-start gap-4 transition-colors cursor-pointer ${
-                  selected.has(org.id) ? 'border-blue-200 bg-blue-50/30'
-                  : isSelected ? 'border-[#0F4C81] ring-1 ring-[#0F4C81]/20'
-                  : aging.border
-                }`}
                 onClick={(e) => {
-                  // Don't open drawer when clicking checkbox or action buttons
+                  setKbSelectedIdx(rowIdx); // P-ADM41: sync keyboard cursor on click
                   if ((e.target as HTMLElement).closest('input,button')) return;
                   setSelectedOrg({ org, admin });
                 }}
+                className={`bg-white rounded-xl border p-4 flex items-start gap-4 transition-colors cursor-pointer ${
+                  selected.has(org.id) ? 'border-blue-200 bg-blue-50/30'
+                  : isSelected ? 'border-[#0F4C81] ring-1 ring-[#0F4C81]/20'
+                  : isKbSelected ? 'border-l-4 border-l-indigo-500 border-gray-200'
+                  : aging.border
+                }`}
               >
                 <input
                   type="checkbox"
@@ -1032,9 +1106,16 @@ export default function ApprovalsPage() {
                 <div role="gridcell" className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                     <p className="font-semibold text-gray-900 truncate">{org.name}</p>
-                    <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${aging.badge}`}>
-                      {aging.label}
-                    </span>
+                    {/* P-ADM40: SLA BREACHED badge — permanent red on list row */}
+                    {org.slaBreachedAt ? (
+                      <span className="px-2 py-0.5 text-xs font-semibold rounded-full border bg-red-600 text-white border-red-700">
+                        ⚠ SLA BREACHED
+                      </span>
+                    ) : (
+                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${aging.badge}`}>
+                        {aging.label}
+                      </span>
+                    )}
                     {org.onHold && (
                       <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-50 text-blue-700 border border-blue-100">
                         On Hold
@@ -1249,6 +1330,40 @@ export default function ApprovalsPage() {
                 <span className="text-xs text-gray-400 shrink-0">{timeAgo(entry.createdAt)}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* P-ADM41: vim keybindings help overlay */}
+      {showHelpOverlay && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-gray-100">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold text-gray-900">Keyboard Shortcuts</h2>
+              <button onClick={() => setShowHelpOverlay(false)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-gray-50">
+                {[
+                  ['j', 'Move selection down'],
+                  ['k', 'Move selection up'],
+                  ['Enter', 'Open detail drawer'],
+                  ['a', 'Approve selected row'],
+                  ['r', 'Reject selected row'],
+                  ['?', 'Toggle this help overlay'],
+                ].map(([key, label]) => (
+                  <tr key={key} className="py-2">
+                    <td className="py-2 pr-4 w-16">
+                      <kbd className="px-2 py-0.5 bg-gray-100 border border-gray-200 rounded text-xs font-mono text-gray-700">{key}</kbd>
+                    </td>
+                    <td className="py-2 text-gray-600">{label}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-xs text-gray-400 mt-4">Shortcuts are disabled when a text input has focus.</p>
           </div>
         </div>
       )}

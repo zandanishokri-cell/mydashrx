@@ -7,6 +7,7 @@ import { eq, and, isNull, gt, sql } from 'drizzle-orm';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
 const disposableDomains: string[] = _require('disposable-email-domains');
+import { notifyApprovalClients } from './superAdmin.js';
 import { hashPassword, signTokens, findUserByEmail } from '../services/auth.js';
 
 const pharmacySignupSchema = z.object({
@@ -215,6 +216,7 @@ export const signupRoutes: FastifyPluginAsync = async (app) => {
 
     notifySuperAdmins(orgName, adminEmail).catch((e: unknown) => { console.error('[Resend] pharmacy signup notify failed:', e); });
     sendApplicantConfirmation(orgName, adminEmail, adminName).catch((e: unknown) => { console.error('[Resend] applicant confirmation failed:', e); });
+    notifyApprovalClients(); // P-ADM39: push new signup to SSE subscribers
 
     // P-CNV15: return tier so frontend can show correct approval timeline
     // Never surface 'block' — treat as 'manual' to avoid tipping off bad actors

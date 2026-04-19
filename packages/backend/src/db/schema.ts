@@ -112,6 +112,9 @@ export const organizations = pgTable('organizations', {
   assignedAt: timestamp('assigned_at'),
   // P-CNV24: role segmentation — captured at Step 0 of signup wizard for copy branching + email segmentation
   orgSize: text('org_size'), // 'solo' | 'small_group' | 'enterprise'
+  // P-ADM40: SLA breach tracking — HIPAA §164.308(a)(1)(ii)(A) machine-readable timeliness evidence
+  slaBreachedAt: timestamp('sla_breached_at'), // set when approval pending >24hr (level 4 escalation)
+  escalationLevel: integer('escalation_level').notNull().default(0), // 0=none, 1=slack_ping, 2=slack_urgent, 3=email_admins, 4=sla_breach
   createdAt: timestamp('created_at').notNull().defaultNow(),
   deletedAt: timestamp('deleted_at'),
 });

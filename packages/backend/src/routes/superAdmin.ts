@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { createHmac, timingSafeEqual, createHash } from 'crypto';
 import { db } from '../db/connection.js';
 import { organizations, users, stops, drivers, adminAuditLogs, auditLogs, magicLinkTokens, refreshTokens, depots, approvalNotes, roleTemplates, plans } from '../db/schema.js';
@@ -7,6 +7,25 @@ import { requireRole } from '../middleware/requireRole.js';
 import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
 import { invalidateOrgRole, invalidateOrg, listTemplates, upsertTemplate } from '../lib/rbacCache.js';
 import { sendOrgApprovalEmail } from '../lib/emailHelpers.js';
+
+// P-ADM39: in-memory SSE client registry for approval queue live updates
+const approvalSseClients = new Set<FastifyReply>();
+
+export function notifyApprovalClients(): void {
+  for (const reply of approvalSseClients) {
+    if (!reply.raw.writableEnded) {
+      reply.raw.write('data: {"type":"refresh"}\n\n');
+    }
+  }
+}
+
+// P-ADM40: SLA escalation ladder — HIPAA §164.308(a)(1)(ii)(A) timeliness evidence
+const SLA_LADDER = [
+  { level: 1, afterHours: 2,  action: 'slack_ping',   message: 'Pending approval needs attention' },
+  { level: 2, afterHours: 4,  action: 'slack_urgent', message: 'URGENT: Approval pending 4+ hours' },
+  { level: 3, afterHours: 8,  action: 'email_admins', message: 'Approval SLA at risk' },
+  { level: 4, afterHours: 24, action: 'sla_breach',   message: 'SLA BREACHED' },
+] as const;
 
 const PLAN_PRICES: Record<string, number> = {
   starter: 0, growth: 99, pro: 249, enterprise: 499,
@@ -327,6 +346,8 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const actor = req.user as { sub: string; email: string };
     await logAuditAction(actor.sub, actor.email, 'approve_org', orgId, org.name);
 
+    notifyApprovalClients(); // P-ADM39: push refresh to all SSE subscribers
+
     return { success: true, orgId };
   });
 
@@ -456,6 +477,8 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const actor = req.user as { sub: string; email: string };
     await logAuditAction(actor.sub, actor.email, 'reject_org', orgId, org.name, { reason: reason ?? null, note: note ?? null });
 
+    notifyApprovalClients(); // P-ADM39
+
     return { success: true, orgId };
   });
 
@@ -509,6 +532,8 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
       }
       return tasks;
     }));
+
+    notifyApprovalClients(); // P-ADM39
 
     return { success: true, processed: foundIds.length, notFound: orgIds.length - foundIds.length };
   });
@@ -672,6 +697,8 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         o.rejection_reason,
         o.auto_approved_at,
         o.reapplied_at,
+        o.sla_breached_at,
+        o.escalation_level,
         o.created_at            AS applied_at,
         a.action                AS decision_action,
         a.actor_email           AS actor_email,
@@ -704,7 +731,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
         'org_id', 'org_name', 'admin_email', 'npi_number', 'npi_verified',
         'risk_score', 'trust_tier', 'billing_plan',
         'decision_action', 'actor_email', 'decided_at', 'rejection_reason',
-        'applied_at', 'auto_approved_at',
+        'applied_at', 'auto_approved_at', 'sla_breached_at', 'escalation_level',
       ];
       const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
       const csvHeader = cols.join(',') + '\n';
@@ -853,29 +880,117 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     return { count: zeroScopeUsers.length, users: zeroScopeUsers };
   });
 
-  // POST /admin/jobs/approval-reminders — P-CNV1: 90min/4hr re-engagement for pending approvals
+  // POST /admin/jobs/approval-reminders — P-ADM40: 4-level chainable SLA escalation ladder
+  // HIPAA §164.308(a)(1)(ii)(A) — machine-readable access authorization timeliness evidence
   app.post('/jobs/approval-reminders', { preHandler: auth }, async () => {
     const now = new Date();
     const resendKey = process.env.RESEND_API_KEY;
     const senderDomain = process.env.SENDER_DOMAIN ?? 'cartana.life';
     const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
+    const slackWebhook = process.env.SLACK_WEBHOOK_URL;
     let sent = 0;
 
     const pending = await db.select().from(organizations)
       .where(and(eq(organizations.pendingApproval, true), isNull(organizations.deletedAt)));
 
     for (const org of pending) {
-      const ageMs = now.getTime() - new Date(org.createdAt).getTime();
-      const ageMin = ageMs / 60_000;
-      const sent90 = (org.approvalReminderSentAt as any)?.t90;
-      const sent4h = (org.approvalReminderSentAt as any)?.t4h;
+      const ageHrs = (now.getTime() - new Date(org.createdAt).getTime()) / 3600_000;
+      const currentLevel = org.escalationLevel ?? 0;
 
       const [admin] = await db.select({ email: users.email, name: users.name })
         .from(users).where(and(eq(users.orgId, org.id), eq(users.role, 'pharmacy_admin'), isNull(users.deletedAt))).limit(1);
-      if (!admin || !resendKey) continue;
+      if (!admin) continue;
 
-      // 90-min touch: 85–95 minutes since signup
-      if (ageMin >= 85 && ageMin < 95 && !sent90) {
+      // Find the highest ladder step that should have fired but hasn't yet
+      for (const step of SLA_LADDER) {
+        if (step.level <= currentLevel) continue; // already sent this level
+        if (ageHrs < step.afterHours) break; // not time yet — steps are ordered
+
+        if (step.action === 'slack_ping' || step.action === 'slack_urgent') {
+          if (slackWebhook) {
+            const urgent = step.action === 'slack_urgent';
+            fetch(slackWebhook, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                blocks: [
+                  { type: 'header', text: { type: 'plain_text', text: `${urgent ? '🚨 URGENT' : '⏰'}: ${step.message} — ${org.name}` } },
+                  { type: 'section', text: { type: 'mrkdwn', text: `*${org.name}* has been pending approval for *${Math.round(ageHrs)}h*.\nApplied by: ${admin.email}` } },
+                  { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Review in Dashboard' }, url: `${dashUrl}/admin/approvals`, style: urgent ? 'danger' : 'primary' }] },
+                ],
+              }),
+            }).catch((e: unknown) => { console.error(`[ADM40] Slack L${step.level} failed:`, e); });
+            sent++;
+          }
+        } else if (step.action === 'email_admins' && resendKey) {
+          const superAdmins = await db.select({ email: users.email, name: users.name })
+            .from(users).where(and(eq(users.role, 'super_admin'), isNull(users.deletedAt)));
+          for (const sa of superAdmins) {
+            fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+              body: JSON.stringify({
+                from: `MyDashRx Alerts <noreply@${senderDomain}>`,
+                to: sa.email,
+                reply_to: 'support@mydashrx.com',
+                subject: `[SLA RISK] ${org.name} — ${Math.round(ageHrs)}h without approval`,
+                track_clicks: false,
+                headers: { 'Feedback-ID': 'admin-escalation:mydashrx:resend:transactional' },
+                html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${step.message}: ${org.name} has been pending ${Math.round(ageHrs)} hours.</span>
+                  <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
+                    <h2 style="color:#dc2626;margin:0 0 8px">Approval SLA at risk</h2>
+                    <p style="color:#374151;font-size:15px">Hi ${sa.name}, <strong>${org.name}</strong> has been pending approval for <strong>${Math.round(ageHrs)} hours</strong>.</p>
+                    <p style="color:#374151;font-size:15px">Applied by: ${admin.email}</p>
+                    <a href="${dashUrl}/admin/approvals" style="display:inline-block;background:#dc2626;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Review application →</a>
+                  </div>`,
+              }),
+            }).catch((e: unknown) => { console.error(`[ADM40] email_admins L${step.level} failed:`, e); });
+          }
+          sent++;
+        } else if (step.action === 'sla_breach') {
+          // Level 4: set slaBreachedAt + audit log — HIPAA timeliness evidence
+          const now_ = new Date();
+          await db.update(organizations)
+            .set({ slaBreachedAt: now_, escalationLevel: step.level })
+            .where(eq(organizations.id, org.id));
+          await db.insert(adminAuditLogs).values({
+            actorId: 'system',
+            actorEmail: 'system@mydashrx.com',
+            action: 'sla_breach',
+            targetId: org.id,
+            targetName: org.name,
+            metadata: { hoursElapsed: Math.round(ageHrs), adminEmail: admin.email },
+          }).catch(() => {});
+          // Also Slack-notify
+          if (slackWebhook) {
+            fetch(slackWebhook, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                blocks: [
+                  { type: 'header', text: { type: 'plain_text', text: `🔴 SLA BREACHED — ${org.name}` } },
+                  { type: 'section', text: { type: 'mrkdwn', text: `*${org.name}* has exceeded the 24-hour approval SLA.\nPending for *${Math.round(ageHrs)} hours*. Breach logged for HIPAA compliance.` } },
+                  { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Review NOW' }, url: `${dashUrl}/admin/approvals`, style: 'danger' }] },
+                ],
+              }),
+            }).catch(() => {});
+          }
+          sent++;
+          break; // level 4 is the max — no need to check further
+        }
+
+        // Advance escalation level (sla_breach already updated it above via break path)
+        // step.action here is slack_ping | slack_urgent | email_admins (sla_breach exits via break)
+        await db.update(organizations)
+          .set({ escalationLevel: step.level })
+          .where(eq(organizations.id, org.id));
+        break; // only fire one new level per run — next cron fires the next level
+      }
+
+      // P-CNV1 applicant touch: 90min status email (kept separate from admin ladder)
+      const ageMin = ageHrs * 60;
+      const sent90 = (org.approvalReminderSentAt as any)?.t90;
+      if (ageMin >= 85 && ageMin < 95 && !sent90 && resendKey) {
         fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
@@ -885,13 +1000,8 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
             reply_to: 'onboarding@mydashrx.com',
             subject: '[MyDashRx] Your application is being reviewed',
             track_clicks: false,
-            // P-DEL17: Gmail postmaster stream bucketing
             headers: { 'Feedback-ID': 'approval-reminder:mydashrx:resend:transactional' },
-            html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your MyDashRx application is actively being reviewed — approval expected within 2–4 hours.</span><div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
-              <h2 style="color:#0F4C81;margin:0 0 8px">We're reviewing your application</h2>
-              <p style="color:#374151;font-size:15px">Hi ${admin.name}, your application for <strong>${org.name}</strong> is actively being reviewed. Most applications are approved within 2–4 business hours.</p>
-              <p style="color:#374151;font-size:15px">While you wait, you can <a href="${dashUrl}/pending-approval">prepare your onboarding checklist</a>.</p>
-            </div>`,
+            html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your MyDashRx application is actively being reviewed.</span><div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px"><h2 style="color:#0F4C81;margin:0 0 8px">We're reviewing your application</h2><p style="color:#374151;font-size:15px">Hi ${admin.name}, your application for <strong>${org.name}</strong> is actively being reviewed. Most applications are approved within 2–4 business hours.</p><p style="color:#374151;font-size:15px">While you wait, you can <a href="${dashUrl}/pending-approval">prepare your onboarding checklist</a>.</p></div>`,
           }),
         }).catch((e: unknown) => { console.error('[CNV1] 90min email failed:', e); });
         await db.update(organizations)
@@ -899,95 +1009,48 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
           .where(eq(organizations.id, org.id));
         sent++;
       }
-
-      // P-ADM10: 24hr admin escalation — email all super_admins when signup pending ≥23hr
-      const sentAdminEsc = (org.approvalReminderSentAt as any)?.adminEsc24h;
-      if (ageMin >= 23 * 60 && !sentAdminEsc) {
-        const superAdmins = await db.select({ email: users.email, name: users.name })
-          .from(users)
-          .where(and(eq(users.role, 'super_admin'), isNull(users.deletedAt)));
-        for (const sa of superAdmins) {
-          if (!resendKey) continue;
-          fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-            body: JSON.stringify({
-              from: `MyDashRx Alerts <noreply@${senderDomain}>`,
-              to: sa.email,
-              reply_to: 'support@mydashrx.com',
-              subject: `[ACTION NEEDED] ${org.name} has been waiting 24hr for approval`,
-              track_clicks: false,
-              // P-DEL17: Gmail postmaster stream bucketing
-              headers: { 'Feedback-ID': 'admin-escalation:mydashrx:resend:transactional' },
-              html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Urgent: ${org.name} has been waiting over 24 hours for approval — action required.</span><div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
-                <h2 style="color:#dc2626;margin:0 0 8px">Pending approval: 24+ hours</h2>
-                <p style="color:#374151;font-size:15px">Hi ${sa.name}, <strong>${org.name}</strong> submitted their pharmacy application over 24 hours ago and is still awaiting approval.</p>
-                <p style="color:#374151;font-size:15px">Applied by: ${admin.email}</p>
-                <a href="${dashUrl}/admin/approvals" style="display:inline-block;background:#dc2626;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;">Review application →</a>
-              </div>`,
-            }),
-          }).catch((e: unknown) => { console.error('[ADM10] admin escalation email failed:', e); });
-        }
-        await db.update(organizations)
-          .set({ approvalReminderSentAt: { ...(org.approvalReminderSentAt as object ?? {}), adminEsc24h: now.toISOString() } })
-          .where(eq(organizations.id, org.id));
-        sent++;
-      }
-
-      // P-ADM14: Slack 48hr escalation — pings Slack channel when signup stalls 47-48h
-      const slack48hSent = (org.approvalReminderSentAt as any)?.adminSlack48h;
-      const slackWebhook = process.env.SLACK_WEBHOOK_URL;
-      if (ageMin >= 47 * 60 && !slack48hSent && slackWebhook) {
-        const orgAge = Math.round(ageMin / 60);
-        await fetch(slackWebhook, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            blocks: [
-              { type: 'header', text: { type: 'plain_text', text: `🚨 Signup stalled ${orgAge}h — ${org.name}` } },
-              { type: 'section', text: { type: 'mrkdwn', text: `*${org.name}* has been pending approval for *${orgAge} hours*.\nThis pharmacy can't deliver prescriptions until approved.` } },
-              { type: 'actions', elements: [
-                { type: 'button', text: { type: 'plain_text', text: 'Review in Dashboard' },
-                  url: `${dashUrl}/admin/approvals`, style: 'primary' }
-              ]}
-            ]
-          }),
-        }).catch((e: unknown) => { console.error('[ADM14] Slack escalation failed:', e); });
-
-        await db.update(organizations)
-          .set({ approvalReminderSentAt: { ...(org.approvalReminderSentAt as object ?? {}), adminSlack48h: now.toISOString() } })
-          .where(eq(organizations.id, org.id));
-        sent++;
-      }
-
-      // 4-hour fallback: 235–245 minutes since signup
-      if (ageMin >= 235 && ageMin < 245 && !sent4h) {
-        fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-          body: JSON.stringify({
-            from: `MyDashRx <noreply@${senderDomain}>`,
-            to: admin.email,
-            reply_to: 'onboarding@mydashrx.com',
-            subject: '[MyDashRx] Still reviewing your application',
-            track_clicks: false,
-            // P-DEL17: Gmail postmaster stream bucketing
-            headers: { 'Feedback-ID': 'approval-reminder:mydashrx:resend:transactional' },
-            html: `<span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your MyDashRx application review is still in progress — our team is on it.</span><div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
-              <h2 style="color:#0F4C81;margin:0 0 8px">We haven't forgotten you</h2>
-              <p style="color:#374151;font-size:15px">Hi ${admin.name}, your application for <strong>${org.name}</strong> is taking a little longer than usual. Our team will reach out personally if we need anything.</p>
-              <p style="color:#374151;font-size:15px">Questions? Reply to this email — we respond within 2 hours.</p>
-            </div>`,
-          }),
-        }).catch((e: unknown) => { console.error('[CNV1] 4hr email failed:', e); });
-        await db.update(organizations)
-          .set({ approvalReminderSentAt: { ...(org.approvalReminderSentAt as object ?? {}), t4h: now.toISOString() } })
-          .where(eq(organizations.id, org.id));
-        sent++;
-      }
     }
 
     return { sent, checked: pending.length };
+  });
+
+  // GET /admin/approvals/stream — P-ADM39: SSE live approval queue
+  // EventSource doesn't support Authorization header — accept ?token= query param
+  app.get('/approvals/stream', async (req, reply) => {
+    const { token } = req.query as { token?: string };
+    // Inject token from query param into Authorization header for jwtVerify
+    if (token && !req.headers.authorization) {
+      (req.headers as any).authorization = `Bearer ${token}`;
+    }
+    try {
+      await req.jwtVerify();
+    } catch {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+    const payload = req.user as { role: string };
+    if (payload.role !== 'super_admin') return reply.code(403).send({ error: 'Forbidden' });
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    reply.raw.flushHeaders?.();
+
+    approvalSseClients.add(reply);
+
+    // Heartbeat every 25s — keeps connection alive through proxies
+    const heartbeat = setInterval(() => {
+      if (!reply.raw.writableEnded) reply.raw.write(':\n\n');
+    }, 25000);
+
+    req.raw.on('close', () => {
+      clearInterval(heartbeat);
+      approvalSseClients.delete(reply);
+    });
+
+    await new Promise<void>(resolve => req.raw.on('close', resolve));
   });
 
   // POST /admin/jobs/cleanup-tokens — P-CLN2 + P-CLN3: Delete expired/used magic link tokens + stale refresh tokens

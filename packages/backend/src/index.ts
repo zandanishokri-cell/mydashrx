@@ -224,6 +224,15 @@ try {
   console.error('P-ONB42 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-ADM40: SLA breach tracking + escalation level — HIPAA §164.308(a)(1)(ii)(A)
+try {
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sla_breached_at timestamptz`);
+  await db.execute(sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS escalation_level integer NOT NULL DEFAULT 0`);
+  console.log('P-ADM40 sla_breached_at + escalation_level columns ensured');
+} catch (err) {
+  console.error('P-ADM40 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-COMP11: idempotent DDL for Stripe copay payment link columns on stops
 try {
   await db.execute(sql`ALTER TABLE stops ADD COLUMN IF NOT EXISTS payment_link_token text`);
