@@ -59,21 +59,21 @@ export default function DriverLoginPage() {
           <form onSubmit={submit} className="space-y-3">
             {tab === 'register' && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                <input value={name} onChange={e => setName(e.target.value)} required
+                <label htmlFor="driver-name" className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                <input id="driver-name" autoComplete="name" value={name} onChange={e => setName(e.target.value)} required
                   className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
                   placeholder="John Smith" />
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
+              <label htmlFor="driver-email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input id="driver-email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
                 placeholder="driver@example.com" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
+              <label htmlFor="driver-password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <input id="driver-password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
                 placeholder={tab === 'register' ? 'Min. 8 characters' : '••••••••'} />
             </div>

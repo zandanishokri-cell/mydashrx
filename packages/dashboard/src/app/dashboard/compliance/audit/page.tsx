@@ -183,26 +183,26 @@ export default function AuditPage() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">From</label>
-            <input type="date" value={compFrom} onChange={e => setCompFrom(e.target.value)}
+            <label htmlFor="comp-export-from" className="block text-xs font-medium text-gray-500 mb-1">From</label>
+            <input id="comp-export-from" type="date" value={compFrom} onChange={e => setCompFrom(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">To</label>
-            <input type="date" value={compTo} onChange={e => setCompTo(e.target.value)}
+            <label htmlFor="comp-export-to" className="block text-xs font-medium text-gray-500 mb-1">To</label>
+            <input id="comp-export-to" type="date" value={compTo} onChange={e => setCompTo(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+            <label htmlFor="comp-export-phone" className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
               <Phone size={11} /> Patient Phone (optional)
             </label>
-            <input value={compPhone} onChange={e => setCompPhone(e.target.value)}
+            <input id="comp-export-phone" value={compPhone} onChange={e => setCompPhone(e.target.value)}
               placeholder="+15551234567"
               className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Format</label>
-            <select value={compFormat} onChange={e => setCompFormat(e.target.value as 'csv' | 'json')}
+            <label htmlFor="comp-export-format" className="block text-xs font-medium text-gray-500 mb-1">Format</label>
+            <select id="comp-export-format" value={compFormat} onChange={e => setCompFormat(e.target.value as 'csv' | 'json')}
               aria-label="Export format"
               className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
               <option value="csv">CSV</option>
@@ -226,30 +226,30 @@ export default function AuditPage() {
       <div className="bg-white rounded-xl border border-gray-100 p-4">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">From</label>
-            <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+            <label htmlFor="audit-from" className="block text-xs font-medium text-gray-500 mb-1">From</label>
+            <input id="audit-from" type="date" value={from} onChange={e => setFrom(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">To</label>
-            <input type="date" value={to} onChange={e => setTo(e.target.value)}
+            <label htmlFor="audit-to" className="block text-xs font-medium text-gray-500 mb-1">To</label>
+            <input id="audit-to" type="date" value={to} onChange={e => setTo(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">User</label>
-            <input value={userFilter} onChange={e => setUserFilter(e.target.value)}
+            <label htmlFor="audit-user" className="block text-xs font-medium text-gray-500 mb-1">User</label>
+            <input id="audit-user" value={userFilter} onChange={e => setUserFilter(e.target.value)}
               placeholder="user@email.com"
               className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Action</label>
-            <input value={actionFilter} onChange={e => setActionFilter(e.target.value)}
+            <label htmlFor="audit-action" className="block text-xs font-medium text-gray-500 mb-1">Action</label>
+            <input id="audit-action" value={actionFilter} onChange={e => setActionFilter(e.target.value)}
               placeholder="e.g. view_stop"
               className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Resource</label>
-            <input value={resourceFilter} onChange={e => setResourceFilter(e.target.value)}
+            <label htmlFor="audit-resource" className="block text-xs font-medium text-gray-500 mb-1">Resource</label>
+            <input id="audit-resource" value={resourceFilter} onChange={e => setResourceFilter(e.target.value)}
               placeholder="e.g. stop"
               className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
           </div>

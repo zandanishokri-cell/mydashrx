@@ -208,8 +208,9 @@ export default function BaaPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Vendor Name *</label>
+              <label htmlFor="baa-vendor" className="block text-xs font-medium text-gray-700 mb-1">Vendor Name *</label>
               <input
+                id="baa-vendor"
                 value={form.vendorName}
                 onChange={e => setForm(f => ({ ...f, vendorName: e.target.value }))}
                 placeholder="e.g. Twilio"
@@ -217,8 +218,9 @@ export default function BaaPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Service *</label>
+              <label htmlFor="baa-service" className="block text-xs font-medium text-gray-700 mb-1">Service *</label>
               <input
+                id="baa-service"
                 value={form.service}
                 onChange={e => setForm(f => ({ ...f, service: e.target.value }))}
                 placeholder="e.g. SMS / IVR"
@@ -252,8 +254,9 @@ export default function BaaPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Signed Date</label>
+              <label htmlFor="baa-signed-date" className="block text-xs font-medium text-gray-700 mb-1">Signed Date</label>
               <input
+                id="baa-signed-date"
                 type="date"
                 value={form.signedAt}
                 onChange={e => setForm(f => ({ ...f, signedAt: e.target.value }))}
@@ -261,8 +264,9 @@ export default function BaaPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Expiry Date</label>
+              <label htmlFor="baa-expiry-date" className="block text-xs font-medium text-gray-700 mb-1">Expiry Date</label>
               <input
+                id="baa-expiry-date"
                 type="date"
                 value={form.expiresAt}
                 onChange={e => setForm(f => ({ ...f, expiresAt: e.target.value }))}
@@ -270,8 +274,9 @@ export default function BaaPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Document URL</label>
+              <label htmlFor="baa-doc-url" className="block text-xs font-medium text-gray-700 mb-1">Document URL</label>
               <input
+                id="baa-doc-url"
                 value={form.documentUrl}
                 onChange={e => setForm(f => ({ ...f, documentUrl: e.target.value }))}
                 placeholder="https://..."
@@ -279,8 +284,9 @@ export default function BaaPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
+              <label htmlFor="baa-notes" className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
               <input
+                id="baa-notes"
                 value={form.notes}
                 onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                 placeholder="Optional notes"

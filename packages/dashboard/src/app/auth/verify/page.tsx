@@ -452,9 +452,11 @@ function VerifyContent() {
         </div>
         <form onSubmit={handleOtpSubmit} className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Email address</label>
+            <label htmlFor="verify-email" className="block text-xs font-medium text-gray-600 mb-1">Email address</label>
             <input
+              id="verify-email"
               type="email"
+              autoComplete="email"
               value={otpEmail}
               onChange={e => setOtpEmail(e.target.value)}
               placeholder="you@pharmacy.com"
@@ -463,8 +465,9 @@ function VerifyContent() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Verification code</label>
+            <label htmlFor="verify-code" className="block text-xs font-medium text-gray-600 mb-1">Verification code</label>
             <input
+              id="verify-code"
               type="text"
               inputMode="numeric"
               autoComplete="one-time-code"

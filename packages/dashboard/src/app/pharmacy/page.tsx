@@ -98,18 +98,18 @@ export default function PharmacySubmitPage() {
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3.5">
             <h2 className="text-sm font-bold text-gray-800">Patient Info</h2>
             <div>
-              <label className={labelCls}>Patient Name <span className="text-red-400">*</span></label>
-              <input value={form.recipientName} onChange={e => set('recipientName', e.target.value)} required
+              <label htmlFor="rx-patient-name" className={labelCls}>Patient Name <span className="text-red-400">*</span></label>
+              <input id="rx-patient-name" autoComplete="name" value={form.recipientName} onChange={e => set('recipientName', e.target.value)} required
                 className={inputCls} placeholder="Jane Smith" />
             </div>
             <div>
-              <label className={labelCls}>Phone Number</label>
-              <input type="tel" value={form.recipientPhone} onChange={e => set('recipientPhone', e.target.value)}
+              <label htmlFor="rx-phone" className={labelCls}>Phone Number</label>
+              <input id="rx-phone" type="tel" autoComplete="tel" value={form.recipientPhone} onChange={e => set('recipientPhone', e.target.value)}
                 className={inputCls} placeholder="+1 313 555 0100" inputMode="tel" />
             </div>
             <div>
-              <label className={labelCls}>Delivery Address <span className="text-red-400">*</span></label>
-              <input value={form.address} onChange={e => set('address', e.target.value)} required
+              <label htmlFor="rx-address" className={labelCls}>Delivery Address <span className="text-red-400">*</span></label>
+              <input id="rx-address" autoComplete="street-address" value={form.address} onChange={e => set('address', e.target.value)} required
                 className={inputCls} placeholder="123 Main St, Detroit, MI 48201" />
             </div>
           </div>
@@ -119,8 +119,8 @@ export default function PharmacySubmitPage() {
             <h2 className="text-sm font-bold text-gray-800">Order Details</h2>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={labelCls}>Rx Numbers</label>
-                <input value={form.rxNumbers} onChange={e => set('rxNumbers', e.target.value)}
+                <label htmlFor="rx-numbers" className={labelCls}>Rx Numbers</label>
+                <input id="rx-numbers" value={form.rxNumbers} onChange={e => set('rxNumbers', e.target.value)}
                   className={inputCls} placeholder="RX001, RX002" />
               </div>
               <div>

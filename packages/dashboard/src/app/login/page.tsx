@@ -256,13 +256,29 @@ function LoginForm() {
           : <p className="text-red-400 text-xs mb-2">Link expired — please request a new one.</p>
         }
         {/* P-DEL32: forwarding risk banner — shown when IT forwarder pattern detected */}
+        {/* P-A11Y32: always-mounted OTP error live region — SR announces on content change */}
+        <p
+          id="otp-forwarding-error"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className={`text-red-500 text-xs mt-1 ${otpError ? '' : 'sr-only'}`}
+        >{otpError}</p>
         {forwardingRisk && (
-          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-left">
+          <div
+            className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-left"
+            role="alert"
+            aria-label="Email forwarding detected"
+          >
             <p className="text-amber-800 text-xs font-semibold mb-1">Your email may be forwarded</p>
             <p className="text-amber-700 text-xs mb-2">IT email forwarders can consume magic links before you see them. Enter the 6-digit code from the email instead:</p>
             <form onSubmit={submitOtpCode} className="flex gap-2">
               <input
+                id="otp-forwarding-code"
                 type="text"
+                aria-label="6-digit verification code"
+                aria-describedby="otp-forwarding-error"
+                aria-invalid={!!otpError || undefined}
                 value={otpCode}
                 onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9\s]/g, ''))}
                 placeholder="123 456"
@@ -274,12 +290,12 @@ function LoginForm() {
               <button
                 type="submit"
                 disabled={otpLoading || otpCode.replace(/\s/g, '').length < 6}
+                aria-busy={otpLoading}
                 className="bg-amber-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
               >
                 {otpLoading ? '…' : 'Verify'}
               </button>
             </form>
-            {otpError && <p className="text-red-500 text-xs mt-1">{otpError}</p>}
           </div>
         )}
         {/* P-ML20: provider-specific hint */}
@@ -310,7 +326,9 @@ function LoginForm() {
             <p className="text-xs text-gray-500 mb-3">Didn't get it? Try signing in with your password instead.</p>
             <form onSubmit={signInWithPassword} className="space-y-3">
               <input
+                id="login-password"
                 type="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Password"
@@ -359,9 +377,11 @@ function LoginForm() {
 
       <form onSubmit={requestMagicLink} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Email address</label>
+          <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1">Email address</label>
           <input
+            id="login-email"
             type="email"
+            autoComplete="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@pharmacy.com"

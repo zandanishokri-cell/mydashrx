@@ -377,10 +377,10 @@ export default function PharmacySignupPage() {
         {step === 1 && (
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Pharmacy name</label>
+              <label htmlFor="signup-org-name" className="block text-sm font-medium text-gray-700 mb-1">Pharmacy name</label>
               {/* P-CNV30: relative wrapper + FieldCheck + onBlur markValid */}
               <div className="relative">
-                <input value={form.orgName} onChange={set('orgName')}
+                <input id="signup-org-name" autoComplete="organization" value={form.orgName} onChange={set('orgName')}
                   onBlur={e => markValid('orgName', fieldValidators.orgName(e.target.value))}
                   placeholder="Greater Care Pharmacy"
                   className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 pr-8" />
@@ -388,9 +388,9 @@ export default function PharmacySignupPage() {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone number <span className="text-gray-400 font-normal">(optional)</span></label>
+              <label htmlFor="signup-org-phone" className="block text-sm font-medium text-gray-700 mb-1">Phone number <span className="text-gray-400 font-normal">(optional)</span></label>
               <div className="relative">
-                <input value={form.orgPhone} onChange={set('orgPhone')}
+                <input id="signup-org-phone" autoComplete="tel" value={form.orgPhone} onChange={set('orgPhone')}
                   onBlur={e => { if (e.target.value) markValid('orgPhone', fieldValidators.orgPhone(e.target.value)); }}
                   placeholder="(555) 000-0000"
                   className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 pr-8" />
@@ -399,9 +399,9 @@ export default function PharmacySignupPage() {
               <p className="text-xs text-gray-400 mt-1">You can add this in Settings after approval</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Address <span className="text-gray-400 font-normal">(optional)</span></label>
+              <label htmlFor="signup-org-address" className="block text-sm font-medium text-gray-700 mb-1">Address <span className="text-gray-400 font-normal">(optional)</span></label>
               <div className="relative">
-                <input value={form.orgAddress} onChange={set('orgAddress')}
+                <input id="signup-org-address" autoComplete="street-address" value={form.orgAddress} onChange={set('orgAddress')}
                   onBlur={e => { if (e.target.value) markValid('orgAddress', fieldValidators.orgAddress(e.target.value)); }}
                   placeholder="123 Main St, Detroit, MI 48201"
                   className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 pr-8" />
@@ -411,11 +411,12 @@ export default function PharmacySignupPage() {
             </div>
             {/* P-CNV12: NPI field with NPPES inline verification */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="signup-npi" className="block text-sm font-medium text-gray-700 mb-1">
                 Pharmacy NPI <span className="text-gray-400 font-normal">(optional — speeds up approval)</span>
               </label>
               <div className="relative">
                 <input
+                  id="signup-npi"
                   value={npiNumber}
                   onChange={e => {
                     const next = e.target.value.replace(/\D/g, '').slice(0, 10);
@@ -449,10 +450,10 @@ export default function PharmacySignupPage() {
         {step === 2 && (
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Your full name</label>
+              <label htmlFor="signup-admin-name" className="block text-sm font-medium text-gray-700 mb-1">Your full name</label>
               {/* P-CNV30: FieldCheck on name */}
               <div className="relative">
-                <input value={form.adminName} onChange={set('adminName')}
+                <input id="signup-admin-name" autoComplete="name" value={form.adminName} onChange={set('adminName')}
                   onBlur={e => markValid('adminName', fieldValidators.adminName(e.target.value))}
                   placeholder="Jane Smith"
                   className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 pr-8" />
@@ -460,11 +461,13 @@ export default function PharmacySignupPage() {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Work email</label>
+              <label htmlFor="signup-admin-email" className="block text-sm font-medium text-gray-700 mb-1">Work email</label>
               {/* P-CNV30: FieldCheck on email */}
               <div className="relative">
                 <input
+                  id="signup-admin-email"
                   type="email"
+                  autoComplete="email"
                   value={form.adminEmail}
                   onChange={e => { set('adminEmail')(e); if (emailError) setEmailError(validateEmail(e.target.value)); }}
                   onBlur={e => {
@@ -491,10 +494,12 @@ export default function PharmacySignupPage() {
             </div>
             {/* P-CNV30: Password field with strength bar */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <label htmlFor="signup-admin-password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
               <div className="relative">
                 <input
+                  id="signup-admin-password"
                   type="password"
+                  autoComplete="new-password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   onBlur={e => markValid('adminPassword', fieldValidators.adminPassword(e.target.value))}

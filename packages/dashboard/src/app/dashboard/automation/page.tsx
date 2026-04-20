@@ -130,8 +130,9 @@ function AddRuleModal({ onClose, onSaved, orgId }: ModalProps) {
           {err && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{err}</p>}
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Rule Name</label>
+            <label htmlFor="automation-rule-name" className="block text-xs font-medium text-gray-600 mb-1">Rule Name</label>
             <input
+              id="automation-rule-name"
               value={form.name}
               onChange={e => set('name', e.target.value)}
               placeholder="e.g. Notify patient on delivery"
@@ -175,8 +176,9 @@ function AddRuleModal({ onClose, onSaved, orgId }: ModalProps) {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">SMS Template</label>
+            <label htmlFor="automation-sms-template" className="block text-xs font-medium text-gray-600 mb-1">SMS Template</label>
             <textarea
+              id="automation-sms-template"
               value={form.smsTemplate}
               onChange={e => set('smsTemplate', e.target.value)}
               rows={2}
@@ -192,8 +194,9 @@ function AddRuleModal({ onClose, onSaved, orgId }: ModalProps) {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Email Subject</label>
+            <label htmlFor="automation-email-subject" className="block text-xs font-medium text-gray-600 mb-1">Email Subject</label>
             <input
+              id="automation-email-subject"
               value={form.emailSubject}
               onChange={e => set('emailSubject', e.target.value)}
               placeholder="Your delivery update — {{address}}"
@@ -202,8 +205,9 @@ function AddRuleModal({ onClose, onSaved, orgId }: ModalProps) {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Email Body (HTML)</label>
+            <label htmlFor="automation-email-body" className="block text-xs font-medium text-gray-600 mb-1">Email Body (HTML)</label>
             <textarea
+              id="automation-email-body"
               value={form.emailTemplate}
               onChange={e => set('emailTemplate', e.target.value)}
               rows={3}

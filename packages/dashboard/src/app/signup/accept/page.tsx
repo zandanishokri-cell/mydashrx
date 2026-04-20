@@ -71,8 +71,10 @@ function AcceptContent() {
       </div>
       <form onSubmit={accept} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Your full name</label>
+          <label htmlFor="accept-name" className="block text-sm font-medium text-gray-700 mb-1">Your full name</label>
           <input
+            id="accept-name"
+            autoComplete="name"
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="Jane Smith"
