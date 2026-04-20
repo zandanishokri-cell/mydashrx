@@ -570,7 +570,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /admin/approvals/batch — batch approve or reject
   // POST /admin/approvals/batch — P-ADM34: direct DB transaction, no app.inject HTTP round-trips
-  app.post('/approvals/batch', { preHandler: auth }, async (req, reply) => {
+  app.post('/approvals/batch', { preHandler: auth, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { orgIds, action, reason, note } = req.body as { orgIds?: string[]; action?: 'approve' | 'reject'; reason?: string; note?: string };
     if (!Array.isArray(orgIds) || orgIds.length === 0) return reply.code(400).send({ error: 'orgIds array required' });
     if (action !== 'approve' && action !== 'reject') return reply.code(400).send({ error: 'action must be approve or reject' });
@@ -915,7 +915,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /admin/audit-log — filterable audit trail (HIPAA §164.312(b))
   // P-PERF11: keyset cursor pagination — no OFFSET full-table scan
-  app.get('/audit-log', { preHandler: auth }, async (req, reply) => {
+  app.get('/audit-log', { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { eventTypes, actorEmail, from, to, format, limit: limitStr, cursor } = req.query as {
       eventTypes?: string; actorEmail?: string; from?: string; to?: string;
       format?: string; limit?: string; cursor?: string;
@@ -1026,7 +1026,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
   // DELETE /admin/users/:userId/revoke-sessions — P-SES30: admin force-revoke all sessions for a user
   // Bumps tokenVersion (invalidates all active ATs immediately) + revokes all active RTs. HIPAA §164.312(a)(1).
-  app.delete('/users/:userId/revoke-sessions', { preHandler: auth }, async (req, reply) => {
+  app.delete('/users/:userId/revoke-sessions', { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { userId } = req.params as { userId: string };
     const actor = req.user as { sub: string; email: string; role: string };
     if (actor.role !== 'super_admin') return reply.code(403).send({ error: 'super_admin required' });
@@ -1719,7 +1719,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /admin/rbac-audit/permissions — P-RBAC16: permission change history with before/after diff
   // HIPAA §164.312(b): audit reconstruction for permission changes
-  app.get('/rbac-audit/permissions', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+  app.get('/rbac-audit/permissions', { preHandler: requireRole('super_admin'), config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { orgId, role, format, cursor, limit: limitStr } = req.query as {
       orgId?: string; role?: string; format?: string; cursor?: string; limit?: string;
     };
@@ -1786,7 +1786,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
 
   // P-RBAC39: GET /admin/rbac-audit/permissions/export — CSV download for HIPAA §164.312(b)
   // Streams permission-change audit events as a 10-col CSV artifact for OCR/BA audits
-  app.get('/rbac-audit/permissions/export', { preHandler: requireRole('super_admin') }, async (req, reply) => {
+  app.get('/rbac-audit/permissions/export', { preHandler: requireRole('super_admin'), config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { from, to, orgId } = req.query as { from?: string; to?: string; orgId?: string };
     const conditions: any[] = [
       sql`action IN ('role_template_updated', 'org_role_permissions_updated')`,
@@ -1840,6 +1840,7 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
   // HIPAA §164.308(a)(4)(ii)(B) — consistent access authorization across multi-location covered entities
   app.post('/chains/:chainId/role-templates/propagate', {
     preHandler: requireRole('super_admin'),
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
     schema: {
       params: { type: 'object', properties: { chainId: { type: 'string', format: 'uuid' } }, required: ['chainId'] },
       body: { type: 'object', properties: { role: { type: 'string' }, permissions: { type: 'array', items: { type: 'string' } } }, required: ['role', 'permissions'] },

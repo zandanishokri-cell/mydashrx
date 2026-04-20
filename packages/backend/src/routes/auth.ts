@@ -542,6 +542,21 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         console.warn(JSON.stringify({ event: 'rt_binding_mismatch', storedIp: txStoredIp, requestIp: req.ip, uaMismatch: !!uaMismatch, ts: new Date().toISOString() }));
       }
 
+      // P-SEC48: device fingerprint enforcement — soft signal per RFC 9700 (no hard block)
+      if (txStoredUa) {
+        const storedFingerprint = buildDeviceFingerprint(txStoredUa, null, null);
+        if (storedFingerprint !== deviceFingerprint) {
+          db.insert(adminAuditLogs).values({
+            actorId: decoded.sub,
+            actorEmail: 'unknown',
+            action: 'rt_device_fingerprint_mismatch',
+            targetId: decoded.sub,
+            targetName: decoded.sub,
+            metadata: { ip: req.ip, severity: 'HIGH', storedUaPrefix: txStoredUa.slice(0, 40), requestUaPrefix: (ua ?? '').slice(0, 40) },
+          }).catch(() => {});
+        }
+      }
+
       const user = await findUserById(decoded.sub);
       if (!user || user.deletedAt) return reply.code(401).send({ error: 'User not found' });
       if (decoded.tv !== undefined && decoded.tv !== user.tokenVersion) {
@@ -1006,7 +1021,25 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // P-ML2: Step 2 — POST /magic-link/confirm consumes token and issues JWT
-  app.post('/magic-link/confirm', async (req, reply) => {
+  // P-SEC46: rate limit confirm — 10 attempts per 5 minutes, log on exceed
+  app.post('/magic-link/confirm', {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '5 minutes',
+        onExceeded: (req: import('fastify').FastifyRequest) => {
+          db.insert(adminAuditLogs).values({
+            actorId: '00000000-0000-0000-0000-000000000000',
+            actorEmail: (req.body as { email?: string })?.email ?? 'unknown',
+            action: 'magic_link_confirm_rate_exceeded',
+            targetId: '00000000-0000-0000-0000-000000000000',
+            targetName: (req.body as { email?: string })?.email ?? 'unknown',
+            metadata: { ip: req.ip, severity: 'HIGH' },
+          }).catch(() => {});
+        },
+      },
+    },
+  }, async (req, reply) => {
     const { token, fp: confirmFp } = req.body as { token?: string; fp?: string };
     if (!token) return reply.code(400).send({ error: 'Token required' });
 
