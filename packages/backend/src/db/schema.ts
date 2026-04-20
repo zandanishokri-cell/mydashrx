@@ -182,6 +182,11 @@ export const users = pgTable(
     softBounceCount: integer('soft_bounce_count').notNull().default(0),
     softBounceLastAt: timestamp('soft_bounce_last_at'),
     softBounceSuppressedUntil: timestamp('soft_bounce_suppressed_until'),
+    // P-MFA1: TOTP MFA — HIPAA 2025 NPRM mandatory ePHI access authentication
+    mfaEnabled: boolean('mfa_enabled').notNull().default(false),
+    totpSecret: text('totp_secret'),           // AES-256-GCM encrypted via PHI_ENCRYPTION_KEY
+    totpEnabledAt: timestamp('totp_enabled_at'),
+    totpBackupCodes: jsonb('totp_backup_codes'), // array of bcrypt-hashed 8-char backup codes
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },

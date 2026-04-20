@@ -80,6 +80,14 @@ export default function AdminPage() {
   const [drift, setDrift] = useState<{ count: number; drifts: Array<{ orgId: string; orgName: string; role: string; addedPerms: string[]; removedPerms: string[] }> } | null>(null);
   // P-RBAC39: CSV export state
   const [permExporting, setPermExporting] = useState(false);
+  // P-COMP16: Security Health card
+  const [secHealth, setSecHealth] = useState<{
+    mfaRate: number; mfaEnrolled: number; mfaTotal: number;
+    fingerprintMismatches7d: number; rateLimitHits24h: number;
+    failedLogins24h: number; activeSessions: number;
+    thresholds: { fingerprintMismatchesAlert: number; failedLoginsAlert: number; mfaRateWarn: number };
+  } | null>(null);
+  const [mfaExporting, setMfaExporting] = useState(false);
 
   useEffect(() => {
     if (!user || user.role !== 'super_admin') { router.replace('/dashboard'); return; }
@@ -89,7 +97,7 @@ export default function AdminPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, o, f, rbacAudit, tlsAudit, driftData] = await Promise.all([
+      const [s, o, f, rbacAudit, tlsAudit, driftData, secHealthData] = await Promise.all([
         api.get<Stats>('/admin/stats'),
         api.get<OrgListResponse>('/admin/orgs'),
         api.get<MagicLinkFunnel>('/admin/magic-link/funnel').catch(() => null),
@@ -104,9 +112,12 @@ export default function AdminPage() {
         api.get<{ count: number; drifts: Array<{ orgId: string; orgName: string; role: string; addedPerms: string[]; removedPerms: string[] }> }>(
           '/admin/rbac-audit/drift'
         ).catch(() => null),
+        // P-COMP16: Security Health
+        api.get<any>('/admin/security-health').catch(() => null),
       ]);
       setStats(s); setOrgs(o.orgs); setOrgsNextCursor(o.nextCursor); setOrgsHasMore(o.hasMore); setFunnel(f);
       if (driftData) setDrift(driftData);
+      if (secHealthData) setSecHealth(secHealthData);
       // P-DEL27: parse latest TLS-RPT report for health indicator
       if (tlsAudit?.events?.length) {
         const e = tlsAudit.events[0];
@@ -178,6 +189,26 @@ export default function AdminPage() {
     } finally { setOrgsLoadingMore(false); }
   };
 
+  // P-COMP17: download MFA audit report CSV — HIPAA §164.312(d) evidence
+  const exportMfaReport = async () => {
+    if (mfaExporting) return;
+    setMfaExporting(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com/api/v1';
+      const token = getAccessToken() ?? '';
+      const res = await fetch(`${backendUrl}/admin/security-health/mfa-report`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `mydashrx-mfa-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+    } catch { /* silent */ }
+    finally { setMfaExporting(false); }
+  };
+
   // P-RBAC39: download permission history CSV — HIPAA §164.312(b) audit artifact
   const exportPermHistory = async () => {
     if (permExporting) return;
@@ -210,6 +241,15 @@ export default function AdminPage() {
             <h1 className="text-xl font-bold text-gray-900" style={{ fontFamily: 'var(--font-sora)' }}>Platform Admin</h1>
           </div>
           <div className="flex items-center gap-2">
+            {/* P-COMP17: MFA audit evidence CSV — HIPAA §164.312(d) */}
+            <button
+              onClick={exportMfaReport}
+              disabled={mfaExporting}
+              title="Export MFA audit report (HIPAA §164.312(d) evidence)"
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-purple-200 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-50 transition-colors disabled:opacity-50"
+            >
+              <Download size={14} /> {mfaExporting ? 'Exporting…' : 'MFA Report'}
+            </button>
             {/* P-RBAC39: permission history CSV export — HIPAA §164.312(b) evidence artifact */}
             <button
               onClick={exportPermHistory}
@@ -396,6 +436,59 @@ export default function AdminPage() {
             ))}
           </div>
           <p className="text-xs text-gray-400 mt-2">Refresh to re-run live drift check. Use RBAC admin to propagate fixes.</p>
+        </div>
+      )}
+
+      {/* P-COMP16: Security Health Card — MFA rate + threat signals */}
+      {secHealth && (
+        <div className="px-6 py-3 border-b border-purple-100 bg-white/60 shrink-0">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={14} className="text-indigo-500" />
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Security Health — HIPAA §164.312(d)</span>
+            </div>
+            <button onClick={exportMfaReport} disabled={mfaExporting} className="text-xs text-indigo-600 hover:text-indigo-800 disabled:opacity-50">
+              {mfaExporting ? 'Exporting…' : 'Download MFA Report (CSV)'}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {/* MFA Enrollment Rate */}
+            <div className={`rounded-lg px-4 py-3 ${secHealth.mfaRate < secHealth.thresholds.mfaRateWarn ? 'bg-amber-50' : 'bg-green-50'}`}>
+              <p className="text-xs text-gray-400 mb-1">MFA Enrollment</p>
+              <p className={`text-lg font-bold ${secHealth.mfaRate < secHealth.thresholds.mfaRateWarn ? 'text-amber-600' : 'text-green-600'}`}>
+                {secHealth.mfaRate}%
+              </p>
+              <p className="text-xs text-gray-400">{secHealth.mfaEnrolled}/{secHealth.mfaTotal} users</p>
+            </div>
+            {/* Fingerprint Mismatches */}
+            <div className={`rounded-lg px-4 py-3 ${secHealth.fingerprintMismatches7d > secHealth.thresholds.fingerprintMismatchesAlert ? 'bg-red-50' : 'bg-purple-50'}`}>
+              <p className="text-xs text-gray-400 mb-1">Fingerprint Mismatches (7d)</p>
+              <p className={`text-lg font-bold ${secHealth.fingerprintMismatches7d > secHealth.thresholds.fingerprintMismatchesAlert ? 'text-red-600' : 'text-gray-900'}`}>
+                {secHealth.fingerprintMismatches7d}
+              </p>
+              <p className="text-xs text-gray-400">alert threshold: {secHealth.thresholds.fingerprintMismatchesAlert}</p>
+            </div>
+            {/* Rate Limit Hits */}
+            <div className="rounded-lg px-4 py-3 bg-purple-50">
+              <p className="text-xs text-gray-400 mb-1">Rate-Limit Hits (24h)</p>
+              <p className="text-lg font-bold text-gray-900">{secHealth.rateLimitHits24h}</p>
+              <p className="text-xs text-gray-400">sensitive routes</p>
+            </div>
+            {/* Failed Logins */}
+            <div className={`rounded-lg px-4 py-3 ${secHealth.failedLogins24h > secHealth.thresholds.failedLoginsAlert ? 'bg-red-50' : 'bg-purple-50'}`}>
+              <p className="text-xs text-gray-400 mb-1">Failed Logins (24h)</p>
+              <p className={`text-lg font-bold ${secHealth.failedLogins24h > secHealth.thresholds.failedLoginsAlert ? 'text-red-600' : 'text-gray-900'}`}>
+                {secHealth.failedLogins24h}
+              </p>
+              <p className="text-xs text-gray-400">alert threshold: {secHealth.thresholds.failedLoginsAlert}</p>
+            </div>
+            {/* Active Sessions */}
+            <div className="rounded-lg px-4 py-3 bg-purple-50">
+              <p className="text-xs text-gray-400 mb-1">Active Sessions</p>
+              <p className="text-lg font-bold text-gray-900">{secHealth.activeSessions}</p>
+              <p className="text-xs text-gray-400">refresh tokens</p>
+            </div>
+          </div>
         </div>
       )}
 

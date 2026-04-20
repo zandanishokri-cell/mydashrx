@@ -178,6 +178,108 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  // GET /admin/security-health — P-COMP16
+  // 5-metric security aggregate: MFA rate, fingerprint mismatches, rate-limit hits,
+  // failed logins, active sessions. HIPAA §164.312(d) audit readiness. No schema changes.
+  app.get('/security-health', { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async () => {
+    const now = new Date();
+    const since24h = new Date(now.getTime() - 24 * 3600_000);
+    const since7d = new Date(now.getTime() - 7 * 86400_000);
+
+    const [mfaRows, fingerprintRows, rateLimitRows, failedLoginRows, activeSessionRows] = await Promise.all([
+      // MFA enrollment rate by role
+      db.select({ role: users.role, mfaEnabled: users.mfaEnabled, cnt: count() })
+        .from(users).where(isNull(users.deletedAt)).groupBy(users.role, users.mfaEnabled),
+      // RT device fingerprint mismatches in last 7d
+      db.select({ cnt: sql<number>`count(*)::int` }).from(adminAuditLogs)
+        .where(and(eq(adminAuditLogs.action, 'rt_device_fingerprint_mismatch'), gte(adminAuditLogs.createdAt, since7d))),
+      // Rate-limit events in last 24h
+      db.select({ cnt: sql<number>`count(*)::int` }).from(adminAuditLogs)
+        .where(and(sql`${adminAuditLogs.action} LIKE '%_rate_exceeded'`, gte(adminAuditLogs.createdAt, since24h))),
+      // Failed logins in last 24h
+      db.select({ cnt: sql<number>`count(*)::int` }).from(adminAuditLogs)
+        .where(and(eq(adminAuditLogs.action, 'login_failed'), gte(adminAuditLogs.createdAt, since24h))),
+      // Active refresh tokens (non-expired, non-revoked)
+      db.select({ cnt: sql<number>`count(*)::int` }).from(refreshTokens)
+        .where(and(eq(refreshTokens.status, 'active'), gte(refreshTokens.expiresAt, now))),
+    ]);
+
+    // Aggregate MFA stats: { [role]: { total, mfaEnabled } }
+    const mfaByRole: Record<string, { total: number; enrolled: number }> = {};
+    for (const row of mfaRows) {
+      const r = row.role as string;
+      if (!mfaByRole[r]) mfaByRole[r] = { total: 0, enrolled: 0 };
+      mfaByRole[r].total += Number(row.cnt);
+      if (row.mfaEnabled) mfaByRole[r].enrolled += Number(row.cnt);
+    }
+    const totalUsers = Object.values(mfaByRole).reduce((s, v) => s + v.total, 0);
+    const totalMfaEnrolled = Object.values(mfaByRole).reduce((s, v) => s + v.enrolled, 0);
+    const mfaRate = totalUsers > 0 ? Math.round((totalMfaEnrolled / totalUsers) * 1000) / 10 : 0;
+
+    return {
+      mfaRate,
+      mfaEnrolled: totalMfaEnrolled,
+      mfaTotal: totalUsers,
+      mfaByRole,
+      fingerprintMismatches7d: fingerprintRows[0]?.cnt ?? 0,
+      rateLimitHits24h: rateLimitRows[0]?.cnt ?? 0,
+      failedLogins24h: failedLoginRows[0]?.cnt ?? 0,
+      activeSessions: activeSessionRows[0]?.cnt ?? 0,
+      thresholds: {
+        fingerprintMismatchesAlert: 5,  // RED if > 5 in 7d
+        failedLoginsAlert: 50,          // RED if > 50 in 24h
+        mfaRateWarn: 80,               // AMBER if < 80%
+      },
+      generatedAt: now.toISOString(),
+    };
+  });
+
+  // GET /admin/security-health/mfa-report — P-COMP17
+  // HIPAA §164.312(d) evidence: CSV of all users + MFA status + last login + event counts
+  app.get('/security-health/mfa-report', { preHandler: auth, config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (req, reply) => {
+    const actor = req.user as { sub: string; email: string };
+
+    const [userRows, mfaEvents] = await Promise.all([
+      db.select({
+        id: users.id, email: users.email, role: users.role,
+        mfaEnabled: users.mfaEnabled, totpEnabledAt: users.totpEnabledAt,
+        lastLoginAt: users.lastLoginAt, createdAt: users.createdAt,
+      }).from(users).where(isNull(users.deletedAt)).orderBy(users.role, users.email),
+      // MFA challenge + backup code events per user
+      db.select({ actorId: adminAuditLogs.actorId, action: adminAuditLogs.action, cnt: count() })
+        .from(adminAuditLogs)
+        .where(sql`${adminAuditLogs.action} IN ('mfa_challenge_passed','mfa_challenge_failed','mfa_backup_code_used')`)
+        .groupBy(adminAuditLogs.actorId, adminAuditLogs.action),
+    ]);
+
+    // Build per-user event map
+    const eventMap: Record<string, { passed: number; failed: number; backupUsed: number }> = {};
+    for (const e of mfaEvents) {
+      if (!eventMap[e.actorId]) eventMap[e.actorId] = { passed: 0, failed: 0, backupUsed: 0 };
+      if (e.action === 'mfa_challenge_passed') eventMap[e.actorId].passed += Number(e.cnt);
+      if (e.action === 'mfa_challenge_failed') eventMap[e.actorId].failed += Number(e.cnt);
+      if (e.action === 'mfa_backup_code_used') eventMap[e.actorId].backupUsed += Number(e.cnt);
+    }
+
+    const header = 'userId,email,role,mfaEnabled,totpEnabledAt,lastLoginAt,createdAt,mfaPassCount,mfaFailCount,backupCodesUsed\n';
+    const rows = userRows.map(u => {
+      const ev = eventMap[u.id] ?? { passed: 0, failed: 0, backupUsed: 0 };
+      return [
+        u.id, u.email, u.role, u.mfaEnabled ? '1' : '0',
+        u.totpEnabledAt?.toISOString() ?? '',
+        u.lastLoginAt?.toISOString() ?? '',
+        u.createdAt.toISOString(),
+        ev.passed, ev.failed, ev.backupUsed,
+      ].join(',');
+    }).join('\n');
+
+    await logAuditAction(actor.sub, actor.email, 'mfa_report_exported', actor.sub, actor.email, { rows: userRows.length });
+
+    reply.header('Content-Type', 'text/csv');
+    reply.header('Content-Disposition', `attachment; filename="mydashrx-mfa-report-${new Date().toISOString().slice(0, 10)}.csv"`);
+    return header + rows;
+  });
+
   // GET /admin/orgs
   // P-PERF16: column projection (14 cols only) + keyset cursor pagination (LIMIT 50).
   // Replaces SELECT * with no LIMIT — eliminates ~1.5MB payload at 500 orgs.

@@ -257,6 +257,32 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    // P-MFA2: Per-role MFA enforcement (HIPAA 2025 NPRM §164.312(d))
+    // super_admin: hard block if MFA not enrolled
+    if (user.role === 'super_admin' && !user.mfaEnabled) {
+      await logAuthEvent('mfa_enrollment_forced', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
+      return reply.code(403).send({ error: 'mfa_enrollment_required', redirectTo: '/auth/mfa/setup', message: 'MFA is required for super_admin accounts. Enroll an authenticator app to continue.' });
+    }
+    // pharmacy_admin: soft gate — 30-day grace; after grace → hard block
+    if (user.role === 'pharmacy_admin' && !user.mfaEnabled) {
+      const daysSince = (Date.now() - new Date(user.createdAt).getTime()) / 86400000;
+      if (daysSince > 30) {
+        await logAuthEvent('mfa_enrollment_forced', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
+        return reply.code(403).send({ error: 'mfa_enrollment_required', redirectTo: '/auth/mfa/setup', message: 'MFA is now required to meet HIPAA May 2026 deadline. Please set up an authenticator app.' });
+      }
+      // Within grace — login proceeds but flag for frontend banner
+      await logAuthEvent('mfa_soft_gate_shown', { userId: user.id, email: user.email, ip: req.ip, metadata: { daysRemaining: Math.round(30 - daysSince) } });
+    }
+
+    // P-MFA1: MFA challenge fork — if MFA enrolled, issue short-lived mfaToken instead of AT+RT
+    if (user.mfaEnabled) {
+      const mfaToken = app.jwt.sign(
+        { sub: user.id, email: user.email, purpose: 'mfa_challenge' },
+        { expiresIn: '5m' },
+      );
+      return reply.code(202).send({ status: 'mfa_required', mfaToken });
+    }
+
     // P-LCK1: Reset failed attempts on successful login; P-RBAC34: update lastLoginAt (HIPAA §164.308(a)(3)(ii)(C))
     await db.update(users)
       .set({ failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() })
@@ -552,7 +578,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
             action: 'rt_device_fingerprint_mismatch',
             targetId: decoded.sub,
             targetName: decoded.sub,
-            metadata: { ip: req.ip, severity: 'HIGH', storedUaPrefix: txStoredUa.slice(0, 40), requestUaPrefix: (ua ?? '').slice(0, 40) },
+            metadata: { ip: req.ip, severity: 'HIGH', storedUaPrefix: (txStoredUa as string).slice(0, 40), requestUaPrefix: (ua ?? '').slice(0, 40) },
           }).catch(() => {});
         }
       }

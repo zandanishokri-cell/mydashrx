@@ -41,6 +41,7 @@ import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { authRoutes } from './routes/auth.js';
 import { passkeyRoutes } from './routes/passkeys.js';
+import { mfaRoutes } from './routes/mfa.js'; // P-MFA1
 import { signupRoutes } from './routes/signup.js';
 import { organizationRoutes } from './routes/organizations.js';
 import { depotRoutes } from './routes/depots.js';
@@ -805,6 +806,17 @@ try {
   console.error('P-CNV32 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-MFA1: TOTP MFA columns — HIPAA 2025 NPRM mandatory MFA for ePHI access
+try {
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled boolean NOT NULL DEFAULT false`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled_at timestamptz`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_backup_codes jsonb`);
+  console.log('P-MFA1 TOTP MFA columns ensured');
+} catch (err) {
+  console.error('P-MFA1 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {
@@ -944,6 +956,7 @@ await app.register(staticFiles, { root: uploadDir, prefix: '/uploads/', decorate
 // Routes
 await app.register(authRoutes, { prefix: '/api/v1/auth' });
 await app.register(passkeyRoutes, { prefix: '/api/v1/auth/passkey' }); // P-ML18
+await app.register(mfaRoutes, { prefix: '/api/v1/auth/mfa' }); // P-MFA1
 await app.register(signupRoutes, { prefix: '/api/v1/signup' });
 await app.register(organizationRoutes, { prefix: '/api/v1/orgs' });
 await app.register(depotRoutes, { prefix: '/api/v1/orgs/:orgId/depots' });
