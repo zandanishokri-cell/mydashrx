@@ -8,8 +8,96 @@ import { analyticsCache, analyticsKey, deliveryPerfKey } from '../lib/responseCa
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   // P-RBAC20: depot-scoped guard — dispatchers with depotId query param must have access to that depot
+  // P-PERF18: response schema activates fast-json-stringify (2x serialization speed) + auto-strips undeclared fields.
   app.get('/', {
     preHandler: [requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'), requireDepotAccess()],
+    schema: {
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            summary: {
+              type: 'object',
+              properties: {
+                total: { type: 'number' },
+                completed: { type: 'number' },
+                failed: { type: 'number' },
+                successRate: { type: 'number' },
+                failureRate: { type: 'number' },
+                avgPerDriver: { type: 'number' },
+                activeDriverCount: { type: 'number' },
+                avgDeliveryTime: { type: ['number', 'null'] },
+                onTimeRate: { type: ['number', 'null'] },
+              },
+            },
+            byStatus: { type: 'object', additionalProperties: { type: 'number' } },
+            daily: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  date: { type: 'string' },
+                  total: { type: 'number' },
+                  completed: { type: 'number' },
+                  failed: { type: 'number' },
+                  rescheduled: { type: 'number' },
+                },
+              },
+            },
+            failureReasons: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  reason: { type: 'string' },
+                  count: { type: 'number' },
+                },
+              },
+            },
+            drivers: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  driverId: { type: ['string', 'null'] },
+                  driverName: { type: 'string' },
+                  total: { type: 'number' },
+                  completed: { type: 'number' },
+                  failed: { type: 'number' },
+                },
+              },
+            },
+            depots: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  depotId: { type: ['string', 'null'] },
+                  depotName: { type: ['string', 'null'] },
+                  total: { type: 'number' },
+                  completed: { type: 'number' },
+                },
+              },
+            },
+            topPerformers: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  driverId: { type: ['string', 'null'] },
+                  driverName: { type: 'string' },
+                  total: { type: 'number' },
+                  completed: { type: 'number' },
+                  failed: { type: 'number' },
+                  completionRate: { type: 'number' },
+                },
+              },
+            },
+            weekOverWeekChange: { type: ['number', 'null'] },
+          },
+        },
+      },
+    },
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const { depotId, from, to } = req.query as { depotId?: string; from?: string; to?: string };

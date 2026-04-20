@@ -826,6 +826,15 @@ try {
   console.error('P-DEL32 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-PERF19: pg_stat_statements extension — HIPAA §164.308(a)(1)(ii)(D) performance monitoring
+// Non-fatal: extension may not be available on all Postgres configs.
+try {
+  await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pg_stat_statements`);
+  console.log('P-PERF19 pg_stat_statements extension ensured');
+} catch (err) {
+  console.warn('P-PERF19 pg_stat_statements not available (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 // P-DEL30: DMARC aggregate reports table
 try {
   await db.execute(sql`
@@ -929,6 +938,20 @@ app.addHook('onError', async (req, _reply, error) => {
 
 app.addHook('onSend', phiFilterHook);
 app.addHook('onRequest', phiAuditHook); // P-RBAC21: PHI read-event audit for HIPAA §164.312(b)
+
+// P-PERF19: Slow response instrumentation — HIPAA §164.308(a)(1)(ii)(D) access monitoring
+// Log any response >2000ms: routerPath + elapsedTime + statusCode + method
+app.addHook('onResponse', async (req, reply) => {
+  if (reply.elapsedTime > 2000) {
+    req.log.warn({
+      event: 'slow_response',
+      routerPath: req.routerPath ?? req.url,
+      method: req.method,
+      elapsed_ms: Math.round(reply.elapsedTime),
+      status_code: reply.statusCode,
+    });
+  }
+});
 
 // P-SEC34: CVE-2026-21710 — reject __proto__/constructor headers before Fastify accesses headersDistinct
 // Unauthenticated crash vector on Node.js v24.14.1. Defence-in-depth until NODE_VERSION=24.14.2 propagates.

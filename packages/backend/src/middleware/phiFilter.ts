@@ -57,13 +57,20 @@ function filterFields(obj: unknown, role: string): unknown {
   return out;
 }
 
+// P-PERF17: PHI field names that require parse+filter. Must stay in sync with STRIP_FIELDS + maskPhone/filterAddress.
+const PHI_FIELDS = ['"rxNumbers"', '"recipientPhone"', '"recipientAddress"', '"controlledSubstance"', '"requiresRefrigeration"', '"deliveryNotes"', '"codAmount"', '"customerNotes"'];
+
 export const phiFilterHook: onSendHookHandler<any> = async (req, _reply, payload) => {
   const user = (req as any).user as { role?: string } | undefined;
   const role = user?.role;
   if (!role || ELEVATED.has(role)) return payload; // elevated roles get full PHI
+  // P-PERF17: fast-path — skip parse+reserialize if no PHI field names present in payload.
+  // Eliminates sjp.parse cost for non-PHI routes (/dashboard/combined, /analytics, /depots, /plans, /drivers).
+  const p = payload as string;
+  if (typeof p === 'string' && !PHI_FIELDS.some(f => p.includes(f))) return payload;
   try {
     // P-SEC35: secure-json-parse prevents prototype pollution via crafted JSON payloads
-    const parsed = sjp.parse(payload as string, undefined, { protoAction: 'error', constructorAction: 'error' });
+    const parsed = sjp.parse(p, undefined, { protoAction: 'error', constructorAction: 'error' });
     return JSON.stringify(filterFields(parsed, role));
   } catch {
     return payload;

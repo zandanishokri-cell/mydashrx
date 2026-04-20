@@ -204,8 +204,82 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // Replaces 3 independent polling timers (summaryTimer 60s + driversTimer 30s + plansTimer 60s)
   // with one 30s combined call. 66% HTTP reduction, eliminates visual jank from staggered updates.
   // P-PERF14: LRU cache 15s TTL (5s for GPS/map variant). Stale-while-revalidate via setImmediate.
+  // P-PERF18: response schema activates fast-json-stringify (2x serialization speed) + auto-strips undeclared fields.
   app.get('/combined', {
     preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin'),
+    schema: {
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            summary: {
+              type: 'object',
+              properties: {
+                stopsToday: { type: 'number' },
+                completedToday: { type: 'number' },
+                inProgressToday: { type: 'number' },
+                activeDrivers: { type: 'number' },
+              },
+            },
+            drivers: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  name: { type: 'string' },
+                  status: { type: 'string' },
+                  vehicleType: { type: ['string', 'null'] },
+                  routeId: { type: ['string', 'null'] },
+                  routeStatus: { type: ['string', 'null'] },
+                  totalStops: { type: 'number' },
+                  completedStops: { type: 'number' },
+                  currentLat: { type: ['number', 'null'] },
+                  currentLng: { type: ['number', 'null'] },
+                  lastPingAt: { type: ['string', 'null'] },
+                },
+              },
+            },
+            plans: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  date: { type: 'string' },
+                  status: { type: 'string' },
+                  depotId: { type: 'string' },
+                  routes: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'string' },
+                        planId: { type: 'string' },
+                        driverId: { type: ['string', 'null'] },
+                        status: { type: 'string' },
+                        estimatedDuration: { type: ['number', 'null'] },
+                        stops: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            properties: {
+                              id: { type: 'string' },
+                              status: { type: 'string' },
+                              routeId: { type: ['string', 'null'] },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   }, async (req) => {
     const { orgId } = req.params as { orgId: string };
     const q = req.query as { depotId?: string; date?: string; fields?: string };

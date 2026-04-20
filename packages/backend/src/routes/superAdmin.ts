@@ -2228,4 +2228,27 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     const readiness = await computeDmarcReadiness();
     return reply.send(readiness);
   });
+
+  // P-PERF19: Slow query report from pg_stat_statements — HIPAA §164.308(a)(1)(ii)(D)
+  // Returns top 20 queries by mean execution time. Requires pg_stat_statements extension.
+  app.get('/slow-queries', { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (_req, reply) => {
+    try {
+      const rows = await db.execute(sql`
+        SELECT
+          query,
+          calls,
+          round(mean_exec_time::numeric, 2) AS mean_exec_time_ms,
+          round(total_exec_time::numeric, 2) AS total_exec_time_ms,
+          round(stddev_exec_time::numeric, 2) AS stddev_ms,
+          rows
+        FROM pg_stat_statements
+        ORDER BY mean_exec_time DESC
+        LIMIT 20
+      `);
+      return reply.send({ queries: rows });
+    } catch (err) {
+      // pg_stat_statements may not be installed — return a clear message rather than 500
+      return reply.code(503).send({ error: 'pg_stat_statements unavailable. Run: CREATE EXTENSION IF NOT EXISTS pg_stat_statements; and restart Postgres.' });
+    }
+  });
 };

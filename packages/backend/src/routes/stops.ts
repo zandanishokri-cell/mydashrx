@@ -127,9 +127,30 @@ async function fireApproachNotifications(orgId: string, routeId: string): Promis
 }
 
 export const stopRoutes: FastifyPluginAsync = async (app) => {
+  // P-PERF18: response schema activates fast-json-stringify. additionalProperties:true preserves
+  // role-filtered fields from filterStopsForRole while still gaining serialization speed boost.
   app.get('/', {
     // P-RBAC25: use canonical policy — includes pharmacist (stops:read)
     preHandler: requirePermission('stops:read'),
+    schema: {
+      response: {
+        200: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: true,
+            properties: {
+              id: { type: 'string' },
+              routeId: { type: ['string', 'null'] },
+              orgId: { type: 'string' },
+              status: { type: 'string' },
+              address: { type: 'string' },
+              sequenceNumber: { type: ['number', 'null'] },
+            },
+          },
+        },
+      },
+    },
   }, async (req) => {
     const { routeId } = req.params as { routeId: string };
     const { orgId: userOrgId, role, depotIds } = req.user as { orgId: string; role: string; depotIds: string[] };
