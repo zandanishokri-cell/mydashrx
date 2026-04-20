@@ -226,8 +226,27 @@ function LoginForm() {
       const tokens = await api.post<AuthTokens>('/auth/login', { email, password });
       setSession(tokens);
       router.replace((tokens.user as any).mustChangePassword ? '/change-password' : '/dashboard');
-    } catch {
-      setError('Invalid email or password.');
+    } catch (err: unknown) {
+      // USER-BUG 2026-04-20: backend returns 403 `mfa_enrollment_required` for super_admin
+      // (and pharmacy_admin past a 30-day grace) without MFA. api.ts throws `API ${status}: ${body}`.
+      // Swallowing it into "Invalid email or password" left users stuck with no clue why login failed
+      // and no path to MFA setup. Parse the status + body and surface the real reason.
+      const msg = err instanceof Error ? err.message : '';
+      const statusMatch = /^API\s+(\d{3}):\s*([\s\S]*)$/.exec(msg);
+      const status = statusMatch ? Number(statusMatch[1]) : 0;
+      let body: { error?: string; message?: string } = {};
+      if (statusMatch) { try { body = JSON.parse(statusMatch[2]); } catch { /* non-JSON body */ } }
+      if (body.error === 'mfa_enrollment_required') {
+        setError(body.message ?? 'MFA is required for this account. Use the email login link instead — MFA setup is only available after signing in with your magic link.');
+      } else if (status === 429) {
+        setError(body.error ?? 'Account temporarily locked. Try again in a few minutes.');
+      } else if (status === 403) {
+        setError(body.error ?? 'Access denied.');
+      } else if (status === 401) {
+        setError('Invalid email or password.');
+      } else {
+        setError(body.message ?? body.error ?? 'Sign-in failed. Please try again.');
+      }
     } finally {
       setPwLoading(false);
     }

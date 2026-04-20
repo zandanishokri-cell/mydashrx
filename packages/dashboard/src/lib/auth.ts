@@ -113,8 +113,12 @@ export function isAuthenticated(): boolean {
   return !!(_accessToken && getUser());
 }
 
+// USER-BUG 2026-04-20: super_admin redirected to /admin, which bounces to /admin/approvals
+// — a page with no layout, no nav, no way back to the rest of the app. /dashboard has
+// the full sidebar and dashboard/layout.tsx grants super_admin extra nav items (Platform
+// Admin, Approvals, Audit Log), so landing there keeps everything reachable.
 const ROLE_REDIRECTS: Record<string, string> = {
-  super_admin: '/admin',
+  super_admin: '/dashboard',
   pharmacy_admin: '/dashboard',
   dispatcher: '/dashboard',
   driver: '/driver/routes',
