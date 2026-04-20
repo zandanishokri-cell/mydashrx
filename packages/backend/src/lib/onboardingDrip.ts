@@ -1,7 +1,13 @@
 // P-ONB47: Pending-approval 3-email nurture drip via Resend scheduled send
+import { createHash } from 'crypto';
 import { db } from '../db/connection.js';
 import { organizations } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
+
+// P-DEL31: deterministic idempotency key for drip emails
+function dripIdempotencyKey(orgId: string, step: number): string {
+  return createHash('sha256').update(`${orgId}drip${step}`).digest('hex');
+}
 
 const RESEND_URL = 'https://api.resend.com/emails';
 
@@ -44,7 +50,7 @@ const BODIES = [
   </div>`,
 ];
 
-async function sendScheduled(to: string, subject: string, html: string, scheduledAt: Date): Promise<string> {
+async function sendScheduled(to: string, subject: string, html: string, scheduledAt: Date, iKey?: string): Promise<string> {
   const key = resendKey();
   if (!key) return '';
   const body: Record<string, unknown> = {
@@ -60,9 +66,10 @@ async function sendScheduled(to: string, subject: string, html: string, schedule
   if (scheduledAt.getTime() > Date.now() + 30_000) {
     body.scheduledAt = scheduledAt.toISOString();
   }
+  const extraHeaders: Record<string, string> = iKey ? { 'Resend-Idempotency-Key': iKey } : {};
   const res = await fetch(RESEND_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, ...extraHeaders },
     body: JSON.stringify(body),
   });
   const data = await res.json() as { id?: string };
@@ -79,6 +86,7 @@ export async function triggerPendingApprovalDrip(orgId: string, adminEmail: stri
         SUBJECTS[i](adminName),
         BODIES[i](adminName),
         new Date(now + DELAYS_MS[i]),
+        dripIdempotencyKey(orgId, i), // P-DEL31: orgId+dripStep deduplication
       );
       ids.push(id);
     } catch (e) {

@@ -817,6 +817,37 @@ try {
   console.error('P-MFA1 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// P-DEL32: Email forwarding detection columns
+try {
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_forwarding_detected boolean NOT NULL DEFAULT false`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_forwarding_detected_at timestamptz`);
+  console.log('P-DEL32 email forwarding detection columns ensured');
+} catch (err) {
+  console.error('P-DEL32 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
+// P-DEL30: DMARC aggregate reports table
+try {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS dmarc_aggregate_reports (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      report_date date NOT NULL,
+      source_ip text NOT NULL,
+      count integer NOT NULL DEFAULT 0,
+      disposition text NOT NULL,
+      dkim_result text NOT NULL,
+      spf_result text NOT NULL,
+      policy_published text,
+      reporter_org text,
+      created_at timestamptz NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS dmarc_report_date_idx ON dmarc_aggregate_reports (report_date)`);
+  console.log('P-DEL30 DMARC aggregate reports table ensured');
+} catch (err) {
+  console.error('P-DEL30 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
+}
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

@@ -32,6 +32,7 @@
     "disposable-email-domains": "^1.0.62",
     "dotenv": "^16.4.0",
     "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "^5.5.8",
     "fastify": "^4.26.0",
     "googleapis": "^171.4.0",
     "lru-cache": "^11.3.5",

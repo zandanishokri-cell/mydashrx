@@ -187,6 +187,9 @@ export const users = pgTable(
     totpSecret: text('totp_secret'),           // AES-256-GCM encrypted via PHI_ENCRYPTION_KEY
     totpEnabledAt: timestamp('totp_enabled_at'),
     totpBackupCodes: jsonb('totp_backup_codes'), // array of bcrypt-hashed 8-char backup codes
+    // P-DEL32: email forwarding detection — pharmacy IT forwarders consume magic links
+    emailForwardingDetected: boolean('email_forwarding_detected').notNull().default(false),
+    emailForwardingDetectedAt: timestamp('email_forwarding_detected_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },
@@ -869,4 +872,20 @@ export const emailDailyCounts = pgTable('email_daily_counts', {
   bounced: integer('bounced').notNull().default(0),
 }, (t) => ({
   subdomainDateIdx: uniqueIndex('email_daily_counts_subdomain_date_idx').on(t.subdomain, t.date),
+}));
+
+// P-DEL30: DMARC aggregate report storage — ingested from webhook or email attachment
+export const dmarcAggregateReports = pgTable('dmarc_aggregate_reports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  reportDate: date('report_date').notNull(),         // date of the DMARC aggregate report row
+  sourceIp: text('source_ip').notNull(),             // sending IP from DMARC report
+  count: integer('count').notNull().default(0),      // message count from this IP
+  disposition: text('disposition').notNull(),        // 'none' | 'quarantine' | 'reject'
+  dkimResult: text('dkim_result').notNull(),         // 'pass' | 'fail'
+  spfResult: text('spf_result').notNull(),           // 'pass' | 'fail'
+  policyPublished: text('policy_published'),         // DMARC policy at report time: 'none'|'quarantine'|'reject'
+  reporterOrg: text('reporter_org'),                 // org_name from report metadata
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  reportDateIdx: index('dmarc_report_date_idx').on(t.reportDate),
 }));

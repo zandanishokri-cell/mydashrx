@@ -66,6 +66,11 @@ function LoginForm() {
   const [resendCount, setResendCount] = useState(0);
   const [resendCooldown, setResendCooldown] = useState(30);
   const [expiredNotice, setExpiredNotice] = useState(false);
+  // P-DEL32: email forwarding detection — show inline OTP banner when detected
+  const [forwardingRisk, setForwardingRisk] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState('');
 
   // P-ML19: tab-ready indicator state
   const [tabVisible, setTabVisible] = useState(true);
@@ -160,9 +165,11 @@ function LoginForm() {
         sessionStorage.setItem('postAuthRedirect', nextParam);
       }
       const fp = collectFingerprint();
-      const res = await api.post<{ message: string; requestId?: string }>('/auth/magic-link/request', { email, fp });
+      const res = await api.post<{ message: string; requestId?: string; forwardingRisk?: boolean }>('/auth/magic-link/request', { email, fp });
       // P-ML26: store requestId for cross-device SSE polling on verify page
       if (res?.requestId) sessionStorage.setItem('mdrx_magic_request_id', res.requestId);
+      // P-DEL32: show forwarding risk banner if detected
+      if (res?.forwardingRisk) setForwardingRisk(true);
       setCountdown(900);
       setCanResend(false);
       setSent(true);
@@ -191,6 +198,22 @@ function LoginForm() {
     resendCount === 0 ? 'Send again' :
     resendCount === 1 ? 'Still waiting? Send another link' :
     'Send one more link';
+
+  // P-DEL32: OTP code submission for forwarding-risk users
+  const submitOtpCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const tokens = await api.post<any>('/auth/magic-link/verify-code', { email, code: otpCode.replace(/\s/g, '') });
+      setSession(tokens);
+      router.replace(tokens.user?.mustChangePassword ? '/change-password' : '/dashboard');
+    } catch {
+      setOtpError('Invalid or expired code. Check your email for the 6-digit code.');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
 
   const signInWithPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -232,6 +255,33 @@ function LoginForm() {
           ? <p className="text-gray-400 text-xs mb-2">Link expires in <span className="font-mono">{fmt(countdown)}</span></p>
           : <p className="text-red-400 text-xs mb-2">Link expired — please request a new one.</p>
         }
+        {/* P-DEL32: forwarding risk banner — shown when IT forwarder pattern detected */}
+        {forwardingRisk && (
+          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-left">
+            <p className="text-amber-800 text-xs font-semibold mb-1">Your email may be forwarded</p>
+            <p className="text-amber-700 text-xs mb-2">IT email forwarders can consume magic links before you see them. Enter the 6-digit code from the email instead:</p>
+            <form onSubmit={submitOtpCode} className="flex gap-2">
+              <input
+                type="text"
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9\s]/g, ''))}
+                placeholder="123 456"
+                maxLength={7}
+                className="flex-1 border border-amber-300 rounded-lg px-3 py-2 text-sm font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-300 text-center"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+              />
+              <button
+                type="submit"
+                disabled={otpLoading || otpCode.replace(/\s/g, '').length < 6}
+                className="bg-amber-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
+              >
+                {otpLoading ? '…' : 'Verify'}
+              </button>
+            </form>
+            {otpError && <p className="text-red-500 text-xs mt-1">{otpError}</p>}
+          </div>
+        )}
         {/* P-ML20: provider-specific hint */}
         <div className="mb-2 text-left">
           <ProviderHint email={email} />

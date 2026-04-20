@@ -88,6 +88,11 @@ export default function AdminPage() {
     thresholds: { fingerprintMismatchesAlert: number; failedLoginsAlert: number; mfaRateWarn: number };
   } | null>(null);
   const [mfaExporting, setMfaExporting] = useState(false);
+  // P-DEL30: DMARC enforcement readiness
+  const [dmarcReadiness, setDmarcReadiness] = useState<{
+    signal: string; passRate7d: number; totalMessages7d: number; passedMessages7d: number;
+    currentPct: string | null; daysChecked: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!user || user.role !== 'super_admin') { router.replace('/dashboard'); return; }
@@ -97,7 +102,7 @@ export default function AdminPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, o, f, rbacAudit, tlsAudit, driftData, secHealthData] = await Promise.all([
+      const [s, o, f, rbacAudit, tlsAudit, driftData, secHealthData, dmarcData] = await Promise.all([
         api.get<Stats>('/admin/stats'),
         api.get<OrgListResponse>('/admin/orgs'),
         api.get<MagicLinkFunnel>('/admin/magic-link/funnel').catch(() => null),
@@ -114,10 +119,13 @@ export default function AdminPage() {
         ).catch(() => null),
         // P-COMP16: Security Health
         api.get<any>('/admin/security-health').catch(() => null),
+        // P-DEL30: DMARC readiness
+        api.get<any>('/admin/dmarc-readiness').catch(() => null),
       ]);
       setStats(s); setOrgs(o.orgs); setOrgsNextCursor(o.nextCursor); setOrgsHasMore(o.hasMore); setFunnel(f);
       if (driftData) setDrift(driftData);
       if (secHealthData) setSecHealth(secHealthData);
+      if (dmarcData) setDmarcReadiness(dmarcData);
       // P-DEL27: parse latest TLS-RPT report for health indicator
       if (tlsAudit?.events?.length) {
         const e = tlsAudit.events[0];
@@ -409,6 +417,54 @@ export default function AdminPage() {
               {tlsHealth.action === 'tls_rpt_failure' && ' Investigate failure details in the audit log.'}
             </p>
           </div>
+        </div>
+      )}
+
+      {/* P-DEL30: DMARC Enforcement Card — 7-day pass rate + policy advancement readiness */}
+      {dmarcReadiness && (
+        <div className="px-6 py-3 border-b border-blue-100 bg-white/60 shrink-0">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">DMARC Enforcement</span>
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${dmarcReadiness.signal === 'ready_for_reject' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+              {dmarcReadiness.signal === 'ready_for_reject' ? 'Ready for reject' : 'Building data'}
+            </span>
+          </div>
+          <div className="flex items-center gap-4 mb-2">
+            <div>
+              <p className="text-2xl font-bold text-[#0F4C81]">{dmarcReadiness.passRate7d}%</p>
+              <p className="text-xs text-gray-400">7-day pass rate</p>
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-gray-700">{dmarcReadiness.totalMessages7d.toLocaleString()}</p>
+              <p className="text-xs text-gray-400">total messages</p>
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-gray-700">{dmarcReadiness.daysChecked}</p>
+              <p className="text-xs text-gray-400">days with data</p>
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-gray-700">{dmarcReadiness.currentPct ?? 'none'}</p>
+              <p className="text-xs text-gray-400">current policy</p>
+            </div>
+          </div>
+          {/* Progress bar: none → quarantine → reject */}
+          <div className="w-full max-w-sm">
+            <div className="flex justify-between text-xs text-gray-400 mb-1">
+              <span>none</span><span>quarantine</span><span>reject</span>
+            </div>
+            <div className="w-full bg-gray-100 rounded-full h-2">
+              <div
+                className={`h-2 rounded-full transition-all ${dmarcReadiness.signal === 'ready_for_reject' ? 'bg-green-500' : 'bg-amber-400'}`}
+                style={{ width: dmarcReadiness.passRate7d >= 98 ? '100%' : `${Math.max(5, dmarcReadiness.passRate7d)}%` }}
+              />
+            </div>
+          </div>
+          {dmarcReadiness.signal === 'ready_for_reject' && (
+            <p className="text-xs text-green-700 mt-2 font-medium">7-day pass rate {'>'} 98% — safe to advance DMARC policy to reject in DNS.</p>
+          )}
+          {dmarcReadiness.totalMessages7d === 0 && (
+            <p className="text-xs text-gray-400 mt-2">No DMARC aggregate reports received yet. Set up DMARC rua= webhook at POST /admin/dmarc-webhook.</p>
+          )}
         </div>
       )}
 

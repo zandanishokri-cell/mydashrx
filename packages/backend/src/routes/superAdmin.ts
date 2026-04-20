@@ -8,6 +8,7 @@ import { ROLE_PERMISSIONS } from '@mydash-rx/shared';
 import { invalidateOrgRole, invalidateOrg, listTemplates, upsertTemplate, seedOrgDefaults, getOrgPermissions } from '../lib/rbacCache.js';
 import { sendOrgApprovalEmail, sendReferralSuccessEmail } from '../lib/emailHelpers.js';
 import { cancelPendingDrip } from '../lib/onboardingDrip.js';
+import { parseDmarcReport, storeDmarcRows, computeDmarcReadiness } from '../lib/dmarcReportReader.js';
 
 // P-ADM39: in-memory SSE client registry for approval queue live updates
 const approvalSseClients = new Set<FastifyReply>();
@@ -2184,5 +2185,47 @@ export const superAdminRoutes: FastifyPluginAsync = async (app) => {
     }).catch(() => {});
 
     return reply.send({ ok: true, email, expiresAt });
+  });
+
+  // P-DEL30: DMARC aggregate report webhook — receives gzipped XML from Resend/email provider
+  // Authenticated with DMARC_WEBHOOK_SECRET header to prevent unauthorized ingestion
+  app.post('/dmarc-webhook', {
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    // Verify webhook secret (bearer or x-dmarc-secret header)
+    const secret = process.env.DMARC_WEBHOOK_SECRET;
+    if (secret) {
+      const provided = (req.headers['x-dmarc-secret'] as string | undefined)
+        ?? (req.headers.authorization as string | undefined)?.replace(/^bearer\s+/i, '');
+      if (provided !== secret) return reply.code(401).send({ error: 'unauthorized' });
+    }
+
+    try {
+      const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body as string, 'binary');
+      const rows = await parseDmarcReport(body);
+      const stored = await storeDmarcRows(rows);
+
+      // Log ingestion to audit trail
+      const actor = (req.user as { sub?: string; email?: string } | undefined);
+      await logAuditAction(
+        actor?.sub ?? '00000000-0000-0000-0000-000000000000',
+        actor?.email ?? 'system',
+        'dmarc_report_ingested',
+        'dmarc',
+        'dmarc_aggregate_reports',
+        { rowsIngested: stored, reportDates: [...new Set(rows.map(r => r.reportDate))], policyPublished: rows[0]?.policyPublished },
+      );
+
+      return reply.send({ ok: true, rowsIngested: stored });
+    } catch (err) {
+      console.error('[DMARC] webhook parse error:', err instanceof Error ? err.message : err);
+      return reply.code(400).send({ error: 'Failed to parse DMARC report', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // P-DEL30: DMARC readiness signal — reads 7-day aggregate, signals when ready for reject policy
+  app.get('/dmarc-readiness', { preHandler: auth }, async (_req, reply) => {
+    const readiness = await computeDmarcReadiness();
+    return reply.send(readiness);
   });
 };

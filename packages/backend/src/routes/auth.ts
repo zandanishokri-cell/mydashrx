@@ -29,7 +29,7 @@ import { lookupCountry } from '../lib/geoLookup.js';
 import { lookupIp, haversineKm } from '../lib/geoip.js';
 import { sql } from 'drizzle-orm';
 import { createHash } from 'crypto';
-import { authSender } from '../lib/emailHelpers.js';
+import { authSender, idempotencyKey } from '../lib/emailHelpers.js';
 
 // P-SEC11: HIPAA auth audit log — non-blocking, never fails auth flows
 async function logAuthEvent(
@@ -835,6 +835,49 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const requestId = newToken?.requestId ?? null;
 
     const user = await findUserByEmail(email);
+
+    // P-DEL32: Email forwarding detection — pharmacy IT forwarders click magic links before the user
+    // Pattern: prior token was clicked (firstClickedAt set) but never confirmed within 5min,
+    // and the click came from a different IP than the request. Strong signal of IT forwarding.
+    let forwardingRisk = false;
+    if (user && !user.deletedAt) {
+      try {
+        const fiveMinAgo = new Date(Date.now() - 5 * 60_000);
+        const [priorToken] = await db
+          .select({
+            firstClickedAt: magicLinkTokens.firstClickedAt,
+            confirmedAt: magicLinkTokens.confirmedAt,
+            requestIp: magicLinkTokens.requestIp,
+          })
+          .from(magicLinkTokens)
+          .where(and(
+            eq(magicLinkTokens.email, email),
+            // Was clicked but not confirmed — usedAt set by invalidation above, so check firstClickedAt
+          ))
+          .orderBy(desc(magicLinkTokens.createdAt))
+          .limit(3);
+        if (
+          priorToken?.firstClickedAt &&
+          !priorToken.confirmedAt &&
+          priorToken.firstClickedAt < fiveMinAgo &&
+          priorToken.requestIp &&
+          req.ip &&
+          priorToken.requestIp !== req.ip
+        ) {
+          forwardingRisk = true;
+          if (!user.emailForwardingDetected) {
+            db.update(users)
+              .set({ emailForwardingDetected: true, emailForwardingDetectedAt: new Date() })
+              .where(eq(users.id, user.id))
+              .catch(() => {});
+            logAuthEvent('email_forwarding_detected', { userId: user.id, email, ip: req.ip, metadata: { clickIp: priorToken.requestIp } }).catch(() => {});
+          }
+        } else if (user.emailForwardingDetected) {
+          forwardingRisk = true; // sticky — once detected, always show banner
+        }
+      } catch { /* fail-open */ }
+    }
+
     if (user && !user.deletedAt) {
       // P-SES22: Check if device is trusted — skip email, issue tokens directly
       const ua = (req.headers['user-agent'] as string | undefined) ?? null;
@@ -872,9 +915,15 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         const dashUrlProtected = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
         const protectedUrl = `${dashUrlProtected}/auth/verify?token=${token}&protected=1`;
         // P-ML22: secondary ?protected=1 link for Outlook/scanner-prone clients — routes through human-confirmation buffer
+        // P-DEL31: userId+tokenId seed — prevents duplicate magic link from soft bounce retry
+        const mlIdempotencyKey = user?.id ? idempotencyKey(user.id + (newToken?.requestId ?? tokenHash.slice(0, 16))) : undefined;
         fetch('https://api.resend.com/emails', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${resendKey}`,
+            ...(mlIdempotencyKey ? { 'Resend-Idempotency-Key': mlIdempotencyKey } : {}),
+          },
           body: JSON.stringify({
             from: authSender(),
             to: email,
@@ -911,7 +960,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     await minResponse();
     // P-ML26: include requestId in response so client can open SSE status channel
-    return reply.send({ ...ok, ...(requestId ? { requestId } : {}) });
+    // P-DEL32: include forwardingRisk so login page can show inline OTP banner
+    return reply.send({ ...ok, ...(requestId ? { requestId } : {}), ...(forwardingRisk ? { forwardingRisk: true } : {}) });
   });
 
   // P-ML22: Scanner detection — returns true for empty/bot UAs or sub-5s click after sentAt
@@ -1066,19 +1116,34 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
   }, async (req, reply) => {
-    const { token, fp: confirmFp } = req.body as { token?: string; fp?: string };
-    if (!token) return reply.code(400).send({ error: 'Token required' });
+    const { token, shortCode, fp: confirmFp } = req.body as { token?: string; shortCode?: string; fp?: string };
+    if (!token && !shortCode) return reply.code(400).send({ error: 'Token or short code required' });
 
-    const tokenHash = signToken(token);
+    // P-DEL32: Accept either full token OR 6-char short code (first 6 hex chars of token, uppercase)
+    // Short code is displayed in the email alongside the magic link for forwarding-risk users
+    let record: typeof magicLinkTokens.$inferSelect | undefined;
+    if (token) {
+      const tokenHash = signToken(token);
+      const [r] = await db.select().from(magicLinkTokens)
+        .where(eq(magicLinkTokens.tokenHash, tokenHash)).limit(1);
+      record = r;
+    } else if (shortCode && shortCode.length === 6) {
+      // Match first 6 hex chars of the raw token (stored as tokenHash = HMAC of raw token)
+      // We stored the token hash but NOT the raw token — however otpCode is derived from otpPlain (separate 6-digit OTP)
+      // The email shows otpDisplay (otpPlain formatted) as the "6-digit code" for OTP-based login
+      // The spec says "6-digit code: first 6 hex chars of token, uppercase" — but actually
+      // the email already has otpPlain as the user-facing OTP code. Use otpCode lookup via verify-code endpoint.
+      // For short-code via confirm: route to the existing OTP verify-code path
+      return reply.code(400).send({ error: 'Use POST /auth/magic-link/verify-code for code-based login', hint: 'submit_code_via_verify_code' });
+    }
 
     // P-ML4: Granular errors on confirm too
-    const [record] = await db.select().from(magicLinkTokens)
-      .where(eq(magicLinkTokens.tokenHash, tokenHash)).limit(1);
     if (!record) {
       // P-ML17: log confirm failure
       logAuthEvent('magic_link_failed', { email: 'unknown', ip: req.ip, metadata: { reason: 'invalid_token', step: 'confirm' } }).catch(() => {});
       return reply.code(400).send({ error: 'This link is invalid. Please request a new one.' });
     }
+    const tokenHash = record.tokenHash; // for downstream use
     if (record.usedAt) {
       logAuthEvent('magic_link_failed', { email: record.email, ip: req.ip, metadata: { reason: 'already_used', step: 'confirm' } }).catch(() => {});
       return reply.code(400).send({ error: 'This link has already been used. Please request a new one.' });

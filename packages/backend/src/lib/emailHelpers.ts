@@ -2,12 +2,50 @@
  * Shared email helpers — centralizes Resend calls to avoid inline duplication
  * All functions are fire-and-forget (no await needed at call site)
  */
+import { createHash } from 'crypto';
 import { db } from '../db/connection.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { buildListUnsubscribeHeaders } from '../routes/unsubscribe.js';
 
 const RESEND = 'https://api.resend.com/emails';
+
+/**
+ * P-DEL31: Deterministic idempotency key — SHA-256 of seed string.
+ * Use as Resend-Idempotency-Key header to prevent duplicate sends from retry queue.
+ * Seed must be stable: same inputs always produce same key.
+ */
+export function idempotencyKey(seed: string): string {
+  return createHash('sha256').update(seed).digest('hex');
+}
+
+export interface ResendEmailPayload {
+  from: string;
+  to: string | string[];
+  subject: string;
+  html: string;
+  reply_to?: string;
+  headers?: Record<string, string>;
+  scheduledAt?: string;
+}
+
+/**
+ * P-DEL33: HIPAA-safe transactional send wrapper.
+ * Enforces track_clicks:false + track_opens:false on every call.
+ * HIPAA BAA §164.314(a)(2)(i)(A) — click.resend.com tracking URLs in pharmacy
+ * role emails are a PHI leak risk. Never track transactional emails.
+ */
+export async function sendTransactional(payload: ResendEmailPayload & { idempotencyKey?: string }): Promise<Response> {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return new Response('no-key', { status: 200 });
+  const { idempotencyKey: ikey, ...rest } = payload;
+  const extraHeaders: Record<string, string> = ikey ? { 'Resend-Idempotency-Key': ikey } : {};
+  return fetch(RESEND, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}`, ...extraHeaders },
+    body: JSON.stringify({ ...rest, track_clicks: false, track_opens: false }),
+  });
+}
 
 // P-DEL15: Sender subdomain isolation — auth, transactional, outreach on separate subdomains.
 // Falls back to SENDER_DOMAIN for backward compat during incremental DNS rollout.
@@ -65,26 +103,19 @@ export function getOutreachResendKey(): string {
 
 /** P-ADM26: Welcome email sent on org approval (manual or auto) */
 export async function sendOrgApprovalEmail(orgId: string, orgName: string, adminEmail: string, adminName: string): Promise<void> {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return;
   // P-DEL11: suppress hard-bounced addresses
   if (await isSuppressed(adminEmail)) { console.log(`[emailHelpers] suppressed approval email to ${adminEmail} (hard bounce/opt-out)`); return; }
   const dash = dashUrl();
-  fetch(RESEND, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-    body: JSON.stringify({
-      from: sender(),
-      to: adminEmail,
-      reply_to: 'onboarding@mydashrx.com',
-      subject: `Welcome to MyDashRx — ${orgName} is approved!`,
-      // P-DEL13: suppress click/open tracking — approval links contain org-identifying params
-      // that would flow through Resend's CDN clickstream without a BAA confirmation
-      track_clicks: false,
-      track_opens: false,
-      // P-DEL17: Gmail postmaster stream bucketing
-      headers: { 'Feedback-ID': 'approval:mydashrx:resend:transactional' },
-      html: `
+  // P-DEL31: idempotency key — orgId+'approved' ensures one approval email per org
+  sendTransactional({
+    from: sender(),
+    to: adminEmail,
+    reply_to: 'onboarding@mydashrx.com',
+    subject: `Welcome to MyDashRx — ${orgName} is approved!`,
+    // P-DEL17: Gmail postmaster stream bucketing
+    headers: { 'Feedback-ID': 'approval:mydashrx:resend:transactional' },
+    idempotencyKey: idempotencyKey(orgId + 'approved'),
+    html: `
         <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your pharmacy is approved! Complete setup in 3 steps and run your first delivery today.</span>
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#0F4C81;margin:0 0 8px">You're approved — let's get delivering!</h2>
@@ -107,7 +138,6 @@ export async function sendOrgApprovalEmail(orgId: string, orgName: string, admin
           <a href="${dash}/login?welcome=1" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;margin-bottom:16px">Sign in &amp; start setup →</a>
           <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Need help? Reply to this email or book a 15-min setup call: <a href="mailto:onboarding@mydashrx.com?subject=Setup%20call%20for%20${encodeURIComponent(orgName)}" style="color:#0F4C81">onboarding@mydashrx.com</a></p>
         </div>`,
-    }),
   }).catch((e: unknown) => { console.error('[Resend] approval email failed:', e); });
 }
 
@@ -119,26 +149,21 @@ export async function sendRejectionWithReapplyEmail(
   recoveryHeading: string,
   recoveryBody: string,
   reapplyUrl: string,
+  orgId?: string,
 ): Promise<void> {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return;
   // P-DEL18: suppress hard-bounced addresses — rejection emails contain org name + reason = PHI
   // Without this check, PHI could be sent to a recycled address now owned by a different person
   if (await isSuppressed(adminEmail)) { console.log(`[emailHelpers] suppressed rejection email to ${adminEmail} (hard bounce/opt-out)`); return; }
-  fetch(RESEND, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-    body: JSON.stringify({
-      from: sender(),
-      to: adminEmail,
-      reply_to: 'support@mydashrx.com',
-      subject: `Update on your MyDashRx application — ${orgName}`,
-      // P-DEL13: suppress tracking — reapply links in rejection emails must not be scanner-consumed
-      track_clicks: false,
-      track_opens: false,
-      // P-DEL17: Gmail postmaster stream bucketing
-      headers: { 'Feedback-ID': 'rejection:mydashrx:resend:transactional' },
-      html: `
+  // P-DEL31: idempotency key — orgId+'rejected' ensures one rejection email per org
+  sendTransactional({
+    from: sender(),
+    to: adminEmail,
+    reply_to: 'support@mydashrx.com',
+    subject: `Update on your MyDashRx application — ${orgName}`,
+    // P-DEL17: Gmail postmaster stream bucketing
+    headers: { 'Feedback-ID': 'rejection:mydashrx:resend:transactional' },
+    ...(orgId ? { idempotencyKey: idempotencyKey(orgId + 'rejected') } : {}),
+    html: `
         <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your MyDashRx application status — review the next steps to reapply.</span>
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#dc2626;margin:0 0 8px">Application update</h2>
@@ -151,7 +176,6 @@ export async function sendRejectionWithReapplyEmail(
           <a href="${reapplyUrl}" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;margin-bottom:16px">Reapply now →</a>
           <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Questions? Contact us at <a href="mailto:support@mydashrx.com" style="color:#0F4C81">support@mydashrx.com</a></p>
         </div>`,
-    }),
   }).catch((e: unknown) => { console.error('[Resend] rejection email failed:', e); });
 }
 
@@ -162,9 +186,8 @@ export async function sendRoleChangeEmail(
   actorName: string,
   oldRole: string,
   newRole: string,
+  userId?: string,
 ): Promise<void> {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return;
   if (await isSuppressed(targetEmail, true)) return; // critical = true: bypass opt-out, never suppress security alerts
   const dash = dashUrl();
   const roleLabels: Record<string, string> = {
@@ -176,19 +199,17 @@ export async function sendRoleChangeEmail(
   };
   const oldLabel = roleLabels[oldRole] ?? oldRole;
   const newLabel = roleLabels[newRole] ?? newRole;
-  fetch(RESEND, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-    body: JSON.stringify({
-      from: sender(),
-      to: targetEmail,
-      reply_to: 'support@mydashrx.com',
-      subject: 'Your MyDashRx role has been updated',
-      track_clicks: false,
-      track_opens: false,
-      // P-DEL17: Gmail postmaster stream bucketing
-      headers: { 'Feedback-ID': 'role-change:mydashrx:resend:transactional' },
-      html: `
+  // P-DEL31: seed = userId+newRole+epoch-seconds (truncated to minute for dedup window)
+  const iKey = userId ? idempotencyKey(userId + newRole + Date.now().toString().slice(0, -3)) : undefined;
+  sendTransactional({
+    from: sender(),
+    to: targetEmail,
+    reply_to: 'support@mydashrx.com',
+    subject: 'Your MyDashRx role has been updated',
+    // P-DEL17: Gmail postmaster stream bucketing
+    headers: { 'Feedback-ID': 'role-change:mydashrx:resend:transactional' },
+    ...(iKey ? { idempotencyKey: iKey } : {}),
+    html: `
         <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your access role on MyDashRx has changed — sign in to use your updated permissions.</span>
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#0F4C81;margin:0 0 8px">Your role has been updated</h2>
@@ -202,28 +223,22 @@ export async function sendRoleChangeEmail(
           <a href="${dash}/login" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600">Sign in with updated access →</a>
           <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Questions? Contact <a href="mailto:support@mydashrx.com" style="color:#0F4C81">support@mydashrx.com</a></p>
         </div>`,
-    }),
   }).catch((e: unknown) => { console.error('[Resend] role change email failed:', e); });
 }
 
 /** P-CNV28: PLG aha-moment email — fires once on first route dispatch */
 export async function sendAhaMomentEmail(orgId: string, adminEmail: string, orgName: string): Promise<void> {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return;
   if (await isSuppressed(adminEmail)) { console.log(`[emailHelpers] suppressed aha-moment email to ${adminEmail}`); return; }
   const dash = dashUrl();
-  fetch(RESEND, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-    body: JSON.stringify({
-      from: mailSender(),
-      to: adminEmail,
-      reply_to: 'onboarding@mydashrx.com',
-      subject: 'Your first delivery is live 🚚',
-      track_clicks: false,
-      track_opens: false,
-      headers: { 'Feedback-ID': 'stream:mydashrx:resend:aha_moment' },
-      html: `
+  // P-DEL31: orgId+'aha_moment' — fires exactly once (firstDispatchedAt IS NULL guard in caller)
+  sendTransactional({
+    from: mailSender(),
+    to: adminEmail,
+    reply_to: 'onboarding@mydashrx.com',
+    subject: 'Your first delivery is live 🚚',
+    headers: { 'Feedback-ID': 'stream:mydashrx:resend:aha_moment' },
+    idempotencyKey: idempotencyKey(orgId + 'aha_moment'),
+    html: `
         <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Your first delivery is now live — the driver has SMS directions and the patient gets a tracking link.</span>
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#0F4C81;margin:0 0 8px">Your first delivery is live! 🚚</h2>
@@ -239,32 +254,23 @@ export async function sendAhaMomentEmail(orgId: string, adminEmail: string, orgN
           <a href="${dash}/dashboard/map" style="display:inline-block;background:#0F4C81;color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;margin-bottom:16px">Track this delivery live →</a>
           <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Questions? Reply to this email or contact <a href="mailto:onboarding@mydashrx.com" style="color:#0F4C81">onboarding@mydashrx.com</a></p>
         </div>`,
-    }),
   }).catch((e: unknown) => { console.error('[Resend] aha-moment email failed:', e); });
 }
 
 /** P-CNV14: Abandonment recovery email — sent to pharmacy admins who started signup but didn't complete */
 export async function sendAbandonmentEmail(adminEmail: string, orgName: string | undefined, unsubscribeUrl: string): Promise<void> {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return;
   // P-DEL11/DEL12: suppress bounced/opted-out addresses
   if (await isSuppressed(adminEmail)) { console.log(`[emailHelpers] suppressed abandonment email to ${adminEmail}`); return; }
   const dash = dashUrl();
   const pharmacyName = orgName ? `<strong>${orgName}</strong>` : 'your pharmacy';
-  fetch(RESEND, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-    body: JSON.stringify({
-      from: sender(),
-      to: adminEmail,
-      reply_to: 'support@mydashrx.com',
-      subject: 'Complete your MyDashRx application — takes 2 min',
-      // P-DEL13: suppress tracking — signup links must survive corporate email scanners
-      track_clicks: false,
-      track_opens: false,
-      // P-DEL17: Gmail postmaster stream bucketing
-      headers: { 'Feedback-ID': 'abandonment:mydashrx:resend:transactional' },
-      html: `
+  sendTransactional({
+    from: sender(),
+    to: adminEmail,
+    reply_to: 'support@mydashrx.com',
+    subject: 'Complete your MyDashRx application — takes 2 min',
+    // P-DEL17: Gmail postmaster stream bucketing
+    headers: { 'Feedback-ID': 'abandonment:mydashrx:resend:transactional' },
+    html: `
         <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Finish setting up your pharmacy account — approval in under 2 hours, no sales call required.</span>
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <img src="${dash}/logo.png" alt="MyDashRx" style="height:32px;margin-bottom:24px" onerror="this.style.display='none'" />
@@ -282,28 +288,25 @@ export async function sendAbandonmentEmail(adminEmail: string, orgName: string |
           <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Questions? Reply to this email or contact <a href="mailto:support@mydashrx.com" style="color:#0F4C81">support@mydashrx.com</a></p>
           <p style="color:#d1d5db;font-size:11px;margin:12px 0 0"><a href="${unsubscribeUrl}" style="color:#d1d5db">Unsubscribe</a></p>
         </div>`,
-    }),
   }).catch((e: unknown) => { console.error('[Resend] abandonment email failed:', e); });
 }
 
 /** P-CNV32: Referral success notification — fires to referrer when referred org is approved */
 export async function sendReferralSuccessEmail({
-  referrerEmail, referrerName, referrerOrgName, newOrgName,
-}: { referrerEmail: string; referrerName: string; referrerOrgName: string; newOrgName: string }): Promise<void> {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return;
+  referrerEmail, referrerName, referrerOrgName, newOrgName, referrerOrgId, newOrgId,
+}: { referrerEmail: string; referrerName: string; referrerOrgName: string; newOrgName: string; referrerOrgId?: string; newOrgId?: string }): Promise<void> {
   if (await isSuppressed(referrerEmail)) { console.log(`[emailHelpers] suppressed referral success email to ${referrerEmail}`); return; }
   const dash = dashUrl();
-  await fetch(RESEND, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-    body: JSON.stringify({
-      from: mailSender(),
-      to: referrerEmail,
-      reply_to: 'onboarding@mydashrx.com',
-      subject: `Your referral is live — ${newOrgName} just joined MyDashRx`,
-      headers: { 'Feedback-ID': 'stream:mydashrx:resend:referral_success' },
-      html: `
+  // P-DEL31: referrerId+refereeOrgId — one notification per referral relationship
+  const iKey = referrerOrgId && newOrgId ? idempotencyKey(referrerOrgId + newOrgId) : undefined;
+  sendTransactional({
+    from: mailSender(),
+    to: referrerEmail,
+    reply_to: 'onboarding@mydashrx.com',
+    subject: `Your referral is live — ${newOrgName} just joined MyDashRx`,
+    headers: { 'Feedback-ID': 'stream:mydashrx:resend:referral_success' },
+    ...(iKey ? { idempotencyKey: iKey } : {}),
+    html: `
         <span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">Great news — ${newOrgName}, the pharmacy you referred, was just approved and is live on MyDashRx.</span>
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border-radius:12px">
           <h2 style="color:#0F4C81;margin:0 0 8px">Your referral is live!</h2>
@@ -319,6 +322,5 @@ export async function sendReferralSuccessEmail({
           </a>
           <p style="color:#9ca3af;font-size:12px;margin:24px 0 0">Questions? Reply to this email or contact <a href="mailto:onboarding@mydashrx.com" style="color:#0F4C81">onboarding@mydashrx.com</a></p>
         </div>`,
-    }),
   }).catch((e: unknown) => { console.error('[Resend] referral success email failed:', e); });
 }
