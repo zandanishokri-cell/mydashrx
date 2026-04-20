@@ -160,10 +160,21 @@ export default function CommandCenter() {
     }
   }, [user, depotId, summary]);
 
+  // OPUS-AUDIT-10: visibility-gated poll. Background tabs skip network work
+  // (~960 needless calls over an 8hr shift) and returning to the tab triggers
+  // an immediate refresh so the operator sees fresh data on return.
   useEffect(() => {
     loadCombined();
-    combinedTimer.current = setInterval(() => loadCombined(), 30_000);
-    return () => { if (combinedTimer.current) clearInterval(combinedTimer.current); };
+    combinedTimer.current = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      loadCombined();
+    }, 30_000);
+    const onVis = () => { if (document.visibilityState === 'visible') loadCombined(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      if (combinedTimer.current) clearInterval(combinedTimer.current);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [loadCombined]);
 
   const handleRefresh = () => loadCombined(true);
