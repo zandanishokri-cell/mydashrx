@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { SignupTrustBlock } from '@/components/SignupTrustBlock';
@@ -89,7 +89,7 @@ const isDuplicateError = (msg: string) =>
 const INTENT_URL = `${process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com'}/api/v1/signup/pharmacy-intent`;
 const RESCUE_KEY = 'mdrx_rescue_shown';
 
-export default function PharmacySignupPage() {
+function PharmacySignupPageInner() {
   const searchParams = useSearchParams();
   // P-CNV32: read ?ref= param for referral tracking
   const referredByOrgId = searchParams.get('ref') ?? undefined;
@@ -571,5 +571,13 @@ export default function PharmacySignupPage() {
 
       </div>
     </div>
+  );
+}
+
+export default function PharmacySignupPage() {
+  return (
+    <Suspense>
+      <PharmacySignupPageInner />
+    </Suspense>
   );
 }
