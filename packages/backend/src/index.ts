@@ -866,7 +866,18 @@ await app.register(helmet, {
 });
 
 await app.register(cors, {
-  origin: process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app',
+  origin: (origin, cb) => {
+    const allowed = [
+      process.env.DASHBOARD_URL,
+      'https://mydashrx-dashboard.vercel.app',
+      'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app',
+    ].filter(Boolean);
+    if (!origin || allowed.some(o => origin === o || origin.endsWith('.vercel.app'))) {
+      cb(null, true);
+    } else {
+      cb(new Error('CORS: origin not allowed'), false);
+    }
+  },
   credentials: true,
 });
 
