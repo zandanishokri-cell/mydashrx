@@ -67,7 +67,21 @@ export function getUser(): User | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = localStorage.getItem('user');
-    return raw ? (JSON.parse(raw) as User) : null;
+    const stored = raw ? (JSON.parse(raw) as User) : null;
+    if (!stored) return null;
+    // OPUS-AUDIT-9: AT payload is authoritative for auth-critical fields. If a server-side
+    // role change happened mid-session, the next refresh issues a new AT — but localStorage
+    // still holds the pre-change user. Decoding on every getUser() call means all 22 RBAC
+    // callers see the new role without needing a full page reload / bootstrap merge.
+    if (_accessToken) {
+      try {
+        const payload = JSON.parse(atob(_accessToken.split('.')[1])) as {
+          sub: string; email: string; role: User['role']; orgId: string;
+        };
+        return { ...stored, id: payload.sub, email: payload.email, role: payload.role, orgId: payload.orgId };
+      } catch { /* AT malformed — fall through to stored */ }
+    }
+    return stored;
   } catch {
     return null;
   }
