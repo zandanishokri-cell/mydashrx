@@ -102,11 +102,14 @@ function LoginForm() {
     return () => document.removeEventListener('visibilitychange', handler);
   }, []);
 
+  // OPUS-AUDIT-13: no timed auto-reveal of the password form — an idle tab would
+  // pop the password input (autoFocus + autoComplete=current-password) and could
+  // trigger browser autofill against a context the user didn't actively open.
+  // Users reach the password form via the explicit button below / on the main screen.
   useEffect(() => {
     if (!sent) return;
     const interval = setInterval(() => setCountdown(s => Math.max(0, s - 1)), 1000);
-    const pwTimer = setTimeout(() => setShowPassword(true), 300_000);
-    return () => { clearInterval(interval); clearTimeout(pwTimer); };
+    return () => clearInterval(interval);
   }, [sent]);
 
   // Exponential cooldown: 30s → 60s → 120s
@@ -319,6 +322,12 @@ function LoginForm() {
             className="block w-full text-sm text-gray-400 hover:text-gray-600"
           >
             Use a different email
+          </button>
+          <button
+            onClick={() => { setShowPassword(p => !p); setError(''); }}
+            className="block w-full text-sm text-gray-400 hover:text-gray-600"
+          >
+            {showPassword ? 'Hide password sign in' : 'Sign in with password instead'}
           </button>
         </div>
         {showPassword && (
