@@ -1,5 +1,5 @@
 'use client';
-import { clearSession, getAccessToken, setAccessToken } from './auth';
+import { clearSession, getAccessToken, setAccessToken, serverAdjustedNow, updateSkewFromResponse } from './auth';
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -25,6 +25,7 @@ async function attemptSilentRefresh(): Promise<string | null> {
       headers: { 'Content-Type': 'application/json' },
       // No body — RT comes from httpOnly cookie (dual-read: backend also accepts body for legacy)
     });
+    updateSkewFromResponse(res);
     if (!res.ok) return null;
     const data = await res.json();
     setAccessToken(data.accessToken ?? null);
@@ -76,7 +77,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // which would trigger a SECOND refresh via refreshAndRetry.
   if (token) {
     const exp = decodeExp(token);
-    if (exp && exp * 1000 - Date.now() < 60_000) {
+    if (exp && exp * 1000 - serverAdjustedNow() < 120_000) {
       const fresh = await singleFlightRefresh();
       if (!fresh) handleRefreshFailure();
       token = fresh;
@@ -93,6 +94,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
+  updateSkewFromResponse(res);
   if (!res.ok) {
     const text = await res.text();
     if (res.status === 401 && typeof window !== 'undefined') {
@@ -120,7 +122,7 @@ export const api = {
     let token = getAccessToken();
     if (token) {
       const exp = decodeExp(token);
-      if (exp && exp * 1000 - Date.now() < 60_000) {
+      if (exp && exp * 1000 - serverAdjustedNow() < 120_000) {
         const fresh = await singleFlightRefresh();
         if (!fresh) handleRefreshFailure();
         token = fresh;
@@ -132,6 +134,7 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
     });
+    updateSkewFromResponse(res);
 
     if (!res.ok) {
       if (res.status === 401 && typeof window !== 'undefined') {

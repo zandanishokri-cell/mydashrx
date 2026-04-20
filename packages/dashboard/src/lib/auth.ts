@@ -7,6 +7,18 @@ let _accessToken: string | null = null;
 export function getAccessToken(): string | null { return _accessToken; }
 export function setAccessToken(at: string | null) { _accessToken = at; }
 
+// OPUS-AUDIT-5: clock-skew tracking. Backend emits X-Server-Time on every response so the
+// frontend can detect and compensate for drifting laptop clocks. Shared between auth bootstrap
+// and api.ts request pipeline — the first response that carries the header establishes skew.
+let _clockSkewMs = 0;
+export function updateSkewFromResponse(res: Response): void {
+  const header = res.headers.get('X-Server-Time');
+  if (!header) return;
+  const serverMs = Number(header);
+  if (Number.isFinite(serverMs)) _clockSkewMs = serverMs - Date.now();
+}
+export function serverAdjustedNow(): number { return Date.now() + _clockSkewMs; }
+
 // P-SES23: Bootstrap hydration — on page reload _accessToken resets to null despite valid RT cookie.
 // Call attemptSilentBootstrap() in protected layouts before checking isAuthenticated().
 // Returns true if AT was restored (user stays), false if no valid RT (redirect to login).
@@ -21,6 +33,7 @@ export function attemptSilentBootstrap(): Promise<boolean> {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
   }).then(async res => {
+    updateSkewFromResponse(res);
     if (!res.ok) return false;
     const data = await res.json();
     if (!data.accessToken) return false;

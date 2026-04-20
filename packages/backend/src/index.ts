@@ -879,6 +879,7 @@ await app.register(cors, {
     }
   },
   credentials: true,
+  exposedHeaders: ['X-Server-Time'], // OPUS-AUDIT-5: expose to cross-origin JS for clock-skew tracking
 });
 
 // P-SEC32c: JWT key rotation support — JWT_SECRET is the signing key (current).
@@ -945,6 +946,11 @@ app.addHook('onError', async (req, _reply, error) => {
       }).catch(() => { /* non-blocking */ });
     }
   }
+});
+
+// OPUS-AUDIT-5: X-Server-Time lets the client detect clock skew and avoid refresh storms on drifting laptops.
+app.addHook('onSend', async (_req, reply) => {
+  reply.header('X-Server-Time', Date.now().toString());
 });
 
 app.addHook('onSend', phiFilterHook);
