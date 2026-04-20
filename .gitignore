@@ -7,3 +7,7 @@ dist/
 .turbo/
 
 .vercel
+
+playwright-report/
+test-results/
+playwright/.cache/

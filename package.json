@@ -2,14 +2,20 @@
   "name": "mydash-rx",
   "private": true,
   "packageManager": "npm@11.11.0",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
     "db:push": "turbo run db:push --filter=backend",
-    "db:studio": "cd packages/backend && npx drizzle-kit studio"
+    "db:studio": "cd packages/backend && npx drizzle-kit studio",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:smoke": "playwright test login-magic-link.spec.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "turbo": "^2.0.0",
     "typescript": "^5.4.0"
   }

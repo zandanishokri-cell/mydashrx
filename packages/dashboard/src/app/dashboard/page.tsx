@@ -143,9 +143,15 @@ export default function CommandCenter() {
       setPlans(data.plans);
       setStops(data.plans.flatMap(p => p.routes.flatMap(r => r.stops)));
     } catch {
-      setSummaryError(true);
-      setDriversError(true);
-      setError('Failed to load dashboard data');
+      // Graceful degradation: if we have prior good data, keep it and show a non-blocking retry hint.
+      // Only flag widget-level error states on first load (when we have nothing to show).
+      if (!summary) {
+        setSummaryError(true);
+        setDriversError(true);
+        setError('Failed to load dashboard data');
+      } else {
+        setError('Failed to refresh — showing last known values');
+      }
     } finally {
       setLoading(false);
       setSummaryLoading(false);

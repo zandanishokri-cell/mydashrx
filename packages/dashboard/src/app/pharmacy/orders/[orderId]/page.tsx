@@ -230,10 +230,14 @@ export default function OrderDetailPage() {
           {order.pod.signature && (
             <div className="mb-3">
               <p className="text-xs text-gray-500 mb-1">Signed by: {order.pod.signature.signerName}</p>
-              <div
-                className="border border-gray-100 rounded-xl p-2 bg-gray-50"
-                dangerouslySetInnerHTML={{ __html: order.pod.signature.svgData }}
-              />
+              {/* SECURITY: render via <img src="data:image/svg+xml"> — scripts inside img-loaded SVG cannot execute (MDN: https://developer.mozilla.org/en-US/docs/Web/SVG/Scripting) */}
+              <div className="border border-gray-100 rounded-xl p-2 bg-gray-50">
+                <img
+                  src={`data:image/svg+xml;utf8,${encodeURIComponent(order.pod.signature.svgData)}`}
+                  alt={`Signature by ${order.pod.signature.signerName}`}
+                  className="max-w-full h-auto"
+                />
+              </div>
             </div>
           )}
 

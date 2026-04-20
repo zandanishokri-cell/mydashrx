@@ -68,6 +68,8 @@ export function setSession(tokens: {
   user: User;
 }) {
   _accessToken = tokens.accessToken;
+  // Reset bootstrap cache so a subsequent logout→login→reload doesn't serve a stale `false`
+  _bootstrapPromise = null;
   localStorage.setItem('user', JSON.stringify(tokens.user));
   // Legacy cleanup: remove stale tokens from pre-SEC28 localStorage flow
   localStorage.removeItem('accessToken');
@@ -76,6 +78,8 @@ export function setSession(tokens: {
 
 export function clearSession() {
   _accessToken = null;
+  // Reset bootstrap cache — prevents post-logout reload from returning a cached stale result
+  _bootstrapPromise = null;
   const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
   // credentials:include sends RT cookie so backend can revoke + clear it
   fetch(`${base}/api/v1/auth/logout`, {
