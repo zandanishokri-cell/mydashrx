@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { setSession, resolveNext } from '@/lib/auth';
+import { API_BASE } from '@/lib/config';
 import type { AuthTokens } from '@mydash-rx/shared';
 import { PasskeyEnrollModal } from '@/components/PasskeyEnrollModal';
 import { collectFingerprint } from '@/lib/deviceFingerprint';
@@ -74,8 +75,7 @@ function VerifyContent() {
   useEffect(() => {
     const requestId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('mdrx_magic_request_id') : null;
     if (!requestId || status === 'success' || status === 'confirming') return;
-    const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com';
-    const evtSource = new EventSource(`${API}/api/v1/auth/magic-link/status/${requestId}`);
+    const evtSource = new EventSource(`${API_BASE}/api/v1/auth/magic-link/status/${requestId}`);
     evtSource.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data as string) as { status: string; crossDeviceCode?: string };
@@ -178,8 +178,7 @@ function VerifyContent() {
     setStatus('confirming');
     const fp = collectFingerprint();
     // P-ML26: raw fetch to handle 202 (step_up_required) — api.post throws on non-2xx
-    const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com';
-    fetch(`${API}/api/v1/auth/magic-link/confirm`, {
+    fetch(`${API_BASE}/api/v1/auth/magic-link/confirm`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -410,11 +409,10 @@ function VerifyContent() {
 
   // P-SES22: Trust device prompt after successful verify
   if (showTrustPrompt) {
-    const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com';
     const trustDevice = async () => {
       try {
         const { getAccessToken } = await import('@/lib/auth');
-        await fetch(`${API}/api/v1/auth/trust-device`, {
+        await fetch(`${API_BASE}/api/v1/auth/trust-device`, {
           method: 'POST', credentials: 'include',
           headers: { Authorization: `Bearer ${getAccessToken()}` },
         });

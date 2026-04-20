@@ -1,4 +1,5 @@
 import type { User } from '@mydash-rx/shared';
+import { API_BASE } from './config';
 
 // P-SEC28: AT in module-level variable (not localStorage) — invisible to XSS.
 // RT is httpOnly cookie set by backend — never JS-accessible.
@@ -27,8 +28,7 @@ export function attemptSilentBootstrap(): Promise<boolean> {
   if (_bootstrapPromise) return _bootstrapPromise;
   if (typeof window === 'undefined') return Promise.resolve(false);
   if (_accessToken) return Promise.resolve(true);
-  const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
-  _bootstrapPromise = fetch(`${BASE}/api/v1/auth/refresh`, {
+  _bootstrapPromise = fetch(`${API_BASE}/api/v1/auth/refresh`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -93,9 +93,8 @@ export function clearSession() {
   _accessToken = null;
   // Reset bootstrap cache — prevents post-logout reload from returning a cached stale result
   _bootstrapPromise = null;
-  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
   // credentials:include sends RT cookie so backend can revoke + clear it
-  fetch(`${base}/api/v1/auth/logout`, {
+  fetch(`${API_BASE}/api/v1/auth/logout`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

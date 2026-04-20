@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getUser, getAccessToken } from '@/lib/auth';
+import { API_BASE } from '@/lib/config';
 import { Download, Search, ChevronLeft, ChevronRight as ChevRight, AlertCircle, FileDown, Phone } from 'lucide-react';
 import Link from 'next/link';
 import { localDateStr } from '@/lib/dateUtils';
@@ -28,8 +29,6 @@ interface AuditResponse {
 
 const defaultFrom = () => localDateStr(new Date(Date.now() - 7 * 86400000));
 const defaultTo = () => localDateStr();
-
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 export default function AuditPage() {
   const [user] = useState(getUser);
@@ -89,7 +88,7 @@ export default function AuditPage() {
     if (applied.action) params.set('action', applied.action);
     if (applied.resource) params.set('resource', applied.resource);
     const token = getAccessToken();
-    const url = `${BASE}/api/v1/orgs/${user.orgId}/compliance/audit-logs?${params}`;
+    const url = `${API_BASE}/api/v1/orgs/${user.orgId}/compliance/audit-logs?${params}`;
     try {
       const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
       if (!res.ok) throw new Error(`Export failed (${res.status})`);
@@ -126,7 +125,7 @@ export default function AuditPage() {
     const params = new URLSearchParams({ startDate: compFrom, endDate: compTo, format: compFormat });
     if (compPhone.trim()) params.set('patientPhone', compPhone.trim());
     const token = getAccessToken();
-    const url = `${BASE}/api/v1/orgs/${user.orgId}/compliance/export?${params}`;
+    const url = `${API_BASE}/api/v1/orgs/${user.orgId}/compliance/export?${params}`;
     try {
       const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
       if (!res.ok) {

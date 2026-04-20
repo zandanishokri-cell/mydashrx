@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, setImpersonateOrgId } from '@/lib/api';
 import { getUser, getAccessToken } from '@/lib/auth';
+import { API_BASE } from '@/lib/config';
 import { Crown, Building2, Users, Truck, DollarSign, Plus, X, UserCheck, Mail, Activity, Download, AlertTriangle } from 'lucide-react';
 
 interface OrgRow {
@@ -202,9 +203,8 @@ export default function AdminPage() {
     if (mfaExporting) return;
     setMfaExporting(true);
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com/api/v1';
       const token = getAccessToken() ?? '';
-      const res = await fetch(`${backendUrl}/admin/security-health/mfa-report`, {
+      const res = await fetch(`${API_BASE}/api/v1/admin/security-health/mfa-report`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error('Export failed');
@@ -222,9 +222,8 @@ export default function AdminPage() {
     if (permExporting) return;
     setPermExporting(true);
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com/api/v1';
       const token = getAccessToken() ?? '';
-      const res = await fetch(`${backendUrl}/admin/rbac-audit/permissions/export`, {
+      const res = await fetch(`${API_BASE}/api/v1/admin/rbac-audit/permissions/export`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error('Export failed');

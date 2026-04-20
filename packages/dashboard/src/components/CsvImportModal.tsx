@@ -2,6 +2,7 @@
 import { useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
+import { API_BASE } from '@/lib/config';
 import { Upload, X, Download, ChevronDown, ChevronUp, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface ImportResult {
@@ -59,8 +60,7 @@ export function CsvImportModal({ orgId, onClose, onSuccess }: Props) {
       const form = new FormData();
       form.append('file', file);
       const token = getAccessToken();
-      const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
-      const res = await fetch(`${base}/api/v1/orgs/${orgId}/stops/import`, {
+      const res = await fetch(`${API_BASE}/api/v1/orgs/${orgId}/stops/import`, {
         method: 'POST',
         body: form,
         headers: token ? { Authorization: `Bearer ${token}` } : {},

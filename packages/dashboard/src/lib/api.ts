@@ -1,7 +1,6 @@
 'use client';
 import { clearSession, getAccessToken, setAccessToken, serverAdjustedNow, updateSkewFromResponse } from './auth';
-
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+import { API_BASE as BASE } from './config';
 
 // P-RBAC31: impersonation header — set by layout, injected into every request
 let _impersonateOrgId: string | null = null;

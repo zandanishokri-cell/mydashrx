@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { API_BASE } from '@/lib/config';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 const REFRESH_MS = 30_000;
 
 interface TrackingData {
@@ -54,7 +54,7 @@ export default function TrackingPage() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/v1/track/${token}`);
+      const res = await fetch(`${API_BASE}/api/v1/track/${token}`);
       if (res.status === 404) { setNotFound(true); return; }
       if (!res.ok) { setLoadErr(true); return; }
       setData(await res.json() as TrackingData);
@@ -73,7 +73,7 @@ export default function TrackingPage() {
     if (!note.trim() || noteSending || noteCooldown > 0) return;
     setNoteSending(true);
     try {
-      const res = await fetch(`${API}/api/v1/track/${token}/note`, {
+      const res = await fetch(`${API_BASE}/api/v1/track/${token}/note`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body: note.trim() }),

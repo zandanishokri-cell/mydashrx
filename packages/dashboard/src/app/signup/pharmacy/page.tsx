@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { SignupTrustBlock } from '@/components/SignupTrustBlock';
 import { useFieldError } from '@/lib/useFieldError';
+import { API_BASE } from '@/lib/config';
 
 // P-CNV30: Per-field green check micro-validation (completion momentum — 23% abandonment reduction)
 function FieldCheck({ field, validFields }: { field: string; validFields: Set<string> }) {
@@ -86,7 +87,7 @@ const validateEmail = (v: string) => {
 const isDuplicateError = (msg: string) =>
   msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('already registered');
 
-const INTENT_URL = `${process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com'}/api/v1/signup/pharmacy-intent`;
+const INTENT_URL = `${API_BASE}/api/v1/signup/pharmacy-intent`;
 const RESCUE_KEY = 'mdrx_rescue_shown';
 
 function PharmacySignupPageInner() {
@@ -476,7 +477,7 @@ function PharmacySignupPageInner() {
                     // P-CNV14: fire-and-forget intent capture for abandonment recovery
                     const val = e.target.value;
                     if (!validateEmail(val) && val) {
-                      fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com'}/api/v1/signup/pharmacy-intent`, {
+                      fetch(`${API_BASE}/api/v1/signup/pharmacy-intent`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ adminEmail: val, orgName: form.orgName }),

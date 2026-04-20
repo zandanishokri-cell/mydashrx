@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { setSession } from '@/lib/auth';
+import { API_BASE } from '@/lib/config';
 import type { AuthTokens } from '@mydash-rx/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { collectFingerprint } from '@/lib/deviceFingerprint';
@@ -148,11 +149,10 @@ function LoginForm() {
     // P-ML19: ping /health every 15s for 120s to keep Render warm during email-to-click window
     warmupCountRef.current = 0;
     if (warmupRef.current) clearInterval(warmupRef.current);
-    const BACKEND = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com';
     warmupRef.current = setInterval(() => {
       warmupCountRef.current += 1;
       if (warmupCountRef.current >= 8) { clearInterval(warmupRef.current!); warmupRef.current = null; return; }
-      fetch(`${BACKEND}/health`, { mode: 'no-cors' }).catch(() => {});
+      fetch(`${API_BASE}/health`, { mode: 'no-cors' }).catch(() => {});
     }, 15_000);
   };
 

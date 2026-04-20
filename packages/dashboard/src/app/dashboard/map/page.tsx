@@ -3,6 +3,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
+import { API_BASE } from '@/lib/config';
 import { Badge } from '@/components/ui/Badge';
 import { RefreshCw, AlertTriangle, Clock, WifiOff, Crosshair } from 'lucide-react';
 
@@ -99,8 +100,6 @@ export default function MapPage() {
   // P-PERF13: track whether SSE connected successfully; if not, fall back to polling
   const sseFailedRef = useRef(false);
 
-  const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
-
   const load = useCallback(async () => {
     if (!user) return;
     try {
@@ -132,7 +131,7 @@ export default function MapPage() {
     if (!user) return;
     tickRef.current = setInterval(() => setSecondsAgo((s) => s + 1), 1000);
 
-    const sseUrl = `${BASE}/api/v1/orgs/${user.orgId}/tracking/live/stream`;
+    const sseUrl = `${API_BASE}/api/v1/orgs/${user.orgId}/tracking/live/stream`;
     const es = new EventSource(sseUrl, { withCredentials: true });
     esRef.current = es;
 

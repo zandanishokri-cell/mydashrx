@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
+import { API_BASE } from '@/lib/config';
 
 const EVENT_TABS = [
   { label: 'All', value: '' },
@@ -61,9 +62,8 @@ export default function AuditLogPage() {
       if (actorEmail.trim()) params.set('actorEmail', actorEmail.trim());
       if (from) params.set('from', from);
       if (to) params.set('to', to);
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com/api/v1';
       const token = getAccessToken();
-      const res = await fetch(`${baseUrl}/admin/audit-log?${params.toString()}`, {
+      const res = await fetch(`${API_BASE}/api/v1/admin/audit-log?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const blob = await res.blob();

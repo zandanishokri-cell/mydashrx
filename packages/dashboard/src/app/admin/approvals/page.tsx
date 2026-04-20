@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser, getAccessToken } from '@/lib/auth';
+import { API_BASE } from '@/lib/config';
 
 type PendingOrg = {
   org: {
@@ -896,14 +897,13 @@ export default function ApprovalsPage() {
 
   // P-ADM39: SSE live approval queue — replaces 60s setInterval polling
   useEffect(() => {
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com/api/v1';
     const token = getAccessToken() ?? '';
     // EventSource doesn't support Authorization header — pass as query param (backend reads it)
     let es: EventSource | null = null;
     let fallbackTimer: ReturnType<typeof setInterval> | null = null;
 
     const connect = () => {
-      es = new EventSource(`${backendUrl}/admin/approvals/stream?token=${encodeURIComponent(token)}`);
+      es = new EventSource(`${API_BASE}/api/v1/admin/approvals/stream?token=${encodeURIComponent(token)}`);
       es.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data) as { type: string; count?: number };
@@ -1016,8 +1016,7 @@ export default function ApprovalsPage() {
     setCsvExporting(true);
     try {
       const token = getAccessToken() ?? '';
-      const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://mydashrx-backend.onrender.com/api/v1';
-      const res = await fetch(`${backendUrl}/admin/approvals/export?format=csv`, {
+      const res = await fetch(`${API_BASE}/api/v1/admin/approvals/export?format=csv`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error('Export failed');
