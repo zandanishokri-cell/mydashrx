@@ -657,7 +657,7 @@ function VerifyContent() {
   );
 }
 
-export default function VerifyPage() {
+function VerifyPageInner() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F7F8FC]">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
@@ -669,5 +669,13 @@ export default function VerifyPage() {
         </Suspense>
       </div>
     </div>
+  );
+}
+
+export default function VerifyPage() {
+  return (
+    <Suspense>
+      <VerifyPageInner />
+    </Suspense>
   );
 }

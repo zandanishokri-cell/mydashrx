@@ -331,10 +331,18 @@ function ComplianceItemsContent() {
   );
 }
 
-export default function ComplianceItemsPage() {
+function ComplianceItemsPageInner() {
   return (
     <Suspense fallback={<div className="p-8 text-center text-gray-400 text-sm">Loading…</div>}>
       <ComplianceItemsContent />
+    </Suspense>
+  );
+}
+
+export default function ComplianceItemsPage() {
+  return (
+    <Suspense>
+      <ComplianceItemsPageInner />
     </Suspense>
   );
 }

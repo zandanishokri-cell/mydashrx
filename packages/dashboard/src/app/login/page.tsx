@@ -464,12 +464,20 @@ function LoginForm() {
   );
 }
 
-export default function LoginPage() {
+function LoginPageInner() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F7F8FC]">
       <Suspense fallback={<div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-8 h-64" />}>
         <LoginForm />
       </Suspense>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginPageInner />
+    </Suspense>
   );
 }

@@ -534,7 +534,7 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
   );
 }
 
-export default function LeadDetailPage() {
+function LeadDetailPageInner() {
   const { leadId } = useParams<{ leadId: string }>();
   return (
     <Suspense fallback={
@@ -544,6 +544,14 @@ export default function LeadDetailPage() {
       </div>
     }>
       <LeadDetailContent leadId={leadId} />
+    </Suspense>
+  );
+}
+
+export default function LeadDetailPage() {
+  return (
+    <Suspense>
+      <LeadDetailPageInner />
     </Suspense>
   );
 }

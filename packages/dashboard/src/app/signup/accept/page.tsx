@@ -96,7 +96,7 @@ function AcceptContent() {
   );
 }
 
-export default function AcceptInvitePage() {
+function AcceptInvitePageInner() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F7F8FC]">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
@@ -109,5 +109,13 @@ export default function AcceptInvitePage() {
         </Suspense>
       </div>
     </div>
+  );
+}
+
+export default function AcceptInvitePage() {
+  return (
+    <Suspense>
+      <AcceptInvitePageInner />
+    </Suspense>
   );
 }
