@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
@@ -37,11 +37,12 @@ interface Stop {
 }
 
 type Urgency = 'overdue' | 'due-soon' | 'normal';
-function getUrgency(stop: Stop): Urgency {
+// OPUS-AUDIT-12: pure — caller passes `now` so a single render sorts deterministically
+// and two getUrgency() calls inside the same compare() cannot disagree.
+function getUrgency(stop: Stop, now: number): Urgency {
   if (stop.status === 'completed' || stop.status === 'failed' || stop.status === 'rescheduled') return 'normal';
   if (!stop.windowEnd) return 'normal';
   const end = new Date(stop.windowEnd).getTime();
-  const now = Date.now();
   if (end < now) return 'overdue';
   if (end - now < 60 * 60 * 1000) return 'due-soon';
   return 'normal';
@@ -112,6 +113,13 @@ function StopsContent() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkError, setBulkError] = useState('');
+  // OPUS-AUDIT-12: urgency tick — drives getUrgency/sortedStops memo. 30s cadence means
+  // a row can transition overdue without a reload, but we don't thrash re-sorts every frame.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [routeOptions, setRouteOptions] = useState<RouteOption[]>([]);
   const [routesLoading, setRoutesLoading] = useState(false);
@@ -136,14 +144,17 @@ function StopsContent() {
   const URGENCY_ORDER: Record<string, number> = { overdue: 0, 'due-soon': 1, normal: 2 };
   const STATUS_ORDER: Record<string, number> = { pending: 0, en_route: 1, arrived: 2, completed: 3, failed: 4 };
 
-  const sortedStops = sortKey ? [...stops].sort((a, b) => {
-    let cmp = 0;
-    if (sortKey === 'urgency') cmp = (URGENCY_ORDER[getUrgency(a)] ?? 99) - (URGENCY_ORDER[getUrgency(b)] ?? 99);
-    else if (sortKey === 'status') cmp = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
-    else if (sortKey === 'date') cmp = (a.planDate ?? '').localeCompare(b.planDate ?? '');
-    else if (sortKey === 'driver') cmp = (a.driverName ?? '').localeCompare(b.driverName ?? '');
-    return sortDir === 'asc' ? cmp : -cmp;
-  }) : stops;
+  const sortedStops = useMemo(() => {
+    if (!sortKey) return stops;
+    return [...stops].sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === 'urgency') cmp = (URGENCY_ORDER[getUrgency(a, nowMs)] ?? 99) - (URGENCY_ORDER[getUrgency(b, nowMs)] ?? 99);
+      else if (sortKey === 'status') cmp = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
+      else if (sortKey === 'date') cmp = (a.planDate ?? '').localeCompare(b.planDate ?? '');
+      else if (sortKey === 'driver') cmp = (a.driverName ?? '').localeCompare(b.driverName ?? '');
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [stops, sortKey, sortDir, nowMs]);
 
   const load = useCallback(async (resetPage = false) => {
     if (!user) return;
@@ -524,7 +535,7 @@ function StopsContent() {
               </thead>
               <tbody className="divide-y divide-gray-50 bg-white">
                 {sortedStops.map(stop => {
-                  const urgency = getUrgency(stop);
+                  const urgency = getUrgency(stop, nowMs);
                   const badgeCls = URGENCY_BADGE[urgency];
                   return (
                   // P-A11Y14: tabIndex=0 + onKeyDown for keyboard row navigation (WCAG 2.1.1)
