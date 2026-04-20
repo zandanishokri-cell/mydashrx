@@ -39,19 +39,30 @@ async function attemptSilentRefresh(): Promise<string | null> {
   } catch { return null; }
 }
 
-// P-SES9: shared single-flight helper used by both request() and upload()
-async function refreshAndRetry<T>(retryFn: (newToken: string) => Promise<T>): Promise<T> {
+// P-SES9 / OPUS-AUDIT-4: shared single-flight refresh — dedupes parallel callers,
+// used by BOTH proactive (pre-request) and reactive (401 retry) paths so N concurrent
+// requests produce at most one /auth/refresh call.
+async function singleFlightRefresh(): Promise<string | null> {
   if (_isRefreshing) {
-    const newToken = await new Promise<string | null>(resolve => { _refreshQueue.push(resolve); });
-    if (!newToken) { clearSession(); throw new Error('Session expired'); }
-    return retryFn(newToken);
+    return new Promise<string | null>(resolve => { _refreshQueue.push(resolve); });
   }
   _isRefreshing = true;
   const newToken = await attemptSilentRefresh();
   _isRefreshing = false;
   _refreshQueue.forEach(cb => cb(newToken));
   _refreshQueue = [];
-  if (!newToken) { clearSession(); window.location.replace('/login'); throw new Error('Session expired'); }
+  return newToken;
+}
+
+function handleRefreshFailure(): never {
+  clearSession();
+  if (typeof window !== 'undefined') window.location.replace('/login');
+  throw new Error('Session expired');
+}
+
+async function refreshAndRetry<T>(retryFn: (newToken: string) => Promise<T>): Promise<T> {
+  const newToken = await singleFlightRefresh();
+  if (!newToken) handleRefreshFailure();
   return retryFn(newToken);
 }
 
@@ -59,12 +70,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // P-SEC28: read AT from in-memory variable (not localStorage)
   let token = getAccessToken();
 
-  // P-SES7: proactive refresh if AT expires within 60s
-  if (token && !_isRefreshing) {
+  // P-SES7 / OPUS-AUDIT-4: proactive refresh if AT expires within 60s.
+  // Uses singleFlightRefresh so N parallel callers collapse to one /auth/refresh hit.
+  // On null return (RT invalid), skip the request — firing a dead AT guarantees 401
+  // which would trigger a SECOND refresh via refreshAndRetry.
+  if (token) {
     const exp = decodeExp(token);
     if (exp && exp * 1000 - Date.now() < 60_000) {
-      const fresh = await attemptSilentRefresh();
-      if (fresh) token = fresh;
+      const fresh = await singleFlightRefresh();
+      if (!fresh) handleRefreshFailure();
+      token = fresh;
     }
   }
 
@@ -101,13 +116,14 @@ export const api = {
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   upload: async <T>(path: string, formData: FormData): Promise<T> => {
-    // P-SES28: proactive pre-refresh in upload() — same guard as request()
+    // P-SES28 / OPUS-AUDIT-4: proactive pre-refresh via singleFlightRefresh (same guard as request()).
     let token = getAccessToken();
-    if (token && !_isRefreshing) {
+    if (token) {
       const exp = decodeExp(token);
       if (exp && exp * 1000 - Date.now() < 60_000) {
-        const fresh = await attemptSilentRefresh();
-        if (fresh) token = fresh;
+        const fresh = await singleFlightRefresh();
+        if (!fresh) handleRefreshFailure();
+        token = fresh;
       }
     }
     const res = await fetch(`${BASE}/api/v1${path}`, {
