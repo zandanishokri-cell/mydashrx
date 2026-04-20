@@ -1,10 +1,8 @@
-// P-SEC29: Per-request CSP nonce — eliminates 'unsafe-inline' from script-src
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { randomBytes } from 'crypto';
 
 export function middleware(request: NextRequest) {
-  const nonce = randomBytes(16).toString('base64');
+  const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64');
 
   const csp = [
     "default-src 'self'",
