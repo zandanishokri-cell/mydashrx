@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
+import { csvEscape } from '@/lib/csvEscape';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -138,7 +139,7 @@ export default function DriversPage() {
 
   const exportCsv = () => {
     const rows = drivers.map(d => [d.name, d.email, d.phone, d.vehicleType, d.status, d.totalStops, d.drugCapable ? 'Yes' : 'No']);
-    const csv = [['Name', 'Email', 'Phone', 'Vehicle', 'Status', 'Total Stops', 'Rx Capable'], ...rows].map(r => r.join(',')).join('\n');
+    const csv = [['Name', 'Email', 'Phone', 'Vehicle', 'Status', 'Total Stops', 'Rx Capable'], ...rows].map(r => r.map(csvEscape).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     a.download = 'drivers.csv';

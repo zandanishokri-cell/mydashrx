@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
+import { csvEscape } from '@/lib/csvEscape';
 import { Badge } from '@/components/ui/Badge';
 import { DepotFilter } from '@/components/ui/DepotFilter';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
@@ -211,7 +212,7 @@ function StopsContent() {
         s.requiresRefrigeration ? 'Yes' : 'No',
         s.completedAt ? new Date(s.completedAt).toLocaleString() : '',
       ]);
-      const csv = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+      const csv = [headers, ...rows].map(r => r.map(csvEscape).join(',')).join('\n');
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
       a.download = `stops-${new Date().toISOString().split('T')[0]}.csv`;
