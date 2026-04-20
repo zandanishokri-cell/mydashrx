@@ -29,12 +29,15 @@ async function attemptSilentRefresh(): Promise<string | null> {
     const data = await res.json();
     setAccessToken(data.accessToken ?? null);
     // P-SES8: broadcast new AT to all other open tabs
-    try {
-      new BroadcastChannel('mydashrx_auth').postMessage({
-        type: 'token_refreshed',
-        accessToken: data.accessToken,
-      });
-    } catch { /* SSR/worker context */ }
+    // OPUS-AUDIT-19: feature-detect — Safari <15.4 lacks BroadcastChannel.
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        new BroadcastChannel('mydashrx_auth').postMessage({
+          type: 'token_refreshed',
+          accessToken: data.accessToken,
+        });
+      } catch { /* SSR/worker context */ }
+    }
     return data.accessToken ?? null;
   } catch { return null; }
 }

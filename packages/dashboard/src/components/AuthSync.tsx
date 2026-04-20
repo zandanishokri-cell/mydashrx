@@ -6,6 +6,9 @@ import { setAccessToken } from '@/lib/auth';
 export function AuthSync() {
   const router = useRouter();
   useEffect(() => {
+    // OPUS-AUDIT-19: feature-detect — Safari <15.4 lacks BroadcastChannel. Without the guard
+    // the useEffect throws ReferenceError on mount and the whole app white-screens.
+    if (typeof BroadcastChannel === 'undefined') return;
     const ch = new BroadcastChannel('mydashrx_auth');
     ch.onmessage = (e) => {
       if (e.data?.type === 'logout') {

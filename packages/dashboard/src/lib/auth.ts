@@ -73,7 +73,10 @@ export function getUser(): User | null {
   }
 }
 
-const authChannel = typeof window !== 'undefined' ? new BroadcastChannel('mydashrx_auth') : null;
+// OPUS-AUDIT-19: feature-detect BroadcastChannel — unsupported on Safari <15.4. Fall back to null.
+const authChannel = typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined'
+  ? new BroadcastChannel('mydashrx_auth')
+  : null;
 
 export function setSession(tokens: {
   accessToken: string;
