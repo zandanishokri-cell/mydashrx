@@ -42,3 +42,19 @@ export interface AuthTokens {
   refreshToken: string;
   user: User;
 }
+
+// OPUS-AUDIT-16: canonical role→landing-page map. One definition, imported by both
+// backend (validates `next` params + post-login redirects) and frontend (post-auth nav).
+// Adding a new Role must update this map in lockstep — drift was the bug we're fixing.
+export const ROLE_REDIRECTS: Record<Role, string> = {
+  super_admin: '/dashboard',
+  pharmacy_admin: '/dashboard',
+  dispatcher: '/dashboard',
+  driver: '/driver/routes',
+  pharmacist: '/dashboard/welcome/pharmacist',
+};
+
+export function getRoleRedirect(role?: string, pendingApproval?: boolean): string {
+  if (pendingApproval) return '/onboarding/waiting';
+  return ROLE_REDIRECTS[role as Role] ?? '/dashboard';
+}

@@ -32,3 +32,5 @@ export interface AuthTokens {
     refreshToken: string;
     user: User;
 }
+export declare const ROLE_REDIRECTS: Record<Role, string>;
+export declare function getRoleRedirect(role?: string, pendingApproval?: boolean): string;
