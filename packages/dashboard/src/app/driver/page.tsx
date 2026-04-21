@@ -36,7 +36,9 @@ export default function DriverHomePage() {
       setDriverStatus(me.status);
       if (r.length === 0) {
         // One-off diagnostic: fetch debug metadata to figure out why route list is empty
-        api.get('/driver/me/debug').then(setDebug).catch(() => {});
+        api.get('/driver/me/debug')
+          .then((d) => setDebug({ ok: true, data: d }))
+          .catch((e: Error) => setDebug({ ok: false, error: String(e?.message ?? e) }));
       }
     }).catch(() => setError('Could not load your routes')).finally(() => setLoading(false));
   }, []);
@@ -135,12 +137,10 @@ export default function DriverHomePage() {
               <p className="font-bold text-gray-700 text-base">No routes today</p>
               <p className="text-gray-400 text-sm mt-1.5">Check back when your dispatcher assigns a route.</p>
             </div>
-            {debug && (
-              <details className="mt-4 bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs">
-                <summary className="font-semibold text-yellow-900 cursor-pointer">Diagnostic (screenshot this)</summary>
-                <pre className="mt-2 whitespace-pre-wrap break-all text-yellow-950">{JSON.stringify(debug, null, 2)}</pre>
-              </details>
-            )}
+            <details open className="mt-4 bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs">
+              <summary className="font-semibold text-yellow-900 cursor-pointer">Diagnostic (screenshot this) — build v2</summary>
+              <pre className="mt-2 whitespace-pre-wrap break-all text-yellow-950">{debug ? JSON.stringify(debug, null, 2) : 'Loading diagnostic...'}</pre>
+            </details>
           </>
         ) : (
           <>
