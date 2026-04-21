@@ -27,7 +27,9 @@ export default function DriverLoginPage() {
         return;
       }
       setSession(res); // P-SEC28: AT in-memory, RT in httpOnly cookie
-      router.replace('/driver');
+      // Admin-created drivers land here with mustChangePassword=true; sending them to /driver
+      // without changing first would 403 every subsequent API call (requireOrgRole blocks on mustChangePw).
+      router.replace(res.user?.mustChangePassword ? '/change-password' : '/driver');
     } catch (err: any) {
       setError(err?.message ?? 'Something went wrong');
     } finally {

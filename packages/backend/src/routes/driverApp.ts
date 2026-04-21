@@ -217,7 +217,14 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       .groupBy(stopNotes.stopId);
 
     const noteCountMap = Object.fromEntries(noteCounts.map(n => [n.stopId, n.count]));
-    return stopRows.map(s => ({ ...s, noteCount: noteCountMap[s.id] ?? 0 }));
+    // P-SEC40: decrypt PHI before returning to driver; driver masking already happened in JWT role path
+    return stopRows.map(s => ({
+      ...s,
+      recipientName: decryptPhi(s.recipientName ?? ''),
+      recipientPhone: decryptPhi(s.recipientPhone ?? ''),
+      rxNumbers: decryptPhiArray(s.rxNumbers as unknown as string),
+      noteCount: noteCountMap[s.id] ?? 0,
+    }));
   });
 
   // POST /driver/me/stops/:stopId/barcode — scan and record a package barcode
@@ -394,7 +401,13 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     const [route] = await db.select({ driverId: routes.driverId })
       .from(routes).where(and(eq(routes.id, stop.routeId!), isNull(routes.deletedAt))).limit(1);
     if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
-    return stop;
+    // P-SEC40: decrypt PHI before returning
+    return {
+      ...stop,
+      recipientName: decryptPhi(stop.recipientName ?? ''),
+      recipientPhone: decryptPhi(stop.recipientPhone ?? ''),
+      rxNumbers: decryptPhiArray(stop.rxNumbers as unknown as string),
+    };
   });
 
   // GET /driver/me/stops/:stopId/pod

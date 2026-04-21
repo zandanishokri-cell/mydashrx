@@ -13,6 +13,18 @@ import { invalidateAnalytics, invalidateDashboard } from '../lib/responseCache.j
 import { encryptPhi, decryptPhi, encryptPhiArray, decryptPhiArray } from '../lib/phiCrypto.js';
 import { sendDriverPush } from '../lib/driverPush.js'; // P-DEL16
 
+// P-SEC40: every GET that returns stop rows must decrypt PHI fields before the client sees them.
+// Without this, new rows persist as `enc:v1:...` ciphertext and the UI renders unusable text
+// (and rxNumbers becomes a string, breaking `.map()`), making stops look like they vanished.
+export function decryptStopRow<T extends Record<string, unknown>>(row: T): T {
+  return {
+    ...row,
+    recipientName: decryptPhi((row.recipientName as string | null) ?? ''),
+    recipientPhone: decryptPhi((row.recipientPhone as string | null) ?? ''),
+    rxNumbers: decryptPhiArray(row.rxNumbers as unknown as string),
+  };
+}
+
 export async function checkAndNotifyRouteComplete(orgId: string, routeId: string): Promise<void> {
   const [route] = await db.select({ completedAt: routes.completedAt, driverId: routes.driverId })
     .from(routes).where(eq(routes.id, routeId)).limit(1);
@@ -165,12 +177,15 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       if (!routePlan || !(depotIds as string[]).includes(routePlan.depotId)) return [];
     }
     // P-RBAC17: HIPAA minimum-necessary — strip PHI for limited roles (driver)
+    // P-SEC40: decrypt PHI fields before filtering so privileged roles see plaintext and
+    // drivers get plaintext first-name masking via filterStopForRole.
     const raw = await db
       .select()
       .from(stops)
       .where(and(eq(stops.routeId, routeId), eq(stops.orgId, userOrgId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
-    return filterStopsForRole(raw as Record<string, unknown>[], role);
+    const decrypted = (raw as Record<string, unknown>[]).map(decryptStopRow);
+    return filterStopsForRole(decrypted, role);
   });
 
   app.post('/', {

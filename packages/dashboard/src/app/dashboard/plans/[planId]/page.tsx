@@ -89,33 +89,47 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
 
   const loadPlan = useCallback(async () => {
     if (!user) return;
+    const isAdminRole = user.role === 'pharmacy_admin' || user.role === 'super_admin';
+    // Plan fetch is critical — its failure means we cannot render the page.
+    let planData: (Plan & { routes: Route[] }) | null = null;
     try {
-      // planData already embeds routes — skip redundant GET /plans/:planId/routes
-      const isAdminRole = user.role === 'pharmacy_admin' || user.role === 'super_admin';
-      const [planData, driversData, usersData] = await Promise.all([
-        api.get<Plan & { routes: Route[] }>(`/orgs/${user.orgId}/plans/${planId}`),
-        api.get<Driver[]>(`/orgs/${user.orgId}/drivers`),
-        isAdminRole ? api.get<{ users: Array<{ id: string; name: string; email: string; role: string }> }>(`/orgs/${user.orgId}/users`) : Promise.resolve({ users: [] }),
-      ]);
-      const routesData = planData.routes ?? [];
-      setPlan(planData);
-      setRoutes(routesData);
-      setDrivers(driversData);
-      if (isAdminRole) setDispatchers((usersData.users ?? []).filter(u => u.role === 'dispatcher'));
-
-      const stopsMap: Record<string, Stop[]> = {};
-      await Promise.all(
-        routesData.map(async (route) => {
-          const s = await api.get<Stop[]>(`/routes/${route.id}/stops`);
-          stopsMap[route.id] = s;
-        }),
-      );
-      setStopsByRoute(stopsMap);
-    } catch {
-      setError('Failed to load plan');
-    } finally {
+      planData = await api.get<Plan & { routes: Route[] }>(`/orgs/${user.orgId}/plans/${planId}`);
+    } catch (e) {
+      console.error('[loadPlan] plan fetch failed', e);
+      setError(e instanceof Error ? `Failed to load plan: ${e.message}` : 'Failed to load plan');
       setLoading(false);
+      return;
     }
+    const routesData = planData.routes ?? [];
+    setPlan(planData);
+    setRoutes(routesData);
+
+    // Ancillary fetches run in parallel; individual failures log but don't block the page.
+    const [driversRes, usersRes, stopsEntries] = await Promise.all([
+      api.get<Driver[]>(`/orgs/${user.orgId}/drivers`).catch((e: unknown) => {
+        console.error('[loadPlan] drivers fetch failed', e);
+        return [] as Driver[];
+      }),
+      isAdminRole
+        ? api.get<Array<{ id: string; name: string; email: string; role: string }> | { users: Array<{ id: string; name: string; email: string; role: string }> }>(`/orgs/${user.orgId}/users`).catch((e: unknown) => {
+            console.error('[loadPlan] users fetch failed', e);
+            return [] as Array<{ id: string; name: string; email: string; role: string }>;
+          })
+        : Promise.resolve([] as Array<{ id: string; name: string; email: string; role: string }>),
+      Promise.all(
+        routesData.map(async (route): Promise<[string, Stop[]]> => {
+          try { return [route.id, await api.get<Stop[]>(`/routes/${route.id}/stops`)]; }
+          catch (e) { console.error('[loadPlan] stops fetch failed for route', route.id, e); return [route.id, []]; }
+        }),
+      ),
+    ]);
+    setDrivers(driversRes);
+    if (isAdminRole) {
+      const list = Array.isArray(usersRes) ? usersRes : (usersRes.users ?? []);
+      setDispatchers(list.filter(u => u.role === 'dispatcher'));
+    }
+    setStopsByRoute(Object.fromEntries(stopsEntries));
+    setLoading(false);
   }, [user, planId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadPlan(); }, [loadPlan]);
@@ -230,6 +244,16 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
     setReorderAnnouncement(`Moved ${stop.recipientName} ${direction === 'up' ? 'up' : 'down'}, now after ${direction === 'up' ? (reordered[targetIdx - 1]?.recipientName ?? 'start') : swapped.recipientName}`);
     reorderStops(routeId, reordered.map(s => s.id));
   }, [stopsByRoute, reorderStops]);
+
+  const deleteStop = useCallback(async (routeId: string, stopId: string, recipientName: string) => {
+    if (!confirm(`Delete stop for ${recipientName}? This cannot be undone.`)) return;
+    try {
+      await api.del(`/routes/${routeId}/stops/${stopId}`);
+      setStopsByRoute(prev => ({ ...prev, [routeId]: (prev[routeId] ?? []).filter(s => s.id !== stopId) }));
+    } catch (e) {
+      setError(e instanceof Error ? `Failed to delete stop: ${e.message}` : 'Failed to delete stop');
+    }
+  }, []);
 
   const removeRoute = async () => {
     if (!confirmRemoveRouteId || removingRoute) return;
@@ -539,6 +563,7 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
                             routeCount={routes.length}
                             onSelect={() => setSelectedStop(stop)}
                             onMove={() => setMovingStop(stop)}
+                            onDelete={route.status !== 'completed' ? () => deleteStop(route.id, stop.id, stop.recipientName ?? 'this stop') : undefined}
                             onMoveUp={route.status !== 'completed' && idx > 0 ? () => moveStop(route.id, stop.id, 'up') : undefined}
                             onMoveDown={route.status !== 'completed' && idx < stops.length - 1 ? () => moveStop(route.id, stop.id, 'down') : undefined}
                             isSelected={selectedStopIds.has(stop.id)}
@@ -807,13 +832,14 @@ export default function PlanDetailPage({ params }: { params: { planId: string } 
   );
 }
 
-function SortableStopItem({ stop, idx, stopCount, routeCount, onSelect, onMove, onMoveUp, onMoveDown, isSelected, onToggleSelect, selectionEnabled }: {
+function SortableStopItem({ stop, idx, stopCount, routeCount, onSelect, onMove, onDelete, onMoveUp, onMoveDown, isSelected, onToggleSelect, selectionEnabled }: {
   stop: Stop;
   idx: number;
   stopCount: number;
   routeCount: number;
   onSelect: () => void;
   onMove: () => void;
+  onDelete?: () => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
   isSelected: boolean;
@@ -890,6 +916,16 @@ function SortableStopItem({ stop, idx, stopCount, routeCount, onSelect, onMove, 
             title="Move to another route"
           >
             <MoveRight size={13} />
+          </button>
+        )}
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition-all"
+            title="Delete stop"
+            aria-label={`Delete stop for ${stop.recipientName ?? 'this stop'}`}
+          >
+            <Trash2 size={13} />
           </button>
         )}
       </div>

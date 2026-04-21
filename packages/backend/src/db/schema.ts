@@ -293,7 +293,8 @@ export const stops = pgTable(
       .notNull()
       .references(() => organizations.id),
     recipientName: text('recipient_name').notNull(),
-    recipientPhone: varchar('recipient_phone', { length: 20 }).notNull(),
+    // P-SEC40: encrypted ciphertext (enc:v1:...) is ~60 chars — column is text, not varchar(20).
+    recipientPhone: text('recipient_phone').notNull(),
     recipientEmail: text('recipient_email'),
     address: text('address').notNull(),
     unit: text('unit'),
@@ -608,7 +609,7 @@ export const recurringDeliveries = pgTable('recurring_deliveries', {
   address: text('address').notNull(),
   lat: real('lat'),
   lng: real('lng'),
-  recipientPhone: varchar('recipient_phone', { length: 20 }),
+  recipientPhone: text('recipient_phone'),
   recipientEmail: text('recipient_email'),
   notes: text('notes'),
   schedule: recurringScheduleEnum('schedule').notNull().default('weekly'),

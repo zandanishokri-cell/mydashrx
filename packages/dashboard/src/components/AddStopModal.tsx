@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { FormField, CheckboxField } from '@/components/ui/FormField';
 import { Upload, Plus } from 'lucide-react';
 import Papa from 'papaparse';
+import { AddressAutocomplete } from './AddressAutocomplete';
 
 interface Props {
   routeId: string;
@@ -206,7 +207,15 @@ export function AddStopModal({ routeId, orgId, onClose, onSaved }: Props) {
             <FormField label="Patient Name" value={form.recipientName} onChange={(e) => set('recipientName', e.target.value)} required placeholder="Jane Smith" />
             <FormField label="Phone" value={form.recipientPhone} onChange={(e) => set('recipientPhone', e.target.value)} placeholder="+1 313 555 0100" />
           </div>
-          <FormField label="Delivery Address" value={form.address} onChange={(e) => set('address', e.target.value)} required placeholder="123 Main St, Detroit, MI 48201" />
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Delivery Address <span className="text-red-400">*</span></label>
+            <AddressAutocomplete
+              value={form.address}
+              onChange={v => set('address', v)}
+              placeholder="Start typing — 123 Main St…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/30 focus:border-[#0F4C81]"
+            />
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Rx Numbers (comma-separated)" value={form.rxNumbers} onChange={(e) => set('rxNumbers', e.target.value)} placeholder="RX001, RX002" />
             <FormField label="Package Count" type="number" min="1" value={form.packageCount} onChange={(e) => set('packageCount', e.target.value)} />

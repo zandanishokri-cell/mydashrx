@@ -1341,15 +1341,37 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(refreshTokens.userId, payload.sub), eq(refreshTokens.status, 'active')));
 
     // Keep drivers.passwordHash in sync — prevents stale hash if a direct-driver-auth path is ever added
+    let driverId: string | undefined;
     if (user.role === 'driver') {
-      await db.update(drivers).set({ passwordHash: newHash })
-        .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt)));
+      const [dr] = await db.update(drivers).set({ passwordHash: newHash })
+        .where(and(eq(drivers.email, user.email), eq(drivers.orgId, user.orgId), isNull(drivers.deletedAt)))
+        .returning({ id: drivers.id });
+      driverId = dr?.id;
     }
 
     // P-SEC11: log password_changed
     await logAuthEvent('password_changed', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined });
 
-    return { user: updated };
+    // Issue fresh tokens so the client drops the mustChangePw flag without a re-login round-trip.
+    // The old AT still has mustChangePw:true, and all its RTs were just revoked above — without
+    // these fresh tokens the driver would 403 on every call until they manually re-authenticated.
+    const newJti = randomUUID();
+    const newFamilyId = randomUUID();
+    const tokens = signTokens(app, {
+      sub: updated.id,
+      email: updated.email,
+      role: updated.role,
+      orgId: updated.orgId,
+      depotIds: updated.depotIds as string[],
+      ...(driverId ? { driverId } : {}),
+    }, user.tokenVersion, { jti: newJti, familyId: newFamilyId });
+    await seedRefreshToken(updated.id, newFamilyId, newJti, req);
+    setRtCookie(reply, tokens.refreshToken);
+
+    return {
+      ...tokens,
+      user: { ...updated, ...(driverId ? { driverId } : {}) },
+    };
   });
 
   // GET /auth/sessions — list active sessions (P-SES10, HIPAA §164.312(a)(2)(iii))

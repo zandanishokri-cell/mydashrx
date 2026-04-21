@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { getUser, isAuthenticated } from '@/lib/auth';
+import { getUser, isAuthenticated, setSession } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { Lock } from 'lucide-react';
 
@@ -13,10 +13,13 @@ export default function ChangePasswordPage() {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
 
+  // Role-aware destination: drivers go back to /driver, everyone else to /dashboard.
+  const destForRole = (role?: string) => role === 'driver' ? '/driver' : '/dashboard';
+
   useEffect(() => {
     if (!isAuthenticated()) { router.replace('/login'); return; }
     const user = getUser() as any;
-    if (user && !user.mustChangePassword) { router.replace('/dashboard'); return; }
+    if (user && !user.mustChangePassword) { router.replace(destForRole(user?.role)); return; }
     setChecking(false);
   }, [router]);
 
@@ -27,13 +30,22 @@ export default function ChangePasswordPage() {
     setLoading(true);
     setError('');
     try {
-      await api.post<{ user: any }>('/auth/change-password', { newPassword });
-      const stored = localStorage.getItem('user');
-      if (stored) {
-        const u = JSON.parse(stored);
-        localStorage.setItem('user', JSON.stringify({ ...u, mustChangePassword: false }));
+      // Backend issues fresh AT+RT (mustChangePw cleared). Persist them so the next API call
+      // doesn't hit 403 with the stale token.
+      const res = await api.post<{ accessToken?: string; refreshToken?: string; user: any }>(
+        '/auth/change-password',
+        { newPassword },
+      );
+      if (res.accessToken) {
+        setSession({ accessToken: res.accessToken, refreshToken: res.refreshToken, user: { ...res.user, mustChangePassword: false } });
+      } else {
+        const stored = localStorage.getItem('user');
+        if (stored) {
+          const u = JSON.parse(stored);
+          localStorage.setItem('user', JSON.stringify({ ...u, mustChangePassword: false }));
+        }
       }
-      router.replace('/dashboard');
+      router.replace(destForRole(res.user?.role));
     } catch (err: any) {
       setError(err?.message ?? 'Failed to update password');
     } finally {

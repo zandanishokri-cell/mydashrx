@@ -4,6 +4,7 @@ import { routes, stops, plans, drivers, organizations, users, adminAuditLogs } f
 import { eq, and, isNull, inArray, notInArray, or } from 'drizzle-orm';
 import { requireRole } from '../middleware/requireRole.js';
 import { sendAhaMomentEmail } from '../lib/emailHelpers.js';
+import { decryptStopRow } from './stops.js'; // P-SEC40: decrypt PHI before returning stop rows
 
 export const routeRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
@@ -169,11 +170,12 @@ export const routeRoutes: FastifyPluginAsync = async (app) => {
         .where(and(eq(routes.id, routeId), isNull(routes.deletedAt))).limit(1);
       if (!route || route.driverId !== driverId) return reply.code(403).send({ error: 'Forbidden' });
     }
-    return db
+    const raw = await db
       .select()
       .from(stops)
       .where(and(eq(stops.routeId, routeId), eq(stops.orgId, userOrgId), isNull(stops.deletedAt)))
       .orderBy(stops.sequenceNumber);
+    return (raw as Record<string, unknown>[]).map(decryptStopRow);
   });
 
   app.delete('/:routeId', {
