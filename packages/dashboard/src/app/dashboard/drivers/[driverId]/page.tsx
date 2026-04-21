@@ -96,6 +96,30 @@ export default function DriverDetailPage() {
   const [perfRange, setPerfRange] = useState<PerfRange>('30d');
   const [perfFrom, setPerfFrom] = useState('');
   const [perfTo, setPerfTo] = useState('');
+  const [healing, setHealing] = useState(false);
+  const [healResult, setHealResult] = useState<string>('');
+
+  const healUserOrg = async () => {
+    if (!user || !driver) return;
+    if (!confirm(`Fix ${driver.name}'s user account so they can log in to this org? This will also force them to log back in.`)) return;
+    setHealing(true);
+    setHealResult('');
+    try {
+      const res = await api.post<{ ok: boolean; usersMoved: boolean; staleDriversRemoved: number; previousUserOrgId: string }>(
+        `/orgs/${user.orgId}/drivers/${driverId}/heal-user-org`,
+        {},
+      );
+      setHealResult(
+        res.usersMoved
+          ? `Fixed. Users row moved from ${res.previousUserOrgId.slice(0, 8)}… to this org. Stale drivers removed: ${res.staleDriversRemoved}. Driver must log in again.`
+          : `Nothing to fix — user account is already in this org.`,
+      );
+    } catch (e: any) {
+      setHealResult(`Error: ${e?.message ?? String(e)}`);
+    } finally {
+      setHealing(false);
+    }
+  };
 
   const loadPerf = useCallback(async (range: PerfRange, from: string, to: string) => {
     if (!user) return;
@@ -210,10 +234,20 @@ export default function DriverDetailPage() {
               </div>
             </div>
           </div>
-          <Button size="sm" variant="secondary" onClick={() => setShowEdit(true)}>
-            <Pencil size={13} /> Edit Driver
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" variant="secondary" onClick={healUserOrg} disabled={healing}>
+              {healing ? 'Fixing…' : 'Fix Login Org'}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setShowEdit(true)}>
+              <Pencil size={13} /> Edit Driver
+            </Button>
+          </div>
         </div>
+        {healResult && (
+          <div className={`mt-3 text-xs px-3 py-2 rounded-lg ${healResult.startsWith('Error') ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
+            {healResult}
+          </div>
+        )}
       </div>
 
       {/* Performance stats */}
