@@ -11,10 +11,10 @@ export const userSettingsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/users/me/preferences', {
     preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin', 'pharmacist'),
   }, async (req) => {
-    const caller = req.user as { id: string };
+    const caller = req.user as { sub: string };
     const [user] = await db.select({ notificationPreferences: users.notificationPreferences })
       .from(users)
-      .where(eq(users.id, caller.id));
+      .where(eq(users.id, caller.sub));
     return user?.notificationPreferences ?? DEFAULT_PREFS;
   });
 
@@ -22,19 +22,19 @@ export const userSettingsRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/users/me/preferences', {
     preHandler: requireOrgRole('dispatcher', 'pharmacy_admin', 'super_admin', 'pharmacist'),
   }, async (req) => {
-    const caller = req.user as { id: string };
+    const caller = req.user as { sub: string };
     const body = req.body as Partial<Record<'route_completed' | 'stop_failed' | 'stop_assigned', boolean>>;
 
     const [existing] = await db.select({ notificationPreferences: users.notificationPreferences })
       .from(users)
-      .where(eq(users.id, caller.id));
+      .where(eq(users.id, caller.sub));
 
     const current = (existing?.notificationPreferences ?? DEFAULT_PREFS) as Record<string, boolean>;
     const merged = { ...current, ...body };
 
     await db.update(users)
       .set({ notificationPreferences: merged })
-      .where(eq(users.id, caller.id));
+      .where(eq(users.id, caller.sub));
 
     return merged;
   });
