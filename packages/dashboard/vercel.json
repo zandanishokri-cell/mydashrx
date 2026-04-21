@@ -1,6 +1,7 @@
 {
   "framework": "nextjs",
   "buildCommand": "npm run build",
+  "installCommand": "cd ../.. && rm -rf node_modules packages/*/node_modules && npm install",
   "outputDirectory": ".next",
   "headers": [
     {
