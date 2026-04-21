@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db/connection.js';
-import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory, auditLogs, stopNotes } from '../db/schema.js';
+import { routes, stops, plans, depots, proofOfDeliveries, drivers, driverLocationHistory, auditLogs, stopNotes, users, organizations } from '../db/schema.js';
 import { eq, and, isNull, sql, inArray, desc } from 'drizzle-orm';
 import { getDriverRoutes } from '../db/preparedStatements.js'; // P-PERF10
 import { requireRole } from '../middleware/requireRole.js';
@@ -122,6 +122,34 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
           .where(inArray(routes.planId, orgPlanIds))
       : [];
 
+    // CRITICAL: users rows across ALL orgs matching this driver's email.
+    // If >1 exists in different orgs, driver login picks up wrong orgId and sees zero routes.
+    // Root cause suspected at drivers.ts POST: .onConflictDoNothing() silently skips users insert
+    // when email already existed in another org.
+    const usersWithEmail = await db
+      .select({
+        userId: users.id,
+        userOrgId: users.orgId,
+        userRole: users.role,
+        userDeletedAt: users.deletedAt,
+        orgName: organizations.name,
+      })
+      .from(users)
+      .leftJoin(organizations, eq(organizations.id, users.orgId))
+      .where(eq(users.email, user.email));
+
+    // drivers rows across ALL orgs matching this email — shows if driver record is in right org
+    const driversWithEmail = await db
+      .select({
+        driverRowId: drivers.id,
+        driverOrgId: drivers.orgId,
+        driverDeletedAt: drivers.deletedAt,
+        orgName: organizations.name,
+      })
+      .from(drivers)
+      .leftJoin(organizations, eq(organizations.id, drivers.orgId))
+      .where(eq(drivers.email, user.email));
+
     return {
       serverTodayInTz: today,
       resolvedDriverId: driverId,
@@ -134,6 +162,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       orgDrivers,
       orgPlans,
       orgAllRoutes,
+      usersWithEmail,
+      driversWithEmail,
     };
   });
 
