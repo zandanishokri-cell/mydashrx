@@ -114,8 +114,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // P-ONB35: dispatcher/driver first-run welcome fork — show once then skip via localStorage
   useEffect(() => {
     if (!user) return;
-    if (user.role === 'driver' && !pathname.startsWith('/dashboard/driver') && !pathname.startsWith('/dashboard/welcome')) {
-      router.replace('/dashboard/driver/me/routes');
+    if (user.role === 'driver' && !pathname.startsWith('/driver') && !pathname.startsWith('/dashboard/welcome')) {
+      router.replace('/driver');
     } else if (user.role === 'pharmacist' && !pathname.startsWith('/pharmacist') && !pathname.startsWith('/dashboard/compliance') && !pathname.startsWith('/dashboard/mi-compliance') && !pathname.startsWith('/dashboard/settings') && !pathname.startsWith('/dashboard/welcome')) {
       router.replace('/pharmacist/queue');
     } else if ((user.role === 'dispatcher' || user.role === 'driver') && pathname === '/dashboard' && typeof window !== 'undefined') {

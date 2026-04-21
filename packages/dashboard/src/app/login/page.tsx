@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
-import { setSession } from '@/lib/auth';
+import { setSession, resolveNext } from '@/lib/auth';
 import { API_BASE } from '@/lib/config';
 import type { AuthTokens } from '@mydash-rx/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
@@ -173,7 +173,9 @@ function LoginForm() {
       // Without this consumer, the UI silently showed "check your email" while the user was already authenticated.
       if (res?.accessToken && res?.refreshToken && res?.user) {
         setSession(res as AuthTokens);
-        router.replace((res.user as { mustChangePassword?: boolean }).mustChangePassword ? '/change-password' : '/dashboard');
+        const u = res.user as { mustChangePassword?: boolean; role?: string; org?: { pendingApproval?: boolean } };
+        const dest = resolveNext(u.role, u.org?.pendingApproval);
+        router.replace(u.mustChangePassword ? '/change-password' : dest);
         return;
       }
       // P-ML26: store requestId for cross-device SSE polling on verify page
@@ -199,7 +201,9 @@ function LoginForm() {
       // P-SES22: trusted-device fast path on resend too
       if (res?.accessToken && res?.refreshToken && res?.user) {
         setSession(res as AuthTokens);
-        router.replace((res.user as { mustChangePassword?: boolean }).mustChangePassword ? '/change-password' : '/dashboard');
+        const u = res.user as { mustChangePassword?: boolean; role?: string; org?: { pendingApproval?: boolean } };
+        const dest = resolveNext(u.role, u.org?.pendingApproval);
+        router.replace(u.mustChangePassword ? '/change-password' : dest);
         return;
       }
       setCountdown(900);
