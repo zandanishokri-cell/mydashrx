@@ -60,6 +60,38 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
     return myRoutes;
   });
 
+  // GET /driver/me/debug — diagnostic: show all routes for driver regardless of date filter.
+  // Lets us distinguish "wrong driverId assigned" vs "plan date mismatch" vs "no assignment at all".
+  app.get('/me/debug', { preHandler: requireRole('driver') }, async (req, reply) => {
+    const user = req.user as { sub: string; driverId?: string; email: string; orgId: string };
+    const driverId = await resolveDriverId(user);
+    if (!driverId) return reply.code(404).send({ error: 'Driver record not found', jwt: { sub: user.sub, email: user.email, orgId: user.orgId, driverId: user.driverId } });
+    const today = todayInTz();
+    const allRoutes = await db
+      .select({
+        routeId: routes.id,
+        routeDriverId: routes.driverId,
+        routeStatus: routes.status,
+        routeDeletedAt: routes.deletedAt,
+        planId: plans.id,
+        planDate: plans.date,
+        planStatus: plans.status,
+        planDeletedAt: plans.deletedAt,
+      })
+      .from(routes)
+      .leftJoin(plans, eq(routes.planId, plans.id))
+      .where(eq(routes.driverId, driverId));
+    return {
+      serverTodayInTz: today,
+      resolvedDriverId: driverId,
+      jwtDriverId: user.driverId ?? null,
+      jwtEmail: user.email,
+      jwtOrgId: user.orgId,
+      allRoutesForDriver: allRoutes,
+      matchingTodayCount: allRoutes.filter(r => r.planDate === today && !r.routeDeletedAt && !r.planDeletedAt).length,
+    };
+  });
+
   // GET /driver/me/routes/:routeId — route detail with status
   app.get('/me/routes/:routeId', {
     preHandler: requireRole('driver'),

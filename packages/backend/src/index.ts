@@ -908,7 +908,9 @@ await app.register(cookie, { secret: process.env.JWT_SECRET ?? 'dev-secret-chang
 await app.register(compress, { global: true, encodings: ['br', 'gzip', 'deflate'] });
 
 await app.register(rateLimit, {
-  max: process.env.NODE_ENV === 'production' ? 300 : 10000,
+  // 1000/min: admin browsing many sidebar pages + polling across tabs can exceed 300/min legitimately.
+  // Per-IP bucket still blocks bulk-exfil; individual hot endpoints retain stricter per-route caps.
+  max: process.env.NODE_ENV === 'production' ? 1000 : 10000,
   timeWindow: '1 minute',
   // Take leftmost X-Forwarded-For entry (real client IP behind Render proxy)
   keyGenerator: (req) => {
