@@ -73,8 +73,10 @@ export function requirePermission(perm: Permission) {
     if (user.orgId) {
       try {
         const orgPerms = await getOrgPermissions(user.orgId, user.role);
-        // If org has a custom template, use it; otherwise static check already computed above
-        if (orgPerms.length > 0) allowed = orgPerms.includes(perm);
+        // If org has a custom template, use it; otherwise static check already computed above.
+        // Wildcard '*' (super_admin) grants every permission — without this branch, specific
+        // perm checks like 'stops:read' return false for ['*'] and super_admin gets 403.
+        if (orgPerms.length > 0) allowed = orgPerms.includes('*') || orgPerms.includes(perm);
       } catch { /* non-blocking — static policy remains in effect */ }
     }
 
