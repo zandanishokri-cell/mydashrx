@@ -47,7 +47,7 @@ test('OPUS-AUDIT-16 — shared getRoleRedirect resolves all roles the way the fr
   expect(getRoleRedirect('super_admin')).toBe('/dashboard');
   expect(getRoleRedirect('pharmacy_admin')).toBe('/dashboard');
   expect(getRoleRedirect('dispatcher')).toBe('/dashboard');
-  expect(getRoleRedirect('driver')).toBe('/driver/routes');
+  expect(getRoleRedirect('driver')).toBe('/driver');
   expect(getRoleRedirect('pharmacist')).toBe('/dashboard/welcome/pharmacist');
   expect(getRoleRedirect('super_admin', true)).toBe('/onboarding/waiting');
   expect(ROLE_REDIRECTS.super_admin).toBe('/dashboard');

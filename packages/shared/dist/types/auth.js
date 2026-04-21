@@ -21,7 +21,7 @@ exports.ROLE_REDIRECTS = {
     super_admin: '/dashboard',
     pharmacy_admin: '/dashboard',
     dispatcher: '/dashboard',
-    driver: '/driver/routes',
+    driver: '/driver',
     pharmacist: '/dashboard/welcome/pharmacist',
 };
 function getRoleRedirect(role, pendingApproval) {

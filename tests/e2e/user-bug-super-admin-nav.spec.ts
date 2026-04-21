@@ -19,7 +19,7 @@ test('USER-BUG — pending-approval super_admin still goes to onboarding waiting
 });
 
 test('USER-BUG — other roles unchanged', () => {
-  expect(getRoleRedirect('driver')).toBe('/driver/routes');
+  expect(getRoleRedirect('driver')).toBe('/driver');
   expect(getRoleRedirect('pharmacist')).toBe('/dashboard/welcome/pharmacist');
   expect(getRoleRedirect('pharmacy_admin')).toBe('/dashboard');
 });

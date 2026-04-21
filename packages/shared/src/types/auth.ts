@@ -50,7 +50,7 @@ export const ROLE_REDIRECTS: Record<Role, string> = {
   super_admin: '/dashboard',
   pharmacy_admin: '/dashboard',
   dispatcher: '/dashboard',
-  driver: '/driver/routes',
+  driver: '/driver',
   pharmacist: '/dashboard/welcome/pharmacist',
 };
 
