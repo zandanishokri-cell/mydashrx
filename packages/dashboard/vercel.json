@@ -1,6 +1,6 @@
 {
   "framework": "nextjs",
-  "buildCommand": "npm run build",
+  "buildCommand": "cd ../shared && npm run build && cd ../dashboard && next build",
   "installCommand": "cd ../.. && npm install && mkdir -p packages/dashboard/node_modules/@mydash-rx && ln -sfn ../../../shared packages/dashboard/node_modules/@mydash-rx/shared",
   "outputDirectory": ".next",
   "headers": [
