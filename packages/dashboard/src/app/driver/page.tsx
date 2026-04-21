@@ -21,6 +21,7 @@ export default function DriverHomePage() {
   const [routes, setRoutes] = useState<MyRoute[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [debug, setDebug] = useState<unknown>(null);
   const [driverStatus, setDriverStatus] = useState<'available' | 'offline' | 'on_route'>('available');
   const [toggling, setToggling] = useState(false);
   const [toast, setToast] = useState('');
@@ -33,6 +34,10 @@ export default function DriverHomePage() {
     ]).then(([r, me]) => {
       setRoutes(r);
       setDriverStatus(me.status);
+      if (r.length === 0) {
+        // One-off diagnostic: fetch debug metadata to figure out why route list is empty
+        api.get('/driver/me/debug').then(setDebug).catch(() => {});
+      }
     }).catch(() => setError('Could not load your routes')).finally(() => setLoading(false));
   }, []);
 
@@ -124,11 +129,19 @@ export default function DriverHomePage() {
         ) : error ? (
           <div className="bg-red-50 text-red-600 rounded-2xl p-4 text-sm text-center">{error}</div>
         ) : routes.length === 0 ? (
-          <div className="bg-white rounded-2xl p-12 text-center shadow-sm">
-            <CheckCircle2 size={44} className="text-gray-200 mx-auto mb-4" />
-            <p className="font-bold text-gray-700 text-base">No routes today</p>
-            <p className="text-gray-400 text-sm mt-1.5">Check back when your dispatcher assigns a route.</p>
-          </div>
+          <>
+            <div className="bg-white rounded-2xl p-12 text-center shadow-sm">
+              <CheckCircle2 size={44} className="text-gray-200 mx-auto mb-4" />
+              <p className="font-bold text-gray-700 text-base">No routes today</p>
+              <p className="text-gray-400 text-sm mt-1.5">Check back when your dispatcher assigns a route.</p>
+            </div>
+            {debug && (
+              <details className="mt-4 bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs">
+                <summary className="font-semibold text-yellow-900 cursor-pointer">Diagnostic (screenshot this)</summary>
+                <pre className="mt-2 whitespace-pre-wrap break-all text-yellow-950">{JSON.stringify(debug, null, 2)}</pre>
+              </details>
+            )}
+          </>
         ) : (
           <>
             <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
