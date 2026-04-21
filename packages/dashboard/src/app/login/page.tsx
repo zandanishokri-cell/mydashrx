@@ -135,7 +135,9 @@ function LoginForm() {
       const authResponse = await startAuthentication({ optionsJSON: options });
       const tokens = await api.post<AuthTokens>('/auth/passkey/authenticate/verify', { email, response: authResponse });
       setSession(tokens);
-      router.replace((tokens.user as any).mustChangePassword ? '/change-password' : '/dashboard');
+      const u = tokens.user as { mustChangePassword?: boolean; role?: string; org?: { pendingApproval?: boolean } };
+      const dest = resolveNext(u.role, u.org?.pendingApproval);
+      router.replace(u.mustChangePassword ? '/change-password' : dest);
     } catch (err: unknown) {
       const msg = (err as Error)?.message ?? '';
       if (msg.includes('cancelled') || msg.includes('abort') || msg.includes('NotAllowed')) {
@@ -227,7 +229,9 @@ function LoginForm() {
     try {
       const tokens = await api.post<any>('/auth/magic-link/verify-code', { email, code: otpCode.replace(/\s/g, '') });
       setSession(tokens);
-      router.replace(tokens.user?.mustChangePassword ? '/change-password' : '/dashboard');
+      const u = tokens.user as { mustChangePassword?: boolean; role?: string; org?: { pendingApproval?: boolean } };
+      const dest = resolveNext(u.role, u.org?.pendingApproval);
+      router.replace(u.mustChangePassword ? '/change-password' : dest);
     } catch {
       setOtpError('Invalid or expired code. Check your email for the 6-digit code.');
     } finally {
@@ -242,7 +246,9 @@ function LoginForm() {
     try {
       const tokens = await api.post<AuthTokens>('/auth/login', { email, password });
       setSession(tokens);
-      router.replace((tokens.user as any).mustChangePassword ? '/change-password' : '/dashboard');
+      const u = tokens.user as { mustChangePassword?: boolean; role?: string; org?: { pendingApproval?: boolean } };
+      const dest = resolveNext(u.role, u.org?.pendingApproval);
+      router.replace(u.mustChangePassword ? '/change-password' : dest);
     } catch (err: unknown) {
       // USER-BUG 2026-04-20: backend returns 403 `mfa_enrollment_required` for super_admin
       // (and pharmacy_admin past a 30-day grace) without MFA. api.ts throws `API ${status}: ${body}`.
