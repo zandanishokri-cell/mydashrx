@@ -12,7 +12,8 @@ import type { StopStatus } from '@mydash-rx/shared';
 import { todayInTz } from '../utils/date.js';
 import sharp from 'sharp';
 import { requireTrustedDeviceForCOD } from '../lib/abacPolicies.js'; // P-RBAC35
-import { decryptPhi, decryptPhiArray } from '../lib/phiCrypto.js'; // P-SEC40
+import { decryptPhi } from '../lib/phiCrypto.js'; // P-SEC40
+import { normalizeRxNumbers } from './stops.js'; // jsonb-safe rxNumbers decryption
 import { sendDriverPush } from '../lib/driverPush.js'; // P-DEL16
 
 async function resolveDriverId(
@@ -222,7 +223,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       ...s,
       recipientName: decryptPhi(s.recipientName ?? ''),
       recipientPhone: decryptPhi(s.recipientPhone ?? ''),
-      rxNumbers: decryptPhiArray(s.rxNumbers as unknown as string),
+      rxNumbers: normalizeRxNumbers(s.rxNumbers),
       noteCount: noteCountMap[s.id] ?? 0,
     }));
   });
@@ -406,7 +407,7 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       ...stop,
       recipientName: decryptPhi(stop.recipientName ?? ''),
       recipientPhone: decryptPhi(stop.recipientPhone ?? ''),
-      rxNumbers: decryptPhiArray(stop.rxNumbers as unknown as string),
+      rxNumbers: normalizeRxNumbers(stop.rxNumbers),
     };
   });
 

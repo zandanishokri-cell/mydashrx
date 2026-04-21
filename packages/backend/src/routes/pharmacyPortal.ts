@@ -6,7 +6,8 @@ import { requireRole } from '../middleware/requireRole.js';
 import { requireDeliveryWrite } from '../middleware/requireOrgRole.js';
 import { getOrgPermissions, upsertTemplate, invalidateOrg } from '../lib/rbacCache.js';
 import { todayInTz } from '../utils/date.js';
-import { encryptPhi, decryptPhi, encryptPhiArray, decryptPhiArray } from '../lib/phiCrypto.js';
+import { encryptPhi, decryptPhi, encryptPhiArray } from '../lib/phiCrypto.js';
+import { normalizeRxNumbers } from './stops.js';
 
 export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
   // GET /pharmacy/my-depot — get this pharmacy's depot info
@@ -144,7 +145,7 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
       ...stop,
       recipientName: decryptPhi(stop.recipientName ?? ''),
       recipientPhone: decryptPhi(stop.recipientPhone ?? ''),
-      rxNumbers: decryptPhiArray(stop.rxNumbers as unknown as string),
+      rxNumbers: normalizeRxNumbers(stop.rxNumbers),
       planId: plan.id,
       planDate: plan.date,
     });
@@ -201,7 +202,7 @@ export const pharmacyPortalRoutes: FastifyPluginAsync = async (app) => {
       ...row,
       recipientName: decryptPhi(row.recipientName ?? ''),
       recipientPhone: decryptPhi(row.recipientPhone ?? ''),
-      rxNumbers: decryptPhiArray(row.rxNumbers as unknown as string),
+      rxNumbers: normalizeRxNumbers(row.rxNumbers),
       pod: pod ?? null,
     };
   });

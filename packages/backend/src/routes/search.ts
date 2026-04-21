@@ -6,7 +6,8 @@ import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { checkAndNotifyRouteComplete } from './stops.js';
 import { geocodeAddress } from '../utils/geocode.js';
 import { checkStopLimit } from '../utils/usageLimits.js';
-import { decryptPhi, decryptPhiArray } from '../lib/phiCrypto.js'; // P-SEC40
+import { decryptPhi } from '../lib/phiCrypto.js'; // P-SEC40
+import { normalizeRxNumbers } from './stops.js';
 
 export const searchRoutes: FastifyPluginAsync = async (app) => {
   // GET /orgs/:orgId/stops — filterable stop list (used by Stops page + Search page)
@@ -118,7 +119,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       ...r,
       recipientName: decryptPhi(r.recipientName ?? ''),
       recipientPhone: decryptPhi(r.recipientPhone ?? ''),
-      rxNumbers: decryptPhiArray(r.rxNumbers as unknown as string),
+      rxNumbers: normalizeRxNumbers(r.rxNumbers),
     }));
     return { stops: decrypted, total: count, page: pageNum, limit: limitNum };
   });
@@ -219,7 +220,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       ...row,
       recipientName: decryptPhi(row.recipientName ?? ''),
       recipientPhone: decryptPhi(row.recipientPhone ?? ''),
-      rxNumbers: decryptPhiArray(row.rxNumbers as unknown as string),
+      rxNumbers: normalizeRxNumbers(row.rxNumbers),
     };
     return { ...decryptedRow, pod: pod ?? null, timeline, notifications };
   });

@@ -5,7 +5,7 @@ import { baaRegistry, auditLogs, complianceChecks, miComplianceItems, compliance
 import { eq, and, gte, lte, desc, sql, count } from 'drizzle-orm';
 import { requireOrgRole } from '../middleware/requireOrgRole.js';
 import { runComplianceScan, isDeploymentBlocked } from '../compliance/scanner.js';
-import { decryptPhi, decryptPhiArray } from '../lib/phiCrypto.js';
+import { decryptPhi } from '../lib/phiCrypto.js';
 
 const ADMIN = requireOrgRole('pharmacy_admin', 'super_admin');
 const ADMIN_READ = requireOrgRole('pharmacy_admin', 'super_admin', 'pharmacist');

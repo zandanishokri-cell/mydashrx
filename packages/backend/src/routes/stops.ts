@@ -16,12 +16,21 @@ import { sendDriverPush } from '../lib/driverPush.js'; // P-DEL16
 // P-SEC40: every GET that returns stop rows must decrypt PHI fields before the client sees them.
 // Without this, new rows persist as `enc:v1:...` ciphertext and the UI renders unusable text
 // (and rxNumbers becomes a string, breaking `.map()`), making stops look like they vanished.
+// rxNumbers lives in a jsonb column — pg returns arrays as arrays and encrypted strings as
+// strings. Legacy plaintext rows stored `[]`; encrypted rows store a JSON string. If we hand
+// an array to decryptPhi (which calls `.startsWith`) it TypeErrors and 500s the whole request.
+export function normalizeRxNumbers(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;                    // legacy plaintext array
+  if (typeof value === 'string') return decryptPhiArray(value); // encrypted string
+  return [];
+}
+
 export function decryptStopRow<T extends Record<string, unknown>>(row: T): T {
   return {
     ...row,
     recipientName: decryptPhi((row.recipientName as string | null) ?? ''),
     recipientPhone: decryptPhi((row.recipientPhone as string | null) ?? ''),
-    rxNumbers: decryptPhiArray(row.rxNumbers as unknown as string),
+    rxNumbers: normalizeRxNumbers(row.rxNumbers),
   };
 }
 
@@ -278,7 +287,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       ...stop,
       recipientName: decryptPhi(stop.recipientName ?? ''),
       recipientPhone: decryptPhi(stop.recipientPhone ?? ''),
-      rxNumbers: decryptPhiArray(stop.rxNumbers as unknown as string),
+      rxNumbers: normalizeRxNumbers(stop.rxNumbers),
     });
   });
 
@@ -367,7 +376,7 @@ export const stopRoutes: FastifyPluginAsync = async (app) => {
       ...updated,
       recipientName: decryptPhi(updated.recipientName ?? ''),
       recipientPhone: decryptPhi(updated.recipientPhone ?? ''),
-      rxNumbers: decryptPhiArray(updated.rxNumbers as unknown as string),
+      rxNumbers: normalizeRxNumbers(updated.rxNumbers),
     };
 
     // P-PERF4: invalidate analytics cache on status change — data is now stale
