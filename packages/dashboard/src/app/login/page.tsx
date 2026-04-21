@@ -188,8 +188,25 @@ function LoginForm() {
       setCanResend(false);
       setSent(true);
       startWarmupPing(); // P-ML19: keep Render warm during 90s email-to-click window
-    } catch {
-      setError('Something went wrong. Please try again.');
+    } catch (err: unknown) {
+      // Surface the real status + body instead of a blank generic error — makes rate limits,
+      // 5xx, CORS-block, and validation failures distinguishable without opening DevTools.
+      const msg = err instanceof Error ? err.message : '';
+      const statusMatch = /^API\s+(\d{3}):\s*([\s\S]*)$/.exec(msg);
+      const status = statusMatch ? Number(statusMatch[1]) : 0;
+      let body: { error?: string; message?: string } = {};
+      if (statusMatch) { try { body = JSON.parse(statusMatch[2]); } catch { /* non-JSON body */ } }
+      if (status === 429) {
+        setError(body.message ?? body.error ?? 'Too many requests. Wait a minute and try again.');
+      } else if (status >= 500) {
+        setError(body.error ?? `Server error (${status}). Try again in a moment.`);
+      } else if (status === 400) {
+        setError(body.error ?? 'Invalid request. Check your email address.');
+      } else if (status === 0) {
+        setError('Cannot reach the server. Check your internet connection.');
+      } else {
+        setError(body.message ?? body.error ?? `Sign-in failed (${status || 'network'}).`);
+      }
     } finally {
       setLoading(false);
     }
