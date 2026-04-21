@@ -46,10 +46,12 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // Filter by plan date (delivery date) — skip for unassigned stops (plans.date = NULL for routeId=null)
+    // Filter by plan date (delivery date). Unassigned stops have routeId=null → plans.date=NULL
+    // after the leftJoin; passing them through when the caller is on "all" keeps newly-created
+    // stops visible immediately (previously they vanished until assigned to a dated plan).
     if (unassigned !== 'true') {
-      if (from) conditions.push(gte(plans.date, from));
-      if (to) conditions.push(lte(plans.date, to));
+      if (from) conditions.push(or(gte(plans.date, from), isNull(plans.date))!);
+      if (to) conditions.push(or(lte(plans.date, to), isNull(plans.date))!);
     }
 
     // Join to get depot/driver/plan context

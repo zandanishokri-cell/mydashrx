@@ -881,32 +881,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (user && !user.deletedAt) {
-      // P-SES22: Check if device is trusted — skip email, issue tokens directly
-      const ua = (req.headers['user-agent'] as string | undefined) ?? null;
-      const acceptLang = (req.headers['accept-language'] as string | undefined) ?? null;
-      const tz = (req.headers['x-timezone'] as string | undefined) ?? null;
-      const fingerprint = buildDeviceFingerprint(ua, acceptLang, tz);
-      const [trust] = await db.select({ id: trustedDevices.id }).from(trustedDevices)
-        .where(and(
-          eq(trustedDevices.userId, user.id),
-          eq(trustedDevices.fingerprint, fingerprint),
-          eq(trustedDevices.isRevoked, false),
-          gt(trustedDevices.trustedUntil, new Date()),
-        )).limit(1);
-
-      if (trust) {
-        // Trusted device — issue AT+RT directly without email
-        await db.update(trustedDevices).set({ lastSeenAt: new Date() }).where(eq(trustedDevices.id, trust.id));
-        const jti = randomUUID(); const familyId = randomUUID();
-        const payload = { sub: user.id, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds as string[] };
-        const tokens = signTokens(app, payload, user.tokenVersion, { jti, familyId });
-        await seedRefreshToken(user.id, familyId, jti, req as Parameters<typeof seedRefreshToken>[3]);
-        logAuthEvent('trusted_device_login', { userId: user.id, email: user.email, ip: req.ip, orgId: user.orgId ?? undefined, metadata: { fingerprint, deviceName: buildDeviceName(ua) } }).catch(() => {});
-        setRtCookie(reply, tokens.refreshToken);
-        await minResponse();
-        return reply.send({ ...tokens, user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId, depotIds: user.depotIds } });
-      }
-      // Not trusted — fall through to email send
+      // P-SES22 (disabled 2026-04-21 per product): trusted-device auto-login was silently
+      // skipping the email step for known devices. Behavior confused users who expected every
+      // sign-in to go through an email link. Email flow is now required for every magic-link
+      // request, regardless of device trust state. Trusted device record is still used
+      // elsewhere (e.g. MFA skip on verify) but no longer short-circuits this endpoint.
 
       const dashUrl = process.env.DASHBOARD_URL ?? 'https://mydashrx-dashboard-ai-receptionist-ivr-system.vercel.app';
       const magicUrl = `${dashUrl}/auth/verify?token=${token}`;

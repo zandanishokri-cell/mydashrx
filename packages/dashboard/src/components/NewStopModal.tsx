@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import { X, AlertCircle } from 'lucide-react';
+import { AddressAutocomplete } from './AddressAutocomplete';
 
 interface Props {
   orgId: string;
@@ -127,9 +128,10 @@ export function NewStopModal({ orgId, onClose, onSuccess }: Props) {
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-500 mb-1">Address <span className="text-red-400">*</span></label>
-                <input
-                  value={form.address} onChange={set('address')}
-                  placeholder="123 Main St, Detroit, MI 48201"
+                <AddressAutocomplete
+                  value={form.address}
+                  onChange={v => setForm(f => ({ ...f, address: v }))}
+                  placeholder="Start typing — 123 Main St…"
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F4C81]/20"
                 />
               </div>
