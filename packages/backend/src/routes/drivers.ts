@@ -82,6 +82,22 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
         limit: limitCheck.limit,
       });
     }
+    // Before creating the drivers row, check users table for an existing row with this email.
+    // Prior bug: we used .onConflictDoNothing() on the users insert, which silently skipped
+    // re-registration attempts when the email already existed in a different org. Result:
+    // the drivers row lived in this org but the users row (source of JWT orgId) stayed in the
+    // old org, so driver login picked up the wrong orgId and saw zero routes.
+    const [existingUser] = await db.select({ id: users.id, orgId: users.orgId, role: users.role })
+      .from(users)
+      .where(eq(users.email, body.email))
+      .limit(1);
+    if (existingUser && existingUser.orgId !== orgId) {
+      return reply.code(409).send({
+        error: 'Email already registered to another organization',
+        message: `This email is already registered in a different organization (role: ${existingUser.role}). Ask the platform admin to transfer or retire the existing account before re-registering here.`,
+      });
+    }
+
     const passwordHash = await hashPassword(body.password);
     const [driver] = await db.insert(drivers).values({
       orgId, name: body.name, email: body.email, phone: body.phone,
@@ -89,16 +105,22 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
       vehicleType: body.vehicleType ?? 'car',
     }).returning();
 
-    // Create corresponding users record so driver can authenticate via /auth/login
-    await db.insert(users).values({
-      orgId,
-      email: body.email,
-      name: body.name,
-      role: 'driver',
-      passwordHash,
-      mustChangePassword: true,
-      depotIds: [],
-    }).onConflictDoNothing();
+    // Users row: either create fresh, or update the existing same-org row to re-affirm driver role + password
+    if (existingUser) {
+      await db.update(users)
+        .set({ name: body.name, role: 'driver', passwordHash, mustChangePassword: true })
+        .where(eq(users.id, existingUser.id));
+    } else {
+      await db.insert(users).values({
+        orgId,
+        email: body.email,
+        name: body.name,
+        role: 'driver',
+        passwordHash,
+        mustChangePassword: true,
+        depotIds: [],
+      });
+    }
 
     const { passwordHash: _, ...safe } = driver;
     return reply.code(201).send(safe);
