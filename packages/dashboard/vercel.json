@@ -1,7 +1,7 @@
 {
   "framework": "nextjs",
   "buildCommand": "npm run build",
-  "installCommand": "cd ../.. && npm install && (cd /vercel/path0/packages/shared && npx tsc) && mkdir -p packages/dashboard/node_modules/@mydash-rx && ln -sfn ../../../shared packages/dashboard/node_modules/@mydash-rx/shared",
+  "installCommand": "cd ../.. && npm install && pwd && ls && (cd packages/shared && npx tsc) && mkdir -p packages/dashboard/node_modules/@mydash-rx && ln -sfn ../../../shared packages/dashboard/node_modules/@mydash-rx/shared",
   "outputDirectory": ".next",
   "headers": [
     {
