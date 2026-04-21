@@ -81,6 +81,30 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       .from(routes)
       .leftJoin(plans, eq(routes.planId, plans.id))
       .where(eq(routes.driverId, driverId));
+
+    // Show what routes DO exist in the org for today — helps identify mis-assignment
+    const orgRoutesToday = await db
+      .select({
+        routeId: routes.id,
+        routeDriverId: routes.driverId,
+        routeStatus: routes.status,
+        routeDeletedAt: routes.deletedAt,
+        planId: plans.id,
+        planDate: plans.date,
+        planStatus: plans.status,
+        planDeletedAt: plans.deletedAt,
+        planOrgId: plans.orgId,
+      })
+      .from(routes)
+      .leftJoin(plans, eq(routes.planId, plans.id))
+      .where(and(eq(plans.orgId, user.orgId), eq(plans.date, today)));
+
+    // List drivers in this org so we can spot duplicates / name mismatches
+    const orgDrivers = await db
+      .select({ id: drivers.id, name: drivers.name, email: drivers.email, deletedAt: drivers.deletedAt })
+      .from(drivers)
+      .where(eq(drivers.orgId, user.orgId));
+
     return {
       serverTodayInTz: today,
       resolvedDriverId: driverId,
@@ -89,6 +113,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       jwtOrgId: user.orgId,
       allRoutesForDriver: allRoutes,
       matchingTodayCount: allRoutes.filter(r => r.planDate === today && !r.routeDeletedAt && !r.planDeletedAt).length,
+      orgRoutesToday,
+      orgDrivers,
     };
   });
 
