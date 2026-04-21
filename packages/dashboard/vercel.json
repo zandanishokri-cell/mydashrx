@@ -1,7 +1,7 @@
 {
   "framework": "nextjs",
   "buildCommand": "npm run build",
-  "installCommand": "cd ../.. && rm -rf node_modules packages/*/node_modules packages/*/.next && npm install && mkdir -p packages/dashboard/node_modules/@mydash-rx && ln -sfn ../../../shared packages/dashboard/node_modules/@mydash-rx/shared && ls -la packages/dashboard/node_modules/@mydash-rx/ node_modules/@mydash-rx/ 2>&1",
+  "installCommand": "cd ../.. && npm install && mkdir -p packages/dashboard/node_modules/@mydash-rx && ln -sfn ../../../shared packages/dashboard/node_modules/@mydash-rx/shared",
   "outputDirectory": ".next",
   "headers": [
     {
