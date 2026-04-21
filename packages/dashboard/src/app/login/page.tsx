@@ -168,7 +168,14 @@ function LoginForm() {
         sessionStorage.setItem('postAuthRedirect', nextParam);
       }
       const fp = collectFingerprint();
-      const res = await api.post<{ message: string; requestId?: string; forwardingRisk?: boolean }>('/auth/magic-link/request', { email, fp });
+      const res = await api.post<{ message: string; requestId?: string; forwardingRisk?: boolean; accessToken?: string; refreshToken?: string; user?: AuthTokens['user'] }>('/auth/magic-link/request', { email, fp });
+      // P-SES22: trusted-device fast path — backend returns tokens directly instead of emailing.
+      // Without this consumer, the UI silently showed "check your email" while the user was already authenticated.
+      if (res?.accessToken && res?.refreshToken && res?.user) {
+        setSession(res as AuthTokens);
+        router.replace((res.user as { mustChangePassword?: boolean }).mustChangePassword ? '/change-password' : '/dashboard');
+        return;
+      }
       // P-ML26: store requestId for cross-device SSE polling on verify page
       if (res?.requestId) sessionStorage.setItem('mdrx_magic_request_id', res.requestId);
       // P-DEL32: show forwarding risk banner if detected
@@ -188,7 +195,13 @@ function LoginForm() {
     setResending(true);
     try {
       const fp = collectFingerprint();
-      await api.post('/auth/magic-link/request', { email, fp });
+      const res = await api.post<{ accessToken?: string; refreshToken?: string; user?: AuthTokens['user'] }>('/auth/magic-link/request', { email, fp });
+      // P-SES22: trusted-device fast path on resend too
+      if (res?.accessToken && res?.refreshToken && res?.user) {
+        setSession(res as AuthTokens);
+        router.replace((res.user as { mustChangePassword?: boolean }).mustChangePassword ? '/change-password' : '/dashboard');
+        return;
+      }
       setCountdown(900);
       setResendCount(c => c + 1);
       startWarmupPing(); // P-ML19: restart warmup after resend
