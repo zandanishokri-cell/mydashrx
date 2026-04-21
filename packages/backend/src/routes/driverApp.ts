@@ -105,6 +105,23 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       .from(drivers)
       .where(eq(drivers.orgId, user.orgId));
 
+    // All plans in the org — reveals wrong-date dispatches and orphan plans
+    const orgPlans = await db
+      .select({ id: plans.id, date: plans.date, status: plans.status, deletedAt: plans.deletedAt, createdAt: plans.createdAt })
+      .from(plans)
+      .where(eq(plans.orgId, user.orgId))
+      .orderBy(desc(plans.createdAt))
+      .limit(20);
+
+    // All routes in each of the recent plans — shows if routes exist anywhere, who they're assigned to
+    const orgPlanIds = orgPlans.map(p => p.id);
+    const orgAllRoutes = orgPlanIds.length > 0
+      ? await db
+          .select({ id: routes.id, planId: routes.planId, driverId: routes.driverId, status: routes.status, deletedAt: routes.deletedAt })
+          .from(routes)
+          .where(inArray(routes.planId, orgPlanIds))
+      : [];
+
     return {
       serverTodayInTz: today,
       resolvedDriverId: driverId,
@@ -115,6 +132,8 @@ export const driverAppRoutes: FastifyPluginAsync = async (app) => {
       matchingTodayCount: allRoutes.filter(r => r.planDate === today && !r.routeDeletedAt && !r.planDeletedAt).length,
       orgRoutesToday,
       orgDrivers,
+      orgPlans,
+      orgAllRoutes,
     };
   });
 
