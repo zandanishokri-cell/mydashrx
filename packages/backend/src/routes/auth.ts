@@ -799,7 +799,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     // Always return the same message — never reveal rate limit or account existence
     const ok = { message: 'If an account exists, a login link has been sent to that address.' };
-    if (recentCount >= 3) { await minResponse(); return reply.send(ok); }
+    // Defense-in-depth cap aligned with Fastify rate limit (10/min per IP+email).
+    // Fastify returns a clear 429 on abuse; this cap catches slow-spam attempts across the 10-min window.
+    if (recentCount >= 10) { await minResponse(); return reply.send(ok); }
 
     // Invalidate any prior unused tokens for this email — only the newest link works
     await db.update(magicLinkTokens)
