@@ -126,6 +126,47 @@ export const driverRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(safe);
   });
 
+  // POST /orgs/:orgId/drivers/:driverId/heal-user-org — self-heal for drivers with
+  // users.orgId stuck in a different org (from pre-fix onConflictDoNothing bug).
+  // Safe because: caller must be pharmacy_admin/super_admin in :orgId, AND the drivers row
+  // :driverId must already exist in :orgId (so caller isn't "claiming" a stranger's email).
+  app.post('/:driverId/heal-user-org', { preHandler: requireOrgRole('pharmacy_admin', 'super_admin') }, async (req, reply) => {
+    const { orgId, driverId } = req.params as { orgId: string; driverId: string };
+    const [driver] = await db.select({ id: drivers.id, email: drivers.email, orgId: drivers.orgId })
+      .from(drivers)
+      .where(and(eq(drivers.id, driverId), eq(drivers.orgId, orgId), isNull(drivers.deletedAt)))
+      .limit(1);
+    if (!driver) return reply.code(404).send({ error: 'Driver not found in this org' });
+
+    // Find the users row — it's globally unique on email
+    const [userRow] = await db.select({ id: users.id, orgId: users.orgId, role: users.role })
+      .from(users)
+      .where(eq(users.email, driver.email))
+      .limit(1);
+    if (!userRow) return reply.code(404).send({ error: 'No users row found for this driver email' });
+
+    const changes = { usersMoved: false, staleDriversRemoved: 0, previousUserOrgId: userRow.orgId };
+    if (userRow.orgId !== orgId) {
+      await db.update(users).set({ orgId }).where(eq(users.id, userRow.id));
+      changes.usersMoved = true;
+      // Force the driver to re-login so their JWT picks up the new orgId + driverId
+      await db.execute(sql`DELETE FROM refresh_tokens WHERE user_id = ${userRow.id}::uuid`);
+    }
+
+    // Delete any stale drivers rows in OTHER orgs for the same email (they'll never be usable now)
+    const staleDrivers = await db.select({ id: drivers.id })
+      .from(drivers)
+      .where(and(eq(drivers.email, driver.email), sql`${drivers.orgId} != ${orgId}`, isNull(drivers.deletedAt)));
+    if (staleDrivers.length > 0) {
+      await db.update(drivers)
+        .set({ deletedAt: new Date() })
+        .where(and(eq(drivers.email, driver.email), sql`${drivers.orgId} != ${orgId}`, isNull(drivers.deletedAt)));
+      changes.staleDriversRemoved = staleDrivers.length;
+    }
+
+    return { ok: true, driverId, email: driver.email, ...changes };
+  });
+
   // GPS ping from driver app
   app.post('/:driverId/ping', { preHandler: requireOrgRole('driver', 'super_admin') }, async (req, reply) => {
     const { orgId, driverId } = req.params as { orgId: string; driverId: string };
