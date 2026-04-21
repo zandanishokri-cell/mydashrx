@@ -10,6 +10,10 @@ const securityHeaders = [
 
 const config = {
   reactStrictMode: true,
+  // Monorepo: tell webpack to traverse the workspace package like any src file.
+  // Without this, Vercel build caches can lose track of @mydash-rx/shared after
+  // a node_modules wipe and fail with "Module not found".
+  transpilePackages: ['@mydash-rx/shared'],
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
   async headers() {
