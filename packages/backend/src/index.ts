@@ -973,7 +973,8 @@ app.addHook('onResponse', async (req, reply) => {
 // P-SEC34: CVE-2026-21710 — reject __proto__/constructor headers before Fastify accesses headersDistinct
 // Unauthenticated crash vector on Node.js v24.14.1. Defence-in-depth until NODE_VERSION=24.14.2 propagates.
 app.addHook('onRequest', async (req, reply) => {
-  if ('__proto__' in req.headers || 'constructor' in req.headers) {
+  const hasOwn = Object.prototype.hasOwnProperty;
+  if (hasOwn.call(req.headers, '__proto__') || hasOwn.call(req.headers, 'constructor')) {
     req.log.warn({ ip: req.ip, path: req.url }, 'P-SEC34 proto header rejected');
     return reply.code(400).send({ error: 'Invalid header name' });
   }
