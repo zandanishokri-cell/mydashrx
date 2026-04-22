@@ -858,6 +858,16 @@ try {
   console.error('P-DEL30 DDL warning (non-fatal):', err instanceof Error ? err.message : err);
 }
 
+// Stop a single bad request from killing the whole backend. Before this guard,
+// unhandled promise rejections (e.g. ERR_HTTP_HEADERS_SENT in SSE routes) exited
+// the Node process with status 1, putting Render into a crash-restart loop.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason instanceof Error ? reason.stack ?? reason.message : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err.stack ?? err.message);
+});
+
 const app = Fastify({ logger: true, trustProxy: true });
 
 await app.register(helmet, {

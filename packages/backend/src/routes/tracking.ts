@@ -353,6 +353,11 @@ export const liveTrackingRoutes: FastifyPluginAsync = async (app) => {
   }, async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
 
+    // Tell Fastify we are managing the raw response ourselves (SSE). Without this,
+    // Fastify tries to send its own response when the handler resolves, which collides
+    // with our writeHead call and throws ERR_HTTP_HEADERS_SENT — previously crashing the process.
+    reply.hijack();
+
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
